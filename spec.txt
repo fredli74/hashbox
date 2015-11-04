@@ -1,0 +1,319 @@
+/*
+
+  ,+---+
+ +---+´|
+ | # | |    HASHBOX
+ +---+´
+
+*/
+
+
+Hashbox Protocol
+================
+
+-> # "type" (Sent to server)
+<- # "TYPE" (Replied by server)
+
+MsgHeader = {
+	Num  uint16						// Message sequence number, used to pair replies
+	Type uint32						// Message type
+}
+
+Unauthenticated commands
+------------------------
+-> "hola"
+	<- "HOLA" SessionNonce
+			SessionNonce = {
+				UnixTime uint64		// Server time
+				Random   uint64		// Random to avoid SessionNonce collisions on UnixTime
+			}
+
+-> "auth" AccountNameH AuthentcationH
+		AccountNameH   	[16]byte 	// = md5( accountName )   permanent account name, not email
+		AuthentcationH 	[16]byte 	// = hmac( AccountNameH, SessionKey )
+		SessionKey     	[16]byte 	// = hmac^20000( AccountNameH SessionNonce, AccessKey)
+		AccessKey      	[16]byte 	// Stored on server, see Hashbox backup section
+
+		// Server calculates its own Auth value and compares it to the one sent by the client
+		// AUTHPADDING is a static 128 bit label to differentiate the hmac from "writ" signatures
+		<- "ERRS"					// authentication is wrong, disconnect
+		<- "AUTH"					// authenticated
+
+-> "quit"
+		<- "QUIT"
+
+Authenticated Commands
+----------------------
+All of these returns "ERRS" and disconnects if not authenticated
+
+-> "allo" BlockID
+		BlockID       [16]byte 		// Is BlockID allocated?
+		<- "ACKN" BlockID 			// Block exists on server
+		<- "READ" BlockID 			// Server read request the Block from client
+
+-> "writ" Block 
+		Block = {
+			BlockID  	[16]byte 	// = md5( LinkLength Links BlockLength BlockData )
+			LinkLength  uint32 		
+			Links       [][16]bytes // Array of BlockIDs the block is dependent on
+			BlockLength uint32	
+			BlockData   []byte 		// Data to be stored
+		}
+		
+		// Server calculates the BlockID from the data, then calculates the Signature and compares it to the client		
+		<- "ACKN" BlockID
+
+-> "read" BlockID
+		<- "WRIT" BlockID Block		
+
+
+SecuredCommands
+---------------
+
+-> "info" AccountNameH
+		<- "INFO" AccountInfo
+			AccountInfo = {
+++++ add quota stuff
+				DataSetCount 		 uint32
+				[DataSetCount]{
+					DataSetNameLen   uint32
+					DataSetName      []bytes		
+					DataSetContentH  [16]byte 		// = md5( DataSetContent )
+					DataSetSize 	 uint64			// Size of all data referenced by this dataset
+				}
+			}
+
+-> "list" AccountNameH DataSetNameLen DataSetName
+		<- "LIST" StatesCount States ListH
+			[StatesCount]States {
+				StateID    [16]byte 		// Unique ID of the state
+				BlockID    [16]byte 		// ID of the Block this Dataset is referring to
+				Size       uint64  			// Size of all data referenced by this dataset state
+				UniqueSize uint64  			// Size of unique data (added blocks)
+			}
+			ListH				[16]byte 	// = md5( States )
+
+-> "adds" AccountNameH DataSetNameLen DataSetName State
+		<- "ADDS" 				 			// Confirmation that DataSetVersion has been set
+
+-> "dels" AccountNameH DataSetNameLen DataSetName StateID 								
+		<- "DELS" 				 			// Confirmation that DataSetVersion has been deleted
+
+
+hmac function
+-------------
+ipad = 0x36363636363636363636363636363636 (16 bytes)
+opad = 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c (16 bytes)
+hmac(text, key) = md5([key ^ opad] md5([key ^ ipad] text))
+
+
+Hashbox Backup
+==============
+
+Adding a hashbox backup account
+-------------------------------
+Admin (or web signup) enters an AccountName (may not be changed) and a password. The following information is generated.
+Account = {
+	AccountNameH 	[16]byte 	// = md5( AccountName )
+	AccessKey   	[16]byte 	// = hmac^20000( AccountName "*ACCESS*KEY*PAD*", md5( password ))
+}
+DataEncryptionKey [16]byte 		// = random
+UserEncryptedDEK  [16]byte 		// = aes( DataEncryptionKey, hmac^20000( AccountNameH "*ENCRYPTION*PAD*", md5( password )) )
+AdminEncryptedDEK [16]byte 		// = aes( DataEncryptionKey, md5( StrongAdminPassword ) )
+
+Account info is used to create a Hashbox server account
+UserEncryptedDEK is stored in a special DataSet called "\x07HASHBACK_DEK" under the account
+AdminEncryptedDEK is optionally stored in a special DataSet called "\x07HASHBACK_MASTER_DEK" under the account
+
+
+Initial connection
+------------------
+Client starts with a "hola" command and saves the SessionNonce from the "HOLA" response
+Both the client and server calculates a session unique SessionKey (shared secret) based on the AccessKey for the account and saves this for the session
+Client calculates an Auth hash using the SessionKey, the sever verifies authenticity and returns an "AUTH" response
+Connection is now established
+
+First connection
+----------------
+If no DataEncryptionKey exists on the local system, the client issues a "list" on a special dataset called "\x07HASHBACK_DEK"
+If the dataset exists, it reads the BlockID of the latest version which then contains an encrypted version of the DataEncryptionKey and saves it locally, encrypted or unencrypted depending on if unattended backups are allowed
+If the dataset does not exist, the account is not correctly setup for Hashbox backup
+
+Backup process
+--------------
+Backup is started with a DataSetName (for example your computer name)
+Client uses "list" DataSetName to retreive a list of datasets on the server, it then uses the BlockID of the most recent set found as an incremental backup reference point
+A BackupID for the new backup is decided (DataSet VersionID). This is taken from ServerNonce and needs to be saved to support backup pause/resume.This is because the BackupID is saved with the file entry information for every single file backed up
+
+If the backup source is a single file, a virtual directory containing the file is created
+Client starts traversing the source directory tree
+	Directory lists are always sorted alphabetically with sub directories first
+	Each entry is compared to the backup reference list
+		For directories, the function is called recursively
+		For files, the meta attributes (name,date,size) from disk are compared to the reference list
+			If the meta attributes differ, the file is fully backed up by calling storeFile(localfile)
+				storeFile returns a list of BlockIDs and Decryption keys in order
+				If more than one BlockID is needed to represent the data, a special FileChainBlock is created
+					FileChainBlock = {
+						ChainLength     uint32 		// This limits a file-size to around 4TB with the smallest 1024byte block (should be safe)
+						ChainBlocks     [][16]byte  // each block in order
+						DecryptKey      [][16]byte  // Keys needed to decrypt each block
+					}
+					The new block is stored to the server and the new BlockID is then used as ContentBlockID
+				A FileEntry is added to the DirectoryList
+					FileEntry = {
+						FileNameLength	uint32 		//
+						FileName		[]byte 		//
+						FileSize		uint64 		// (!dir)
+						FileMode 		uint32 	 	// ModeType | ModeTemporary | ModeSetuid | ModeSetgid | ModePerm 
+						ModTime 		uint64  	//
+						ContentType 	uint8 		// 0 = no data (empty file), 1 = DirectoryBlock, 2 = FileData, 3 = FileChainBlock
+						ContentBlockID  [16]byte 	// 0 if "no data" type
+						DecryptKey	    [16]byte 	// 0 unless "FileData" type
+						ReferenceID     [16]byte 	// BackupID
+					}
+			If the meta attributes are matched, the entry info is copied from the reference list to the DirectoryList
+					// Need to test this around a bit on directories regarding rights and mod-time, linux vs windows
+
+	Client saves a DirectoryBlock with every single ContentBlockID in its Links
+		DirectoryBlock = {
+			FileCount 		uint32
+			File 			[]FileEntry
+		}
+Client sends a "cmit" message to flush writing
+Client sends a "adds" AccountNameH DataSetNameLen DataSetName DataSetVersion	
+	DataSetVersion = {
+		VersionID 	= BackupID
+		BlockID 	= top DirectoryBlock
+		Size 		= sum of all FileSize
+		UniqueSize  = sum of all block sizes saved this time
+	}
+
+
+Backup file history
+-------------------
+for currentID = high(VersionID); currentID >= low(VersionID)
+	Find the file
+	Check the ReferenceID of the file
+		ReferenceID == currentID 
+			this is a unique version of the file save it to the history list
+			currentID = high(VersionID) where VersionID < ReferenceID
+		ReferenceID < curerentID
+			there was no change to the file
+			currentID = high(VersionID) where VersionID <= ReferenceID
+
++++++  Decision :  When splitting data, should the minimum block-size be based on the full data size?
+
+
+
+Hashbox Server
+==============
+Move Link to start of blocks for faster GC reference checking
++++++  Decision :  What is the max size of a block
+
+
+
+GarbageCollect
+--------------
+This uses a constant mark phase where the sweep cycles cannot be closer than the amount of time we would allow a backup to be paused and resumed
+
+Every time a new block is created it checks that LinkIDs are valid, it also marks the entire block-tree (stopping at any branch that is already marked). When the tree has been marked it saves the new block index (also marked)
+
+Mark	
+	When a GC is started it goes through all DataSetVersion.BlockID  marking their trees
+Sweep
+	During the sweep phase, any block not marked are considered gone, even before they are sweeped, reading or referencing such block is not possible.
+	All .idx files are sweeped, removing the blocks not marked
+Compact
+	All .dat files are compacted, looking up each block if it exists in the .idx files
+
+**** work in progress
+Compact 
+	Each .dat file is compacted by checking if the blocks 
+Sweep phase is started
+
+		This will end up with every block that is used in ANY active dataset is marked
+Mark2.	All .dat files are scanned for blocks 
+
+
+
+
+
+Core Concepts
+=============
+Blocks are variable in length
+	Each block has a unique 128 bit ID / hash calculated from block data and references (BlockID, previously blupp_id)
+	Each block has a data part that was already encrypted and compressed on the client side
+	Each block can refer to other blocks (used for quota calculation and GC)
+
+	Each block also has additional meta data (previously flags)
+		Each block has a temporary "creation timestamp" that is used to block GC from removing blocks that are fresh and not yet referenced. Optionally zeroed (sparse file hole punch) when the block has been referenced
+
+Unreferenced blocks are purged by the GC routines unless its creation timestamp is too fresh  (1 day? 1 week? the time it could take to transfer the largest directory, optionally, keep track of started but not ended dataset stores)
+
+Data is compressed and encrypted on the client side in a deterministic manner so that the same data block always yield identical data and hash
+Server knows nothing about encryption or compression, it is client optional
+
+The server keeps a simple local database of accounts
+The server keeps a pure transactional database of datasets and dataset versions for each account
+Datasets versions can only be added or deleted, never altered
+When a dataset version is deleted a delete transaction is added to keep full timeline of additions and deletions
+	A unique versionID made out of a server epoch time + 32/64-bit random number (backup revision)
+	versionID is globally unique even tough it belongs to a dataset
+
+The client can utilize block caching since the data in a block can never change
+
+When syncing two servers the transaction chains are compared and merged together with correct time order.
+Syncing the *data* between servers is as simple as rolling through the hblock dat files and sending all the blocks. Incremental sync can be done by remembering what file and position that was last sent.
+
+
+
+
+
+
+/*
+
+
+
+
+
+
+crap leftovers
+--------------
+DatasetTransactionID = {
+	UnixTime uint64		// Server time
+	Random   uint64		// Random to avoid DatasetTransactionID collisions on UnixTime
+}
+
+/*** replaces this with transaction chain querying for Server replication only ***/
+-> "?dtr" AccountNameH DataGroup ChainHeight ChainHash
+-> "*dts" ReadDatasetTransactionLog
++ Account		
+		ReadDatasetTransactionLog = {
+			TransactionHeight		DatasetTransactionID	// Highest (latest) DatasetTransactionID the client already has
+			TransactionChainHash	[16]byte 				// Described in section Server Mirroring
+		}
+		DatasetTransactionID = {
+			UnixTime uint64				// Server time
+			Random   uint64				// Random to avoid DatasetTransactionID collisions on UnixTime
+		}
+		// Server only sends a filtered list of transactions that belongs to the account
+		// Server compares the TransactionChainHash and sends only new transactions if the ChainHash is correct
+		// Server starts from 0 if ChainHash is incorrect
+		<- "ECMD" ( "*dts" DatasetTransactionLog )
+			DatasetTransactionLog = {
+				TransactionCount   uint8						// Number of transactions returned (Response is limited to 255 transactions)
+				[TransactionCount]{
+					TransactionID  DatasetTransactionID
+					Transaction    DatasetTransaction
+				}
+			}
+
+
+example reference client implementation
+simple client that lets you save a block of data with a name-tag
+	store the block
+	add a dataset "BLOB_TEST" with versionID = md5( name-tag )
+
+
+*/
