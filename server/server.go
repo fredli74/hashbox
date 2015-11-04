@@ -229,7 +229,7 @@ func main() {
 
 		// Default
 
-		serverAddr := net.TCPAddr{nil, cmd.Option["port"].Value.(int64), ""}
+		serverAddr := net.TCPAddr{nil, int(cmd.Option["port"].Value.(int64)), ""}
 
 		var listener *net.TCPListener
 		if listener, err = net.ListenTCP("tcp", &serverAddr); err != nil {
