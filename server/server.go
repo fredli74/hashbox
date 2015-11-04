@@ -208,12 +208,10 @@ func main() {
 
 	exeRoot, _ := osext.ExecutableFolder()
 
-	//	port := flag.Int("port", core.DEFAULT_SERVER_IP_PORT, "Server listening port")
 	datDirectory = *flag.String("db", filepath.Join(exeRoot, "data"), "Full path to database files")
-	// flag.Parse()
 
 	cmd.Title = "Hashbox Server 0.1-go"
-	cmd.AddOption("port", "", "Server listening port", core.DEFAULT_SERVER_IP_PORT, cmd.Standard)
+	cmd.AddOption("port", "", "Server listening port", int64(core.DEFAULT_SERVER_IP_PORT), cmd.Standard)
 	cmd.AddOption("db", "", "Full path to database files", filepath.Join(exeRoot, "data"), cmd.Standard)
 
 	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers
@@ -302,7 +300,9 @@ func main() {
 		fmt.Println("User added")
 	})
 
-	cmd.Parse()
+	if err := cmd.Parse(); err != nil {
+		panic(err)
+	}
 
 	os.Exit(0)
 }
