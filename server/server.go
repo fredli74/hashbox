@@ -211,7 +211,7 @@ func main() {
 	datDirectory = *flag.String("db", filepath.Join(exeRoot, "data"), "Full path to database files")
 
 	cmd.Title = "Hashbox Server 0.1-go"
-	cmd.AddOption("port", "", "Server listening port", int64(core.DEFAULT_SERVER_IP_PORT), cmd.Standard)
+	cmd.AddOption("port", "", "Server listening port", int(core.DEFAULT_SERVER_IP_PORT), cmd.Standard)
 	cmd.AddOption("db", "", "Full path to database files", filepath.Join(exeRoot, "data"), cmd.Standard)
 
 	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers
@@ -227,7 +227,7 @@ func main() {
 
 		// Default
 
-		serverAddr := net.TCPAddr{nil, int(cmd.Option["port"].Value.(int64)), ""}
+		serverAddr := net.TCPAddr{nil, int(cmd.Option["port"].Value.(int)), ""}
 
 		var listener *net.TCPListener
 		if listener, err = net.ListenTCP("tcp", &serverAddr); err != nil {
