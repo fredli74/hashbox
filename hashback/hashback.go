@@ -222,7 +222,7 @@ func (backup *BackupSession) PrintStoreProgress() {
 		compression = 100.0 * (float64(backup.ReadData) - float64(backup.WriteData)) / float64(backup.ReadData)
 	}
 	sent, skipped, queued := backup.Client.GetStats()
-	fmt.Printf("*** %.1f min, read: %s (%.0f%% compr), %d folders, %d/%d files changed, blcks (%dq) %d:%d\n",
+	fmt.Printf("*** %.1f min, read: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks (%dq) %d:%d\n",
 		time.Since(backup.Start).Minutes(), humanSize(uint64(backup.ReadData)), compression, backup.Directories, backup.Files-backup.UnchangedFiles, backup.Files,
 		queued, sent, skipped)
 
@@ -652,7 +652,7 @@ func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error
 var humanUnitName []string
 
 func init() {
-	humanUnitName = []string{"B", "KiB", "MiB", "TiB", "PiB", "EiB", "really?"}
+	humanUnitName = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "really?"}
 }
 
 func humanSize(size uint64) string {

@@ -73,14 +73,17 @@ func (c *Client) ioHandler() {
 		// Handle block queue
 		switch d := msg.Data.(type) {
 		case *MsgServerAcknowledgeBlock:
-			if c.Paint {
-				fmt.Print("-")
-			}
 			func() {
 				c.dispatchMutex.Lock()
 				defer c.dispatchMutex.Unlock()
-				c.skippedBlocks++
-				delete(c.blockqueue, d.BlockID)
+				if c.blockqueue[d.BlockID] == nil {
+					c.skippedBlocks++
+					if c.Paint {
+						fmt.Print("-")
+					}
+				} else {
+					delete(c.blockqueue, d.BlockID)
+				}
 			}()
 		case *MsgServerReadBlock:
 			if c.Paint {
@@ -92,6 +95,7 @@ func (c *Client) ioHandler() {
 				defer c.dispatchMutex.Unlock()
 				c.transmittedBlocks++
 				reply = c.blockqueue[d.BlockID]
+				delete(c.blockqueue, d.BlockID)
 			}()
 			if reply != nil {
 				c.dispatchMessage(MsgTypeWriteBlock, &MsgClientWriteBlock{Block: reply}, nil)
