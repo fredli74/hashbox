@@ -6,6 +6,11 @@
 package main
 
 import (
+	// "log"
+	// "net/http"
+	// _ "net/http/pprof"
+	// "runtime"
+
 	cmd "bitbucket.org/fredli74/cmdparser"
 	"bitbucket.org/fredli74/hashbox/core"
 
@@ -19,7 +24,6 @@ import (
 	"time"
 
 	"bytes"
-	"compress/zlib"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -28,12 +32,14 @@ import (
 	"errors"
 	"os/user"
 	"path/filepath"
+	"strings"
 )
 
 const PROGRESS_INTERVAL_SECS = 10 * time.Second
-const MAX_BLOCK_SIZE int = 512 * 1024
-const SYNC_SIZE int = 1024
-const MAX_DEPTH int = 512 // Safety limit to avoid cyclic symbolic links and such
+const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MiB max blocksize
+const MIN_BLOCK_SIZE int = 64 * 1024       // 64kb minimum blocksize (before splitting it)
+
+// const MAX_DEPTH int = 512 // Safety limit to avoid cyclic symbolic links and such
 
 func SoftError(err error) {
 	fmt.Println("!!!", err)
@@ -58,6 +64,10 @@ type FileInfoSlice []os.FileInfo
 func (p FileInfoSlice) Len() int           { return len(p) }
 func (p FileInfoSlice) Less(i, j int) bool { return p[i].Name() < p[j].Name() }
 func (p FileInfoSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
+func pathLess(a, b string) bool {
+	return strings.Replace(a, "\\", "\x01", -1) < strings.Replace(b, "\\", "\x01", -1)
+}
 
 type FileEntry struct {
 	FileName       core.String  // serialize as uint32(len) + []byte
@@ -211,6 +221,14 @@ type BackupSession struct {
 	refQueue []referenceEntry // Used to compare against a reference backup during backup
 }
 
+func NewBackupSession(client *core.Client, state *core.DatasetState) *BackupSession {
+	return &BackupSession{
+		Client: client,
+		Start:  time.Now(),
+		State:  state,
+	}
+}
+
 func (backup *BackupSession) Log(v ...interface{}) {
 	if backup.Verbose {
 		fmt.Println(v...)
@@ -218,13 +236,13 @@ func (backup *BackupSession) Log(v ...interface{}) {
 }
 func (backup *BackupSession) PrintStoreProgress() {
 	var compression float64
-	if backup.ReadData > 0 {
-		compression = 100.0 * (float64(backup.ReadData) - float64(backup.WriteData)) / float64(backup.ReadData)
+	if backup.Client.WriteData > 0 {
+		compression = 100.0 * (float64(backup.Client.WriteData) - float64(backup.Client.WriteDataCompressed)) / float64(backup.Client.WriteData)
 	}
-	sent, skipped, queued := backup.Client.GetStats()
-	fmt.Printf("*** %.1f min, read: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks (%dq) %d:%d\n",
-		time.Since(backup.Start).Minutes(), humanSize(uint64(backup.ReadData)), compression, backup.Directories, backup.Files-backup.UnchangedFiles, backup.Files,
-		queued, sent, skipped)
+	sent, skipped, _, queuedsize := backup.Client.GetStats()
+	fmt.Printf("*** %.1f min, read: %s, write: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s\n",
+		time.Since(backup.Start).Minutes(), humanSize(uint64(backup.ReadData)), humanSize(uint64(backup.Client.WriteDataCompressed)), compression, backup.Directories, backup.Files-backup.UnchangedFiles, backup.Files,
+		sent, skipped+sent, humanSize(uint64(queuedsize)))
 
 }
 func (backup *BackupSession) PrintRestoreProgress() {
@@ -235,6 +253,8 @@ func (backup *BackupSession) PrintRestoreProgress() {
 	fmt.Printf("*** %.1f min, read: %s (%.0f%% compr), write: %s, %d folders, %d files\n",
 		time.Since(backup.Start).Minutes(), humanSize(uint64(backup.ReadData)), compression, humanSize(uint64(backup.WriteData)), backup.Directories, backup.Files)
 }
+
+var filebuffer []byte
 
 func (backup *BackupSession) storeFile(path string, entry *FileEntry) error {
 	var links []core.Byte128
@@ -252,7 +272,6 @@ func (backup *BackupSession) storeFile(path string, entry *FileEntry) error {
 			backup.PrintStoreProgress()
 			backup.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
 		}
-		// TODO: print progress
 
 		var left int64 = int64(entry.FileSize) - offset
 		var maxBlockSize int = MAX_BLOCK_SIZE
@@ -260,64 +279,58 @@ func (backup *BackupSession) storeFile(path string, entry *FileEntry) error {
 			maxBlockSize = int(left)
 		}
 
-		rawdata := make([]byte, maxBlockSize)
+		if filebuffer == nil {
+			filebuffer = make([]byte, MAX_BLOCK_SIZE)
+		}
+		rawdata := filebuffer[:maxBlockSize]
+		//rawdata := make([]byte, maxBlockSize)
 		{
 			rawlength, err := fil.ReadAt(rawdata, offset)
 			if err != nil {
 				panic(err)
 			}
 
-			var sum rollsum.Rollsum
-			sum.Init()
-			var maxd = uint32(0)
-			var maxi = rawlength
-			for i := 0; i < rawlength; {
-				if i >= SYNC_SIZE {
-					sum.Rollout(rawdata[i-SYNC_SIZE])
-				}
-				sum.Rollin(rawdata[i])
-				i++
-				if i >= SYNC_SIZE {
-					d := sum.Digest()
-					if d >= maxd {
-						maxd = d
-						maxi = i
+			if rawlength > MIN_BLOCK_SIZE {
+				var sum rollsum.Rollsum
+				sum.Init()
+				var maxd = uint32(0)
+				var maxi = rawlength
+				for i := 0; i < rawlength; {
+					if i >= MIN_BLOCK_SIZE {
+						sum.Rollout(rawdata[i-MIN_BLOCK_SIZE])
+					}
+					sum.Rollin(rawdata[i])
+					i++
+					if i >= MIN_BLOCK_SIZE {
+						d := sum.Digest()
+						if d >= maxd {
+							maxd = d
+							maxi = i
+						}
 					}
 				}
+				rawlength = maxi
 			}
-			rawlength = maxi
 			rawdata = rawdata[:rawlength]
 			offset += int64(rawlength)
 
 			backup.ReadData += int64(rawlength)
 		}
-		// TODO: compress data
-		var zdata []byte
-		{
-			buf := bytes.NewBuffer(nil)
-			zw, err := zlib.NewWriterLevel(buf, zlib.BestCompression)
-			if err != nil {
-				panic(err)
-			}
-			zw.Write(rawdata)
-			zw.Close()
-			zdata = buf.Bytes()
-			backup.WriteData += int64(len(zdata))
-		}
-		backup.State.UniqueSize += uint64(len(zdata))
 
-		// TODO: encrypt data with deterministic encryption
-
+		// TODO: add encryption and custom compression here
 		var datakey core.Byte128
 
-		id := backup.Client.StoreBlock(zdata, nil)
+		blockdata := make([]byte, len(rawdata))
+		copy(blockdata, rawdata)
+		id := backup.Client.StoreBlock(core.BlockDataTypeZlib, blockdata, nil)
+		//id := backup.Client.StoreBlock(core.BlockDataTypeZlib, rawdata, nil)
 		links = append(links, id)
 		chain.ChainBlocks = append(chain.ChainBlocks, id)
 		chain.DecryptKeys = append(chain.DecryptKeys, datakey)
 	}
 
 	if len(chain.ChainBlocks) > 1 {
-		id := backup.Client.StoreBlock(SerializeToBuffer(chain), links)
+		id := backup.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToBuffer(chain), links)
 		entry.ContentType = ContentTypeFileChain
 		entry.ContentBlockID = id
 
@@ -357,10 +370,9 @@ func (backup *BackupSession) storeDir(path string, entry *FileEntry) error {
 		}
 	}
 
-	id := backup.Client.StoreBlock(SerializeToBuffer(dir), links)
+	id := backup.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToBuffer(dir), links)
 	entry.ContentType = ContentTypeDirectory
 	entry.ContentBlockID = id
-
 	return nil
 }
 
@@ -406,14 +418,18 @@ func (backup *BackupSession) storePath(path string, toplevel bool) (*FileEntry, 
 			return nil, err
 		}
 		entry.FileLink = core.String(sym)
-		_ = "breakpoint"
 		backup.findAndReuseReference(path, &entry)
 	} else {
 		backup.Log(path)
 		if entry.FileMode&uint32(os.ModeDir) > 0 {
+			refEntry := backup.findReference(path, &entry)
 			if err := backup.storeDir(path, &entry); err != nil {
 				return nil, err
 			}
+			if refEntry != nil && bytes.Equal(refEntry.ContentBlockID[:], entry.ContentBlockID[:]) {
+				entry.ReferenceID = refEntry.ReferenceID
+			}
+
 			backup.Directories++
 		} else {
 			same := backup.findAndReuseReference(path, &entry)
@@ -452,29 +468,31 @@ func (backup *BackupSession) pushReference(path string, referenceBlockID core.By
 	}
 	backup.refQueue = append(list, backup.refQueue...)
 }
-func (backup *BackupSession) findAndReuseReference(path string, entry *FileEntry) bool {
-	_ = "breakpoint"
+func (backup *BackupSession) findReference(path string, entry *FileEntry) *FileEntry {
 	for len(backup.refQueue) > 0 {
-		if backup.refQueue[0].Path < path {
+		if pathLess(backup.refQueue[0].Path, path) {
 			backup.popReference()
 		} else if backup.refQueue[0].Path == path {
-			master := backup.popReference()
-			if master.FileName == entry.FileName && master.FileSize == entry.FileSize && master.FileMode == entry.FileMode && master.ModTime == entry.ModTime && master.FileLink == entry.FileLink {
-				// It's the same!
-				*entry = *master
-				return true
-			}
-			break
+			return backup.popReference()
 		} else {
 			break
 		}
+	}
+	return nil
+}
+func (backup *BackupSession) findAndReuseReference(path string, entry *FileEntry) bool {
+	refEntry := backup.findReference(path, entry)
+	if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize && refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime && refEntry.FileLink == entry.FileLink {
+		// It's the same!
+		*entry = *refEntry
+		return true
 	}
 	return false
 }
 
 func Store(c *core.Client, datasetName string, path ...string) {
+	backup := NewBackupSession(c, &core.DatasetState{StateID: c.SessionNonce})
 
-	backup := BackupSession{Client: c, Start: time.Now(), State: &core.DatasetState{StateID: c.SessionNonce}}
 	c.Paint = cmd.Option["paint"].Value.(bool)
 	backup.ShowProgress = !c.Paint && cmd.Option["progress"].Value.(bool)
 	backup.Verbose = !c.Paint && cmd.Option["v"].Value.(bool)
@@ -500,7 +518,6 @@ func Store(c *core.Client, datasetName string, path ...string) {
 	}
 
 	if virtualRoot {
-		_ = "breakpoint"
 		var links []core.Byte128
 
 		var refdir DirectoryBlock
@@ -528,7 +545,7 @@ func Store(c *core.Client, datasetName string, path ...string) {
 				}
 			}
 		}
-		backup.State.BlockID = c.StoreBlock(SerializeToBuffer(dir), links)
+		backup.State.BlockID = c.StoreBlock(core.BlockDataTypeZlib, SerializeToBuffer(dir), links)
 	} else {
 		if referenceBlockID != nil {
 			// push the last backup root to reference list
@@ -543,6 +560,7 @@ func Store(c *core.Client, datasetName string, path ...string) {
 
 	// Commit all pending writes
 	c.Commit()
+	backup.State.UniqueSize = uint64(backup.Client.WriteDataCompressed)
 	c.AddDatasetState(datasetName, *backup.State)
 
 	fmt.Println()
@@ -556,22 +574,27 @@ func (backup *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, D
 	}
 
 	block := backup.Client.ReadBlock(blockID)
-	backup.ReadData += int64(len(block.Data))
+	backup.ReadData += int64(block.EncodedSize())
 	// TODO: Decrypt block
 	// Uncompress block
 
-	buf := bytes.NewReader(block.Data)
-	zr, err := zlib.NewReader(buf)
-	if err != nil {
-		return err
+	if !block.VerifyBlock() {
+		panic(errors.New("Unable to verify block content, data is corrupted"))
 	}
-	defer zr.Close()
-	written, err := io.Copy(f, zr)
-	if err != nil {
-		return err
-	}
+	core.WriteOrPanic(f, block.Data)
+	backup.WriteData += int64(block.DecodedSize())
+	/*	buf := bytes.NewReader(block.Data)
+		zr, err := zlib.NewReader(buf)
+		if err != nil {
+			return err
+		}
+		defer zr.Close()
+		written, err := io.Copy(f, zr)
+		if err != nil {
+			return err
+		}
 
-	backup.WriteData += int64(written)
+		backup.WriteData += int64(written)*/
 	return nil
 }
 
@@ -584,7 +607,16 @@ func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error
 		if backup.Verbose {
 			fmt.Println(localname)
 		}
-		if e.FileMode&uint32(os.ModeDir) > 0 {
+		if e.FileMode&uint32(os.ModeSymlink) > 0 {
+			switch e.ContentType {
+			case ContentTypeSymLink:
+				if err := os.Symlink(string(e.FileLink), localname); err != nil {
+					return err
+				}
+			default:
+				panic(errors.New(fmt.Sprintf("Invalid ContentType for a Symlink (%d)", e.ContentType)))
+			}
+		} else if e.FileMode&uint32(os.ModeDir) > 0 {
 			if err := os.MkdirAll(localname, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
 				return err
 			}
@@ -596,21 +628,12 @@ func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error
 				}
 			case ContentTypeEmpty:
 			default:
-				panic(errors.New("Invalid ContentType for a directory"))
+				panic(errors.New(fmt.Sprintf("Invalid ContentType for a directory (%d)", e.ContentType)))
 			}
 			backup.Directories++
-		} else if e.FileMode&uint32(os.ModeSymlink) > 0 {
-			switch e.ContentType {
-			case ContentTypeSymLink:
-				if err := os.Symlink(string(e.FileLink), localname); err != nil {
-					return err
-				}
-			default:
-				panic(errors.New("Invalid ContentType for a Symlink"))
-			}
 		} else {
 			if e.ContentType != ContentTypeFileChain && e.ContentType != ContentTypeFileData && e.ContentType != ContentTypeEmpty {
-				panic(errors.New("Invalid ContentType for a file"))
+				panic(errors.New(fmt.Sprintf("Invalid ContentType for a file (%d)", e.ContentType)))
 			}
 			err := func() error {
 				fil, err := os.OpenFile(localname, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(e.FileMode) /*&os.ModePerm*/)
@@ -709,6 +732,11 @@ func Connect() *core.Client {
 }
 
 func main() {
+	/*runtime.SetBlockProfileRate(1000)
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()*/
+
 	defer func() {
 		// Panic error handling
 		if r := recover(); r != nil {
@@ -728,7 +756,7 @@ func main() {
 		}
 	}
 
-	cmd.Title = "Hashback (Hashbox Backup Client)"
+	cmd.Title = "Hashback 0.2-go (Hashbox Backup Client)"
 	cmd.OptionsFile = filepath.Join(preferencesBaseFolder, ".hashback", "options.json")
 	cmd.SaveOptions = func(options map[string]interface{}) error {
 		if options["password"] != nil {
@@ -849,6 +877,9 @@ func main() {
 			}
 		} else {
 			found = len(list.States) - 1
+			if found < 0 {
+				panic(errors.New("No backup found under dataset " + cmd.Args[2]))
+			}
 			path = cmd.Args[3]
 		}
 
@@ -860,7 +891,7 @@ func main() {
 		date := time.Unix(0, int64(timestamp))
 		fmt.Printf("Restoring %x (%s) to path %s\n", list.States[found].StateID, date.Format(time.RFC3339), path)
 
-		backup := BackupSession{Client: client, Start: time.Now(), State: &list.States[found]}
+		backup := NewBackupSession(client, &list.States[found])
 		backup.ShowProgress = cmd.Option["progress"].Value.(bool)
 		backup.Verbose = cmd.Option["v"].Value.(bool)
 

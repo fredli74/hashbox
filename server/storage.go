@@ -7,8 +7,9 @@ package main
 
 import (
 	"bitbucket.org/fredli74/hashbox/core"
+	"bufio"
 	"bytes"
-	"encoding/binary"
+	_ "encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -170,8 +171,11 @@ const (
 	storageFileTypeData       uint32 = 0x48534442 // "HSDB" Hashbox Storage Database
 	storageFileExtensionData  string = ".dat"
 
-	storageDataFileSize int64  = 4 << 32    // 16 GB data files
-	storageDataMarker   uint32 = 0x68626C6B // "hblk"
+	storageIXEntrySize       int = 24  // 24 bytes
+	storageIXEntryProbeLimit int = 682 // 682*24 bytes = 16368 < 16k
+
+	storageDataFileSize int64  = (1 << 34) - 1 // 0x3ffffffff = 16 GiB data files
+	storageDataMarker   uint32 = 0x68626C6B    // "hblk"
 )
 
 type storageFileHeader struct {
@@ -179,7 +183,7 @@ type storageFileHeader struct {
 	version  uint32
 }
 
-func (h storageFileHeader) Serialize(w io.Writer) {
+func (h *storageFileHeader) Serialize(w io.Writer) {
 	core.WriteOrPanic(w, h.filetype)
 	core.WriteOrPanic(w, h.version)
 }
@@ -191,24 +195,40 @@ func (h *storageFileHeader) Unserialize(r io.Reader) {
 	}
 }
 
-type storageIXEntry struct {
-	Flags   uint32       // 4 bytes
+type storageIXEntry struct { // 24 bytes data
+	Flags   int16        // 2 bytes
 	BlockID core.Byte128 // 16 bytes
-	File    int32        // 4 bytes
-	Offset  int64        // 8 bytes
+	// File + offset is serialized as 6 bytes (48 bit) 256 TiB max data
+	// 14 bit for filenumber = 16384 files
+	// 34 bit for filesize = 16 GiB files
+	Location [6]byte
+	//File   int32 // int64(x) >> 34
+	//Offset int64 // int64(x) & 0x3FFFFffff
 }
 
-func (e storageIXEntry) Serialize(w io.Writer) {
+func (e *storageIXEntry) SetLocation(File int32, Offset int64) {
+	var l int64 = int64(File)<<34 | (Offset & 0x3ffffffff)
+	e.Location[0] = byte(l >> 40)
+	e.Location[1] = byte(l >> 32)
+	e.Location[2] = byte(l >> 24)
+	e.Location[3] = byte(l >> 16)
+	e.Location[4] = byte(l >> 8)
+	e.Location[5] = byte(l)
+}
+func (e *storageIXEntry) GetLocation() (File int32, Offset int64) {
+	var l int64 = int64(e.Location[5]) | (int64(e.Location[4]) << 8) | (int64(e.Location[3]) << 16) | (int64(e.Location[2]) << 24) | (int64(e.Location[1]) << 32) | (int64(e.Location[0]) << 40)
+	return int32(l >> 34), (l & 0x3ffffffff)
+}
+
+func (e *storageIXEntry) Serialize(w io.Writer) {
 	core.WriteOrPanic(w, e.Flags)
 	e.BlockID.Serialize(w)
-	core.WriteOrPanic(w, e.File)
-	core.WriteOrPanic(w, e.Offset)
+	core.WriteOrPanic(w, e.Location)
 }
 func (e *storageIXEntry) Unserialize(r io.Reader) {
 	core.ReadOrPanic(r, &e.Flags)
 	e.BlockID.Unserialize(r)
-	core.ReadOrPanic(r, &e.File)
-	core.ReadOrPanic(r, &e.Offset)
+	core.ReadOrPanic(r, &e.Location)
 }
 
 type storageDataEntry struct {
@@ -216,7 +236,7 @@ type storageDataEntry struct {
 	Block       *core.HashboxBlock
 }
 
-func (e storageDataEntry) Serialize(w io.Writer) {
+func (e *storageDataEntry) Serialize(w io.Writer) {
 	core.WriteOrPanic(w, storageDataMarker)
 	e.Block.Serialize(w)
 }
@@ -233,12 +253,10 @@ func (e *storageDataEntry) Unserialize(r io.Reader) {
 	}
 }
 
-// calculateEntryOffset calculates a position into the index file where the blockID should be found using the following formula:
-// Each IXEntry is 32 bytes, so to align the offset to 32 bytes we do not use the first 5 bits in the offset value
-// We also limit the offset to the max size of an indexfile (24 bits = 512MB indexes)
+// calculateEntryOffset calculates a start position into the index file where the blockID could be found using the following formula:
+// Use only the last 24 bits of a hash, multiply that by 24 (which is the byte size of an IXEntry)  (2^24*24 = 384MiB indexes)
 func calculateEntryOffset(blockID core.Byte128) uint32 {
-	// Put first 24 bits of the hash in AND with 24 bits and mask out the first 5 bits
-	return (uint32(blockID[15]) | uint32(blockID[14])<<8 | uint32(blockID[13])<<16) & 0xffffe0
+	return (uint32(blockID[15]) | uint32(blockID[14])<<8 | uint32(blockID[13])<<16) * 24
 }
 
 func (handler *StorageHandler) getNumberedName(fileType string, fileNumber int32) string {
@@ -263,12 +281,12 @@ func (handler *StorageHandler) getNumberedFile(fileType string, fileNumber int32
 }
 
 func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (*storageIXEntry, int32, int64, error) {
-	ixOffset := int64(calculateEntryOffset(blockID))
+	baseOffset := int64(calculateEntryOffset(blockID))
+	ixOffset := baseOffset
 	ixFileNumber := int32(0)
-
 	for {
 		info, err := os.Stat(handler.getNumberedFileName(storageFileExtensionIndex, ixFileNumber))
-		if err != nil || ixOffset >= int64(info.Size()) {
+		if err != nil || baseOffset >= int64(info.Size()) {
 			break
 		}
 		var ixFile = handler.getNumberedFile(storageFileExtensionIndex, ixFileNumber)
@@ -276,21 +294,30 @@ func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (*storageIXEntr
 		var entry storageIXEntry
 		ixFile.Seek(ixOffset, 0)
 
-		err = binary.Read(ixFile, binary.BigEndian, &entry)
-		if err != nil || entry.Flags&1 == 0 {
-			break
-		}
-		if bytes.Equal(blockID[:], entry.BlockID[:]) {
-			return &entry, ixFileNumber, ixOffset, nil
+		r := bufio.NewReaderSize(ixFile, storageIXEntrySize*storageIXEntryProbeLimit)
+
+		for i := 0; i < storageIXEntryProbeLimit; i++ {
+			entry.Unserialize(r)
+			//			err = binary.Read(r, binary.BigEndian, &entry)
+			if /*err != nil || */ entry.Flags&1 == 0 {
+				return nil, ixFileNumber, ixOffset, errors.New("BlockID entry not found")
+			}
+			if bytes.Equal(blockID[:], entry.BlockID[:]) {
+				return &entry, ixFileNumber, ixOffset, nil
+			}
+			ixOffset += int64(storageIXEntrySize)
 		}
 		ixFileNumber++
+		ixOffset = baseOffset
 	}
 	return nil, ixFileNumber, ixOffset, errors.New("BlockID entry not found")
 }
 func (handler *StorageHandler) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *storageIXEntry) {
 	var ixFile = handler.getNumberedFile(storageFileExtensionIndex, ixFileNumber)
 	ixFile.Seek(ixOffset, 0)
-	entry.Serialize(ixFile)
+	w := bufio.NewWriter(ixFile)
+	entry.Serialize(w) // (ixFile)
+	w.Flush()
 }
 
 func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
@@ -319,11 +346,14 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	datFile.Seek(datOffset, 0)
 	data.WriteTo(datFile)
 
-	handler.writeIXEntry(ixFileNumber, ixOffset, &storageIXEntry{Flags: 0x01, BlockID: block.BlockID, File: handler.topDatFileNumber, Offset: datOffset})
+	ixEntry := storageIXEntry{Flags: 0x01, BlockID: block.BlockID}
+	ixEntry.SetLocation(handler.topDatFileNumber, datOffset)
+	handler.writeIXEntry(ixFileNumber, ixOffset, &ixEntry)
 	return true
 }
 
 func (handler *StorageHandler) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, error) {
+	_ = "breakpoint"
 	var dataEntry storageDataEntry
 
 	indexEntry, _, _, err := handler.readIXEntry(blockID)
@@ -331,8 +361,9 @@ func (handler *StorageHandler) readBlockFile(blockID core.Byte128) (*core.Hashbo
 		return nil, err
 	}
 
-	datFile := handler.getNumberedFile(storageFileExtensionData, indexEntry.File)
-	datFile.Seek(indexEntry.Offset, 0)
+	file, offset := indexEntry.GetLocation()
+	datFile := handler.getNumberedFile(storageFileExtensionData, file)
+	datFile.Seek(offset, 0)
 	dataEntry.Unserialize(datFile)
 	return dataEntry.Block, nil
 }

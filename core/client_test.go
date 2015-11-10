@@ -34,6 +34,7 @@ func TestClientInit(t *testing.T) {
 
 	pr, pw := io.Pipe()
 	go func(w io.Writer) {
+		time.Sleep(2 * time.Second)
 		WriteMessage(w, &ProtocolMessage{Num: 0, Type: MsgTypeGreeting & MsgTypeServerMask, Data: &MsgServerGreeting{Hash([]byte("testing"))}})
 		time.Sleep(2 * time.Second)
 		WriteMessage(w, &ProtocolMessage{Num: 1, Type: MsgTypeAuthenticate & MsgTypeServerMask})

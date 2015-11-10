@@ -227,7 +227,7 @@ type dbFileHeader struct {
 	datasetName core.String
 }
 
-func (h dbFileHeader) Serialize(w io.Writer) {
+func (h *dbFileHeader) Serialize(w io.Writer) {
 	core.WriteOrPanic(w, h.filetype)
 	core.WriteOrPanic(w, h.version)
 	h.datasetName.Serialize(w)
@@ -247,7 +247,7 @@ type dbTx struct {
 	data      interface{}
 }
 
-func (t dbTx) Serialize(w io.Writer) {
+func (t *dbTx) Serialize(w io.Writer) {
 	core.WriteOrPanic(w, t.timestamp)
 	core.WriteOrPanic(w, t.txType)
 	t.data.(core.Serializer).Serialize(w)
@@ -276,7 +276,7 @@ type dbStateCollection struct {
 	States core.DatasetStateArray
 }
 
-func (c dbStateCollection) Serialize(w io.Writer) {
+func (c *dbStateCollection) Serialize(w io.Writer) {
 	core.WriteOrPanic(w, c.Size)
 	c.ListH.Serialize(w)
 	c.States.Serialize(w)

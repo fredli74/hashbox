@@ -12,9 +12,7 @@ import (
 	"io"
 )
 
-const (
-	MAX_BLOCKS_IN_PIPE = 256
-)
+// const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MB max blocksize
 
 // Unserializer is our own form of BinaryUnmarshaler but it works directly off a stream so we do not need to know the full size beforehand
 type Unserializer interface {
@@ -51,46 +49,6 @@ func (m *String) Unserialize(r io.Reader) {
 	*m = String(b)
 }
 
-// HashboxBlock is serialized with counters before all arrays
-type HashboxBlock struct {
-	BlockID Byte128   // = md5( LinkLength Links DataLength Data )
-	Links   []Byte128 // Array of BlockIDs
-	Data    []byte    // Block Data
-}
-
-func (b HashboxBlock) SerializeData(w io.Writer) {
-	WriteOrPanic(w, uint32(len(b.Links)))
-	for i := range b.Links {
-		b.Links[i].Serialize(w)
-	}
-	WriteOrPanic(w, uint32(len(b.Data)))
-	WriteOrPanic(w, b.Data)
-}
-func (b HashboxBlock) HashData() (BlockID Byte128) {
-	hash := md5.New()
-	b.SerializeData(hash)
-	copy(BlockID[:], hash.Sum(nil)[:16])
-	return BlockID
-}
-func (b HashboxBlock) Serialize(w io.Writer) {
-	b.BlockID.Serialize(w)
-	b.SerializeData(w)
-}
-func (b *HashboxBlock) Unserialize(r io.Reader) {
-	b.BlockID.Unserialize(r)
-	var n uint32
-	ReadOrPanic(r, &n)
-	if n > 0 {
-		b.Links = make([]Byte128, n)
-		for i := 0; i < int(n); i++ {
-			b.Links[i].Unserialize(r)
-		}
-	}
-	ReadOrPanic(r, &n)
-	b.Data = make([]byte, n)
-	ReadOrPanic(r, &b.Data)
-}
-
 // Dataset stores the information regarding a dataset. ListH is used so that the client can make sure it has the correct listing.
 type Dataset struct {
 	Name  String  // Name of the Dataset
@@ -98,7 +56,7 @@ type Dataset struct {
 	ListH Byte128 // = md5(DatasetContentList)
 }
 
-func (d Dataset) Serialize(w io.Writer) {
+func (d *Dataset) Serialize(w io.Writer) {
 	d.Name.Serialize(w)
 	WriteOrPanic(w, d.Size)
 	d.ListH.Serialize(w)

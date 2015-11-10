@@ -6,6 +6,11 @@
 package main
 
 import (
+	/*	"log"
+		"net/http"
+		_ "net/http/pprof"
+		"runtime"*/
+
 	cmd "bitbucket.org/fredli74/cmdparser"
 	"bitbucket.org/fredli74/hashbox/core"
 
@@ -103,8 +108,13 @@ func handleConnection(conn net.Conn) {
 			unauthorized = !sessionAuthenticated || c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
 			if !unauthorized {
 				// TODO: Need to check that the root BlockID in state exists
-				accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State)
-				// No need to set any data in reply
+				if !storageHandler.doesBlockExist(c.State.BlockID) {
+					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+					reply.Data = &core.MsgServerError{"Dataset pointing to a non existent block"}
+				} else {
+					accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State)
+					// No need to set any data in reply
+				}
 			}
 		case core.MsgTypeRemoveDatasetState:
 			c := incoming.Data.(*core.MsgClientRemoveDatasetState)
@@ -161,9 +171,25 @@ func handleConnection(conn net.Conn) {
 			}
 		case core.MsgTypeWriteBlock:
 			c := incoming.Data.(*core.MsgClientWriteBlock)
-			storageHandler.writeBlock(c.Block)
-			reply.Type = core.MsgTypeAcknowledgeBlock & core.MsgTypeServerMask
-			reply.Data = &core.MsgServerAcknowledgeBlock{BlockID: c.Block.BlockID}
+			_ = "breakpoint"
+			if c.Block.VerifyBlock() {
+				// TODO: need to verify the blockchains on dataset creation because depending on the compression time of the blocks they might come in the wrong order
+				/*for _, l := range c.Block.Links {
+					if !storageHandler.doesBlockExist(l) {
+						reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+						reply.Data = &core.MsgServerError{"Non existant link in block"}
+						break
+					}
+				}
+				if reply.Data == nil */{
+					storageHandler.writeBlock(c.Block)
+					reply.Type = core.MsgTypeAcknowledgeBlock & core.MsgTypeServerMask
+					reply.Data = &core.MsgServerAcknowledgeBlock{BlockID: c.Block.BlockID}
+				}
+			} else {
+				reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+				reply.Data = &core.MsgServerError{"Unable to verify blockID"}
+			}
 		case core.MsgTypeGoodbye:
 			keepAlive = false
 
@@ -196,13 +222,18 @@ func connectionListener(listener *net.TCPListener) {
 }
 
 func main() {
-	defer func() {
+	/*runtime.SetBlockProfileRate(1000)
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6061", nil))
+	}()*/
+
+	/*defer func() {
 		// Panic error handling
 		if r := recover(); r != nil {
 			fmt.Println(r)
 			os.Exit(1)
 		}
-	}()
+	}()*/
 
 	var err error
 
@@ -210,7 +241,7 @@ func main() {
 
 	datDirectory = *flag.String("db", filepath.Join(exeRoot, "data"), "Full path to database files")
 
-	cmd.Title = "Hashbox Server 0.1-go"
+	cmd.Title = "Hashbox Server 0.2.1-go"
 	cmd.AddOption("port", "", "Server listening port", int(core.DEFAULT_SERVER_IP_PORT), cmd.Standard)
 	cmd.AddOption("db", "", "Full path to database files", filepath.Join(exeRoot, "data"), cmd.Standard)
 
@@ -257,15 +288,8 @@ func main() {
 		// blocking channel read
 		select {
 		case <-done:
-			fmt.Println("debug, server quit")
-		case a, ok := <-accountHandler.signal:
-			fmt.Println(a)
-			fmt.Println(ok)
-			fmt.Println("accounthandler quit")
-		case a, ok := <-storageHandler.signal:
-			fmt.Println(a)
-			fmt.Println(ok)
-			fmt.Println("storagehandler quit")
+		case <-accountHandler.signal:
+		case <-storageHandler.signal:
 		}
 
 		serverLog("Hashbox Server terminating")
@@ -289,9 +313,8 @@ func main() {
 		dataEncryptionKey := core.GenerateDataEncryptionKey()
 		fmt.Printf("DEBUG: DataEncryptionKey is: %x\n", dataEncryptionKey)
 		core.EncryptDataInPlace(dataEncryptionKey[:], core.GenerateBackupKey(cmd.Args[2], cmd.Args[3]))
-		block := core.HashboxBlock{Data: dataEncryptionKey[:]}
-		block.BlockID = block.HashData()
-		if !storageHandler.writeBlock(&block) {
+		block := core.NewHashboxBlock(core.BlockDataTypeRaw, dataEncryptionKey[:], nil)
+		if !storageHandler.writeBlock(block) {
 			panic(errors.New("Error writing key block"))
 		}
 		if err := accountHandler.AddDatasetState(accountNameH, core.String("\x07HASHBACK_DEK"), core.DatasetState{BlockID: block.BlockID}); err != nil {

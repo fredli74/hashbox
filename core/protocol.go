@@ -171,7 +171,7 @@ type ProtocolMessage struct {
 	Data interface{}
 }
 
-func (m ProtocolMessage) Serialize(w io.Writer) {
+func (m *ProtocolMessage) Serialize(w io.Writer) {
 	WriteOrPanic(w, m.Num)
 	WriteOrPanic(w, m.Type)
 
@@ -180,9 +180,10 @@ func (m ProtocolMessage) Serialize(w io.Writer) {
 		mt := reflect.TypeOf(m.Data).Elem()
 
 		for i := 0; i < mt.NumField(); i++ {
-			if mv.Field(i).Kind() == reflect.Ptr {
+			// we changed all non-pointer serialize to pointer serialize
+			/*if mv.Field(i).Kind() == reflect.Ptr {
 				mv.Field(i).Elem().Interface().(Serializer).Serialize(w)
-			} else {
+			} else */{
 				mv.Field(i).Interface().(Serializer).Serialize(w)
 			}
 		}
