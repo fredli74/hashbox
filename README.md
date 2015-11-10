@@ -43,7 +43,7 @@ Start the server
 ## Hashbox Backup Client (Hashback) ##
 * Each file is split into blocks based on a rolling checksum
 * Each block hash (block ID) is calculated and sent to the server
-* Server requests only blocks that it does not already have from the client, this in combination with the rollsum splitting allows the server to only request part of files that was not previously backed up
+* Server requests only blocks that it does not already have, this in combination with the rollsum splitting allows the server to only request parts of files that were not previously stored
 * File metadata such as file name, size, modification time and attributes are stored in a directory block
 * A tree of directory blocks are then saved as a dataset version to the server
 * Incremental backups are done by downloading and comparing the directory blocks from the last backup with the current files on disk. This allows for very fast file hash skipping based on file name, size and date.
