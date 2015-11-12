@@ -171,7 +171,6 @@ func handleConnection(conn net.Conn) {
 			}
 		case core.MsgTypeWriteBlock:
 			c := incoming.Data.(*core.MsgClientWriteBlock)
-			_ = "breakpoint"
 			if c.Block.VerifyBlock() {
 				// TODO: need to verify the blockchains on dataset creation because depending on the compression time of the blocks they might come in the wrong order
 				/*for _, l := range c.Block.Links {
@@ -241,9 +240,12 @@ func main() {
 
 	datDirectory = *flag.String("db", filepath.Join(exeRoot, "data"), "Full path to database files")
 
-	cmd.Title = "Hashbox Server 0.2.1-go"
-	cmd.AddOption("port", "", "Server listening port", int(core.DEFAULT_SERVER_IP_PORT), cmd.Standard)
-	cmd.AddOption("db", "", "Full path to database files", filepath.Join(exeRoot, "data"), cmd.Standard)
+	var serverPort int64 = int64(core.DEFAULT_SERVER_IP_PORT)
+	datDirectory = filepath.Join(exeRoot, "data")
+
+	cmd.Title = "Hashbox Server 0.2.2-go"
+	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
+	cmd.StringOption("db", "", "<path>", "Full path to database files", &datDirectory, cmd.Standard)
 
 	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers
 	// start opening files on their own
@@ -253,12 +255,14 @@ func main() {
 	storageHandler = NewStorageHandler()
 	defer storageHandler.Close()
 
-	cmd.AddCommand("", "", func() {
-		datDirectory = cmd.Option["db"].String()
+	cmd.Command("", "", func() { // Default
+		serverAddr := net.TCPAddr{nil, int(serverPort), ""}
 
-		// Default
-
-		serverAddr := net.TCPAddr{nil, int(cmd.Option["port"].Value.(int)), ""}
+		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lock")); err != nil {
+			panic(err)
+		} else {
+			defer lock.Close()
+		}
 
 		var listener *net.TCPListener
 		if listener, err = net.ListenTCP("tcp", &serverAddr); err != nil {
@@ -270,7 +274,7 @@ func main() {
 		done = make(chan bool)
 		defer close(done)
 
-		signalchan := make(chan os.Signal)
+		signalchan := make(chan os.Signal, 1)
 		defer close(signalchan)
 		signal.Notify(signalchan, os.Interrupt)
 		signal.Notify(signalchan, os.Kill)
@@ -297,14 +301,16 @@ func main() {
 
 	// TODO: This is a temporary hack to allow creation of hashback users on the server side
 	// It should be an interface to an adminsitrative tool instead
-	cmd.AddCommand("adduser", "<username> <password>", func() {
-		datDirectory = cmd.Option["db"].String()
+	cmd.Command("adduser", "<username> <password>", func() {
+		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lock")); err != nil {
+			panic(err)
+		} else {
+			defer lock.Close()
+		}
 
 		if len(cmd.Args) < 4 {
 			panic(errors.New("Missing argument to adduser command"))
 		}
-
-		_ = "breakpoint"
 
 		if (!accountHandler.SetInfo(AccountInfo{AccountName: core.String(cmd.Args[2]), AccessKey: core.GenerateAccessKey(cmd.Args[2], cmd.Args[3])})) {
 			panic(errors.New("Error creating account"))
@@ -321,6 +327,26 @@ func main() {
 			panic(err)
 		}
 		fmt.Println("User added")
+	})
+
+	cmd.Command("verify-storage", "", func() {
+		start := time.Now()
+		fmt.Println("Checking dataset transactions")
+		roots := accountHandler.CollectAllRootBlocks()
+		fmt.Println("Checking block chain integrity")
+		storageHandler.CheckChain(roots, true)
+		storageHandler.CheckIndexes()
+		storageHandler.CheckData()
+		fmt.Printf("All checks completed in %.1f minutes\n\n", time.Since(start).Minutes())
+	})
+
+	cmd.Command("gc", "", func() {
+		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lock")); err != nil {
+			panic(err)
+		} else {
+			defer lock.Close()
+		}
+
 	})
 
 	if err := cmd.Parse(); err != nil {

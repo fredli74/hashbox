@@ -107,7 +107,7 @@ func (handler *AccountHandler) dispatcher() {
 				case accounthandler_addset:
 					add := q.data.(queryAddDatasetState)
 
-					result := appendDatasetTx(add.AccountNameH, add.DatasetName, dbTx{timestamp: uint64(time.Now().UnixNano()), txType: dbTxTypeAdd, data: add.State})
+					result := appendDatasetTx(add.AccountNameH, add.DatasetName, dbTx{timestamp: time.Now().UnixNano(), txType: dbTxTypeAdd, data: add.State})
 					// TODO: Just update the collection instead of redoing history each time
 					generateDBFile(add.AccountNameH, add.DatasetName)
 					q.result <- result
@@ -115,7 +115,7 @@ func (handler *AccountHandler) dispatcher() {
 				case accounthandler_removeset:
 					del := q.data.(queryRemoveDatasetState)
 
-					result := appendDatasetTx(del.AccountNameH, del.DatasetName, dbTx{timestamp: uint64(time.Now().UnixNano()), txType: dbTxTypeDel, data: del.StateID})
+					result := appendDatasetTx(del.AccountNameH, del.DatasetName, dbTx{timestamp: time.Now().UnixNano(), txType: dbTxTypeDel, data: del.StateID})
 					// TODO: Just update the collection instead of redoing history each time
 					generateDBFile(del.AccountNameH, del.DatasetName)
 					q.result <- result
@@ -212,18 +212,18 @@ func NewAccountHandler() *AccountHandler {
 //*****************************************************************************************************************//
 
 const (
-	dbVersion                  uint32 = 1
-	dbFileTypeTransaction      uint32 = 0x48415458 // "HATX" Hashbox Account Transaction
+	dbVersion                  int32  = 1
+	dbFileTypeTransaction      int32  = 0x48415458 // "HATX" Hashbox Account Transaction
 	dbFileExtensionTransaction string = ".trn"
-	dbFileTypeDatabase         uint32 = 0x48414442 // "HADB" Hashbox Account Database
+	dbFileTypeDatabase         int32  = 0x48414442 // "HADB" Hashbox Account Database
 	dbFileExtensionDatabase    string = ".db"
-	dbTxTypeAdd                uint32 = 0x2B414444 // "+ADD"
-	dbTxTypeDel                uint32 = 0x2D44454C // "-DEL"
+	dbTxTypeAdd                int32  = 0x2B414444 // "+ADD"
+	dbTxTypeDel                int32  = 0x2D44454C // "-DEL"
 )
 
 type dbFileHeader struct {
-	filetype    uint32
-	version     uint32
+	filetype    int32
+	version     int32
 	datasetName core.String
 }
 
@@ -242,8 +242,8 @@ func (h *dbFileHeader) Unserialize(r io.Reader) {
 }
 
 type dbTx struct {
-	timestamp uint64
-	txType    uint32
+	timestamp int64
+	txType    int32
 	data      interface{}
 }
 
@@ -271,7 +271,7 @@ func (t *dbTx) Unserialize(r io.Reader) {
 
 type dbStateCollection struct {
 	// datasetName is already in the file header
-	Size   uint64       // Size of all data referenced by this dataset
+	Size   int64        // Size of all data referenced by this dataset
 	ListH  core.Byte128 // = md5(States)
 	States core.DatasetStateArray
 }
@@ -323,7 +323,7 @@ func generateDBFile(accountNameH core.Byte128, datasetName core.String) {
 			return
 		}()
 
-		var pointInHistory uint64
+		var pointInHistory int64
 		for {
 			var tx dbTx
 			tx.Unserialize(file)
@@ -410,7 +410,6 @@ func writeInfoFile(accountNameH core.Byte128, a AccountInfo) {
 	a.Datasets.Serialize(file)
 }
 func readInfoFile(accountNameH core.Byte128) *AccountInfo {
-	_ = "breakpoint"
 	file, err := os.OpenFile(accountFilename(accountNameH)+".info", os.O_RDONLY, 0666)
 	if err != nil {
 		return nil
@@ -428,9 +427,90 @@ func base64filename(d []byte) string {
 }
 func accountFilename(nameHash core.Byte128) string {
 	name := base64filename(nameHash[:])
-	return filepath.Join(datDirectory, "account/"+name)
+	return filepath.Join(datDirectory, "account", name)
 }
 func datasetFilename(aH core.Byte128, dName string) string {
 	dNameH := core.Hash([]byte(dName))
 	return accountFilename(aH) + "." + base64filename(dNameH[:])
+}
+
+func (handler *AccountHandler) CollectAllRootBlocks() []core.Byte128 {
+	var rootBlocks []core.Byte128
+
+	// Open each dataset and check the chains
+	dir, err := os.Open(filepath.Join(datDirectory, "account"))
+	if err != nil {
+		panic(err)
+	}
+	defer dir.Close()
+	dirlist, err := dir.Readdir(-1)
+	if err != nil {
+		panic(err)
+	}
+	for _, info := range dirlist {
+		name := info.Name()
+
+		//QD1vW7edNkcC2V9fbfUvPQ.ceQB36m3wPa0zw4F3ZE6ow.trn
+		if len(name) == 49 && name[45:49] == ".trn" {
+			// Read the accountHash from the filename
+			var accountHash core.Byte128
+			{
+				a, err := base64.RawURLEncoding.DecodeString(name[0:22])
+				if err != nil {
+					panic(err)
+				}
+				accountHash.Set(a)
+			}
+
+			// Open the file, read and check the file headers
+			fil, err := os.Open(filepath.Join(datDirectory, "account", name))
+			if err != nil {
+				panic(err)
+			}
+			var header dbFileHeader
+			header.Unserialize(fil)
+			if header.filetype != dbFileTypeTransaction {
+				panic(errors.New("File " + name + " is not a valid transaction file"))
+			}
+			if header.version != dbVersion {
+				panic(errors.New("File " + name + " is not the correct version"))
+			}
+			datasetName := header.datasetName
+			var datasetHashA core.Byte128
+			{
+				d, err := base64.RawURLEncoding.DecodeString(name[23:45])
+				if err != nil {
+					panic(err)
+				}
+				datasetHashA.Set(d)
+			}
+			datasetHashB := core.Hash([]byte(datasetName))
+			if datasetHashB.Compare(datasetHashA) != 0 {
+				panic(errors.New("Header for " + name + " does not contain the correct dataset name"))
+			}
+			fil.Close()
+
+			// Generate the DB file from transactions
+			generateDBFile(accountHash, datasetName)
+
+			// Open and check the hash for the dataset state collection
+			collection := readDBFile(accountHash, datasetName)
+			{
+				hash := md5.New()
+				for _, s := range collection.States {
+					s.Serialize(hash)
+				}
+				var ListH core.Byte128
+				ListH.Set(hash.Sum(nil)[:])
+				if ListH.Compare(collection.ListH) != 0 {
+					panic(errors.New("Stored list hash for " + name + " is not correct"))
+				}
+			}
+
+			for _, state := range collection.States {
+				rootBlocks = append(rootBlocks, state.BlockID)
+			}
+		}
+	}
+	return rootBlocks
 }

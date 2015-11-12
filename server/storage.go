@@ -247,6 +247,7 @@ func (e *storageDataEntry) Unserialize(r io.Reader) {
 	}
 	e.Block = &core.HashboxBlock{}
 	e.Block.Unserialize(r)
+	// TODO: remove this check, it is to heavy on every read for a small NAS
 	testhash := e.Block.HashData()
 	if !bytes.Equal(testhash[:], e.Block.BlockID[:]) {
 		panic(errors.New(fmt.Sprintf("Corrupted Block read from disk (hash check incorrect, %x != %x", e.Block.HashData(), e.Block.BlockID)))
@@ -286,7 +287,7 @@ func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (*storageIXEntr
 	ixFileNumber := int32(0)
 	for {
 		info, err := os.Stat(handler.getNumberedFileName(storageFileExtensionIndex, ixFileNumber))
-		if err != nil || baseOffset >= int64(info.Size()) {
+		if err != nil || baseOffset >= info.Size() {
 			break
 		}
 		var ixFile = handler.getNumberedFile(storageFileExtensionIndex, ixFileNumber)
@@ -352,6 +353,33 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	return true
 }
 
+func (handler *StorageHandler) readBlockLinks(blockID core.Byte128) ([]core.Byte128, error) {
+	var links []core.Byte128
+
+	indexEntry, _, _, err := handler.readIXEntry(blockID)
+	if err != nil {
+		return []core.Byte128{}, err
+	}
+
+	file, offset := indexEntry.GetLocation()
+	datFile := handler.getNumberedFile(storageFileExtensionData, file)
+	datFile.Seek(offset+4, 0) // 4 bytes to skip the datamarker
+	var dataBlockID core.Byte128
+	dataBlockID.Unserialize(datFile)
+	if blockID.Compare(dataBlockID) != 0 {
+		panic(errors.New(fmt.Sprintf("Error reading block %x, index is pointing to block %x", blockID[:], dataBlockID[:])))
+	}
+	var n uint32
+	core.ReadOrPanic(datFile, &n)
+	if n > 0 {
+		links = make([]core.Byte128, n)
+		for i := 0; i < int(n); i++ {
+			links[i].Unserialize(datFile)
+		}
+	}
+	return links, nil
+}
+
 func (handler *StorageHandler) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, error) {
 	_ = "breakpoint"
 	var dataEntry storageDataEntry
@@ -366,4 +394,96 @@ func (handler *StorageHandler) readBlockFile(blockID core.Byte128) (*core.Hashbo
 	datFile.Seek(offset, 0)
 	dataEntry.Unserialize(datFile)
 	return dataEntry.Block, nil
+}
+
+func (handler *StorageHandler) CheckChain(roots []core.Byte128, Paint bool) {
+	var chain []core.Byte128
+	chain = append(chain, roots...)
+	for i := 0; len(chain) > 0; i++ {
+		links, err := handler.readBlockLinks(chain[0])
+		if err != nil {
+			panic(err)
+		}
+		chain = append(chain[1:], links...)
+		if Paint && i%2000 == 1974 {
+			fmt.Printf("%8d links\r", len(chain))
+		}
+	}
+}
+
+func (handler *StorageHandler) CheckIndexes() {
+
+	for ixFileNumber := int32(0); ; ixFileNumber++ {
+		info, err := os.Stat(handler.getNumberedFileName(storageFileExtensionIndex, ixFileNumber))
+		if err != nil {
+			break // no more indexes
+		}
+		fmt.Printf("Checking index file #%d (%s)\n", ixFileNumber, core.HumanSize(info.Size()))
+		if (info.Size()/int64(storageIXEntrySize))*int64(storageIXEntrySize) != info.Size() {
+			panic(errors.New(fmt.Sprintf("Index file %d size is not evenly divisable by the index entry size, file must be damaged", ixFileNumber)))
+		}
+		var ixFile = handler.getNumberedFile(storageFileExtensionIndex, ixFileNumber)
+
+		var entry storageIXEntry
+
+		r := bufio.NewReaderSize(ixFile, storageIXEntrySize*storageIXEntryProbeLimit)
+
+		var lastProgress = -1
+		for offset := int64(0); offset < info.Size(); offset += int64(storageIXEntrySize) {
+			ixFile.Seek(offset, 0)
+			entry.Unserialize(r)
+			if entry.Flags&1 == 1 { // In use
+				o := int64(calculateEntryOffset(entry.BlockID))
+				if offset < o {
+					panic(errors.New(fmt.Sprintf("Block %x found on an invalid offset %d, it should be >= %d", entry.BlockID[:], offset, o)))
+				}
+
+				file, offset := entry.GetLocation()
+				datFile := handler.getNumberedFile(storageFileExtensionData, file)
+				datFile.Seek(offset+4, 0) // 4 bytes to skip the datamarker
+				var dataBlockID core.Byte128
+				dataBlockID.Unserialize(datFile)
+				if entry.BlockID.Compare(dataBlockID) != 0 {
+					panic(errors.New(fmt.Sprintf("Error reading block %x, index is pointing to block %x", entry.BlockID[:], dataBlockID[:])))
+				}
+			}
+
+			p := int(offset * 100 / info.Size())
+			if p > lastProgress {
+				lastProgress = p
+				fmt.Printf("%d%%\r", lastProgress)
+			}
+		}
+	}
+
+}
+
+func (handler *StorageHandler) CheckData() {
+
+	for datFileNumber := int32(0); ; datFileNumber++ {
+		info, err := os.Stat(handler.getNumberedFileName(storageFileExtensionData, datFileNumber))
+		if err != nil {
+			break // no more indexes
+		}
+		fmt.Printf("Checking data file #%d (%s)\n", datFileNumber, core.HumanSize(info.Size()))
+		var datFile = handler.getNumberedFile(storageFileExtensionData, datFileNumber)
+		datFile.Seek(0, 0)
+
+		var dataEntry storageDataEntry
+
+		var lastProgress = -1
+		for offset := int64(0); offset < info.Size(); offset, _ = datFile.Seek(0, 1) {
+			dataEntry.Unserialize(datFile)
+			if !dataEntry.Block.VerifyBlock() {
+				panic(errors.New(fmt.Sprintf("Unable to verify block %x at %d in data file %d", dataEntry.Block.BlockID, offset, datFileNumber)))
+			}
+
+			p := int(offset * 100 / info.Size())
+			if p > lastProgress {
+				lastProgress = p
+				fmt.Printf("%d%%\r", lastProgress)
+			}
+		}
+	}
+
 }

@@ -7,8 +7,10 @@
 package core
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/binary"
+	"fmt"
 	"io"
 )
 
@@ -33,6 +35,12 @@ func (b Byte128) Serialize(w io.Writer) {
 func (b *Byte128) Unserialize(r io.Reader) {
 	ReadOrPanic(r, b[:])
 }
+func (b *Byte128) Compare(a Byte128) int {
+	return bytes.Compare((*b)[:], a[:])
+}
+func (b *Byte128) Set(from []byte) {
+	copy(b[:16], from)
+}
 
 // String is serialized as uint32(length) + [length]byte arrays
 type String string
@@ -52,7 +60,7 @@ func (m *String) Unserialize(r io.Reader) {
 // Dataset stores the information regarding a dataset. ListH is used so that the client can make sure it has the correct listing.
 type Dataset struct {
 	Name  String  // Name of the Dataset
-	Size  uint64  // Size of all data referenced by this dataset
+	Size  int64   // Size of all data referenced by this dataset
 	ListH Byte128 // = md5(DatasetContentList)
 }
 
@@ -93,8 +101,8 @@ func (a *DatasetArray) Unserialize(r io.Reader) {
 type DatasetState struct {
 	StateID    Byte128 // Unique ID of the state
 	BlockID    Byte128 // ID of the Block this Dataset is referring to
-	Size       uint64  // Size of all data referenced by this dataset state
-	UniqueSize uint64  // Size of unique data (added blocks)
+	Size       int64   // Size of all data referenced by this dataset state
+	UniqueSize int64   // Size of unique data (added blocks)
 }
 
 func (d DatasetState) Serialize(w io.Writer) {
@@ -214,4 +222,25 @@ func WriteOrPanic(w io.Writer, data interface{}) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+var humanUnitName []string
+
+func init() {
+	humanUnitName = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "really?"}
+}
+
+func HumanSize(size int64) string {
+	floatSize := float64(size)
+	unit := 0
+	for ; floatSize > 1000; floatSize /= 1024 {
+		unit++
+	}
+	precision := 0
+	if unit > 0 && floatSize < 10 {
+		precision = 2
+	} else if unit > 0 && floatSize < 100 {
+		precision = 1
+	}
+	return fmt.Sprintf("%.*f %s", precision, floatSize, humanUnitName[unit])
 }
