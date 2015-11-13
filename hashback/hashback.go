@@ -6,10 +6,10 @@
 package main
 
 import (
-	// "log"
-	// "net/http"
-	// _ "net/http/pprof"
-	// "runtime"
+	"log"
+	"net/http"
+	_ "net/http/pprof"
+	"runtime"
 
 	cmd "bitbucket.org/fredli74/cmdparser"
 	"bitbucket.org/fredli74/hashbox/core"
@@ -99,47 +99,49 @@ func (e FileEntry) HasFileLink() bool {
 	return (e.ContentType == ContentTypeSymLink)
 }
 
-func (e FileEntry) Serialize(w io.Writer) {
-	core.WriteOrPanic(w, uint32(0x66656E74))
-	e.FileName.Serialize(w)
-	core.WriteOrPanic(w, e.FileSize)
-	core.WriteOrPanic(w, e.FileMode)
-	core.WriteOrPanic(w, e.ModTime)
-	e.ReferenceID.Serialize(w)
+func (e FileEntry) Serialize(w io.Writer) (size int) {
+	size += core.WriteOrPanic(w, uint32(0x66656E74))
+	size += e.FileName.Serialize(w)
+	size += core.WriteOrPanic(w, e.FileSize)
+	size += core.WriteOrPanic(w, e.FileMode)
+	size += core.WriteOrPanic(w, e.ModTime)
+	size += e.ReferenceID.Serialize(w)
 
-	core.WriteOrPanic(w, e.ContentType)
+	size += core.WriteOrPanic(w, e.ContentType)
 	if e.HasContentBlockID() {
-		e.ContentBlockID.Serialize(w)
+		size += e.ContentBlockID.Serialize(w)
 	}
 	if e.HasDecryptKey() {
-		e.DecryptKey.Serialize(w)
+		size += e.DecryptKey.Serialize(w)
 	}
 	if e.HasFileLink() {
-		e.FileLink.Serialize(w)
+		size += e.FileLink.Serialize(w)
 	}
+	return
 }
-func (e *FileEntry) Unserialize(r io.Reader) {
+func (e *FileEntry) Unserialize(r io.Reader) (size int) {
 	var check uint32
-	core.ReadOrPanic(r, &check)
+	size += core.ReadOrPanic(r, &check)
 	if check != 0x66656E74 {
 		panic(errors.New("Corrupted FileEntry!"))
 	}
-	e.FileName.Unserialize(r)
-	core.ReadOrPanic(r, &e.FileSize)
-	core.ReadOrPanic(r, &e.FileMode)
-	core.ReadOrPanic(r, &e.ModTime)
-	e.ReferenceID.Unserialize(r)
+	size += e.FileName.Unserialize(r)
+	size += core.ReadOrPanic(r, &e.FileSize)
+	size += core.ReadOrPanic(r, &e.FileMode)
+	size += core.ReadOrPanic(r, &e.ModTime)
+	size += e.ReferenceID.Unserialize(r)
 
-	core.ReadOrPanic(r, &e.ContentType)
+	size += core.ReadOrPanic(r, &e.ContentType)
 	if e.HasContentBlockID() {
-		e.ContentBlockID.Unserialize(r)
+		size += e.ContentBlockID.Unserialize(r)
 	}
 	if e.HasDecryptKey() {
-		e.DecryptKey.Unserialize(r)
+		size += e.DecryptKey.Unserialize(r)
 	}
 	if e.HasFileLink() {
-		e.FileLink.Unserialize(r)
+		size += e.FileLink.Unserialize(r)
 	}
+	return size
 }
 
 type FileChainBlock struct {
@@ -148,54 +150,58 @@ type FileChainBlock struct {
 	DecryptKeys []core.Byte128
 }
 
-func (b FileChainBlock) Serialize(w io.Writer) {
-	core.WriteOrPanic(w, uint32(0x6663686E))
-	core.WriteOrPanic(w, uint32(len(b.ChainBlocks)))
+func (b FileChainBlock) Serialize(w io.Writer) (size int) {
+	size += core.WriteOrPanic(w, uint32(0x6663686E))
+	size += core.WriteOrPanic(w, uint32(len(b.ChainBlocks)))
 	for i := range b.ChainBlocks {
-		b.ChainBlocks[i].Serialize(w)
-		b.DecryptKeys[i].Serialize(w)
+		size += b.ChainBlocks[i].Serialize(w)
+		size += b.DecryptKeys[i].Serialize(w)
 	}
+	return
 }
-func (b *FileChainBlock) Unserialize(r io.Reader) {
+func (b *FileChainBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
-	core.ReadOrPanic(r, &check)
+	size += core.ReadOrPanic(r, &check)
 	if check != 0x6663686E {
 		panic(errors.New("Corrupted FileChainBlock!"))
 	}
 	var l uint32
-	core.ReadOrPanic(r, &l)
+	size += core.ReadOrPanic(r, &l)
 	b.ChainBlocks = make([]core.Byte128, l)
 	b.DecryptKeys = make([]core.Byte128, l)
 	for i := range b.ChainBlocks {
-		b.ChainBlocks[i].Unserialize(r)
-		b.DecryptKeys[i].Unserialize(r)
+		size += b.ChainBlocks[i].Unserialize(r)
+		size += b.DecryptKeys[i].Unserialize(r)
 	}
+	return
 }
 
 type DirectoryBlock struct {
 	File []*FileEntry
 }
 
-func (b DirectoryBlock) Serialize(w io.Writer) {
-	core.WriteOrPanic(w, uint32(0x64626C6B))
-	core.WriteOrPanic(w, uint32(len(b.File)))
+func (b DirectoryBlock) Serialize(w io.Writer) (size int) {
+	size += core.WriteOrPanic(w, uint32(0x64626C6B))
+	size += core.WriteOrPanic(w, uint32(len(b.File)))
 	for _, f := range b.File {
-		f.Serialize(w)
+		size += f.Serialize(w)
 	}
+	return
 }
-func (b *DirectoryBlock) Unserialize(r io.Reader) {
+func (b *DirectoryBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
-	core.ReadOrPanic(r, &check)
+	size += core.ReadOrPanic(r, &check)
 	if check != 0x64626C6B {
 		panic(errors.New("Corrupted DirectoryBlock!"))
 	}
 	var l uint32
-	core.ReadOrPanic(r, &l)
+	size += core.ReadOrPanic(r, &l)
 	b.File = make([]*FileEntry, l)
 	for i := range b.File {
 		b.File[i] = new(FileEntry)
-		b.File[i].Unserialize(r)
+		size += b.File[i].Unserialize(r)
 	}
+	return
 }
 
 type referenceEntry struct {
@@ -254,6 +260,9 @@ func (session *BackupSession) Close() {
 
 func (session *BackupSession) Log(v ...interface{}) {
 	if session.Verbose {
+		if session.Paint {
+			fmt.Println()
+		}
 		fmt.Println(v...)
 	}
 }
@@ -263,6 +272,9 @@ func (session *BackupSession) PrintStoreProgress() {
 		compression = 100.0 * (float64(session.Client.WriteData) - float64(session.Client.WriteDataCompressed)) / float64(session.Client.WriteData)
 	}
 	sent, skipped, _, queuedsize := session.Client.GetStats()
+	if session.Paint {
+		fmt.Println()
+	}
 	fmt.Printf("*** %.1f min, read: %s, write: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s\n",
 		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(session.Client.WriteDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
 		sent, skipped+sent, core.HumanSize(int64(queuedsize)))
@@ -444,7 +456,6 @@ func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry,
 		entry.FileLink = core.String(sym)
 		session.findAndReuseReference(path, &entry)
 	} else {
-		session.Log(path, entry.FileMode)
 		if entry.FileMode&uint32(os.ModeDir) > 0 {
 			refEntry := session.findReference(path, &entry)
 			if err := session.storeDir(path, &entry); err != nil {
@@ -459,6 +470,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry,
 			same := session.findAndReuseReference(path, &entry)
 
 			if !same && entry.FileSize > 0 {
+				session.Log(path, entry.FileMode)
 				if err := session.storeFile(path, &entry); err != nil {
 					return nil, err
 				}
@@ -692,10 +704,10 @@ func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error
 func main() {
 	var lockFile *core.LockFile
 
-	/*runtime.SetBlockProfileRate(1000)
+	runtime.SetBlockProfileRate(1000)
 	go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
-	}()*/
+	}()
 
 	/*	defer func() {
 		// Panic error handling

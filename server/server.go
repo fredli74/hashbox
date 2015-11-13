@@ -37,6 +37,14 @@ var done chan bool
 
 var logLock sync.Mutex
 
+const DEBUG = false
+
+func Debug(format string, a ...interface{}) {
+	if DEBUG {
+		fmt.Printf(format, a...)
+		fmt.Println()
+	}
+}
 func clientLog(v ...interface{}) {
 	logLock.Lock()
 	fmt.Print("C: ")
@@ -347,6 +355,14 @@ func main() {
 			defer lock.Close()
 		}
 
+		start := time.Now()
+		fmt.Println("Marking index entries")
+		roots := accountHandler.CollectAllRootBlocks()
+		storageHandler.MarkIndexes(roots, true)
+		storageHandler.SweepIndexes(true)
+		storageHandler.CompactData(true)
+
+		fmt.Printf("Garbage collection completed in %.1f minutes\n\n", time.Since(start).Minutes())
 	})
 
 	if err := cmd.Parse(); err != nil {

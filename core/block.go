@@ -36,19 +36,21 @@ func NewHashboxBlock(dataType byte, data []byte, links []Byte128) *HashboxBlock 
 	return &block
 }
 
-func (b *HashboxBlock) SerializeLinks(w io.Writer) {
-	WriteOrPanic(w, uint32(len(b.Links)))
+func (b *HashboxBlock) SerializeLinks(w io.Writer) (size int) {
+	size += WriteOrPanic(w, uint32(len(b.Links)))
 	for i := range b.Links {
-		b.Links[i].Serialize(w)
+		size += b.Links[i].Serialize(w)
 	}
+	return
 }
-func (b *HashboxBlock) Serialize(w io.Writer) {
-	b.BlockID.Serialize(w)
-	b.SerializeLinks(w)
-	WriteOrPanic(w, b.DataType)
+func (b *HashboxBlock) Serialize(w io.Writer) (size int) {
+	size += b.BlockID.Serialize(w)
+	size += b.SerializeLinks(w)
+	size += WriteOrPanic(w, b.DataType)
 	b.EncodeData()
-	WriteOrPanic(w, uint32(len(b.encodedData)))
-	WriteOrPanic(w, b.encodedData)
+	size += WriteOrPanic(w, uint32(len(b.encodedData)))
+	size += WriteOrPanic(w, b.encodedData)
+	return
 }
 func (b *HashboxBlock) HashData() (BlockID Byte128) {
 	hash := md5.New()
@@ -61,22 +63,22 @@ func (b *HashboxBlock) HashData() (BlockID Byte128) {
 	copy(BlockID[:], hash.Sum(nil)[:16])
 	return BlockID
 }
-func (b *HashboxBlock) Unserialize(r io.Reader) {
-	b.BlockID.Unserialize(r)
+func (b *HashboxBlock) Unserialize(r io.Reader) (size int) {
+	size += b.BlockID.Unserialize(r)
 	var n uint32
-	ReadOrPanic(r, &n)
+	size += ReadOrPanic(r, &n)
 	if n > 0 {
 		b.Links = make([]Byte128, n)
 		for i := 0; i < int(n); i++ {
-			b.Links[i].Unserialize(r)
+			size += b.Links[i].Unserialize(r)
 		}
 	}
-	ReadOrPanic(r, &b.DataType)
-	ReadOrPanic(r, &n)
+	size += ReadOrPanic(r, &b.DataType)
+	size += ReadOrPanic(r, &n)
 	b.encodedData = make([]byte, n)
-	ReadOrPanic(r, &b.encodedData)
+	size += ReadOrPanic(r, &b.encodedData)
 	b.Data = nil // reset to make sure we decode the data
-	b.DecodeData()
+	return
 }
 
 func (b *HashboxBlock) DecodeData() []byte {

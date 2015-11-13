@@ -18,22 +18,24 @@ import (
 
 // Unserializer is our own form of BinaryUnmarshaler but it works directly off a stream so we do not need to know the full size beforehand
 type Unserializer interface {
-	Unserialize(r io.Reader)
+	Unserialize(r io.Reader) (size int)
 }
 
 // Serializer is our own form of BinaryMarshaler but it works directly off a stream to be compatible with Unserializer
 type Serializer interface {
-	Serialize(w io.Writer)
+	Serialize(w io.Writer) (size int)
 }
 
 // Byte128 is just an alias to a 16 byte array since we use a lot of 128-bit key and check values in Hashbox
 type Byte128 [16]byte
 
-func (b Byte128) Serialize(w io.Writer) {
-	WriteOrPanic(w, b[:])
+func (b Byte128) Serialize(w io.Writer) (size int) {
+	size += WriteOrPanic(w, b[:])
+	return
 }
-func (b *Byte128) Unserialize(r io.Reader) {
-	ReadOrPanic(r, b[:])
+func (b *Byte128) Unserialize(r io.Reader) (size int) {
+	size += ReadOrPanic(r, b[:])
+	return
 }
 func (b *Byte128) Compare(a Byte128) int {
 	return bytes.Compare((*b)[:], a[:])
@@ -45,16 +47,18 @@ func (b *Byte128) Set(from []byte) {
 // String is serialized as uint32(length) + [length]byte arrays
 type String string
 
-func (m String) Serialize(w io.Writer) {
-	WriteOrPanic(w, int32(len(m)))
-	WriteOrPanic(w, []byte(m))
+func (m String) Serialize(w io.Writer) (size int) {
+	size += WriteOrPanic(w, int32(len(m)))
+	size += WriteOrPanic(w, []byte(m))
+	return
 }
-func (m *String) Unserialize(r io.Reader) {
+func (m *String) Unserialize(r io.Reader) (size int) {
 	var l int32
-	ReadOrPanic(r, &l)
+	size += ReadOrPanic(r, &l)
 	b := make([]byte, l)
-	ReadOrPanic(r, b)
+	size += ReadOrPanic(r, b)
 	*m = String(b)
+	return
 }
 
 // Dataset stores the information regarding a dataset. ListH is used so that the client can make sure it has the correct listing.
@@ -64,37 +68,41 @@ type Dataset struct {
 	ListH Byte128 // = md5(DatasetContentList)
 }
 
-func (d *Dataset) Serialize(w io.Writer) {
-	d.Name.Serialize(w)
-	WriteOrPanic(w, d.Size)
-	d.ListH.Serialize(w)
+func (d *Dataset) Serialize(w io.Writer) (size int) {
+	size += d.Name.Serialize(w)
+	size += WriteOrPanic(w, d.Size)
+	size += d.ListH.Serialize(w)
+	return
 }
-func (d *Dataset) Unserialize(r io.Reader) {
-	d.Name.Unserialize(r)
-	ReadOrPanic(r, &d.Size)
-	d.ListH.Unserialize(r)
+func (d *Dataset) Unserialize(r io.Reader) (size int) {
+	size += d.Name.Unserialize(r)
+	size += ReadOrPanic(r, &d.Size)
+	size += d.ListH.Unserialize(r)
+	return
 }
 
 type DatasetArray []Dataset
 
-func (a DatasetArray) Serialize(w io.Writer) {
-	WriteOrPanic(w, uint32(len(a)))
+func (a DatasetArray) Serialize(w io.Writer) (size int) {
+	size += WriteOrPanic(w, uint32(len(a)))
 	for i := range a {
-		a[i].Serialize(w)
+		size += a[i].Serialize(w)
 	}
+	return
 }
-func (a *DatasetArray) Unserialize(r io.Reader) {
+func (a *DatasetArray) Unserialize(r io.Reader) (size int) {
 	var n uint32
-	ReadOrPanic(r, &n)
+	size += ReadOrPanic(r, &n)
 	if n > 0 {
 		A := make([]Dataset, n)
 		for i := 0; i < int(n); i++ {
-			A[i].Unserialize(r)
+			size += A[i].Unserialize(r)
 		}
 		*a = A
 		return
 	}
 	*a = nil
+	return
 }
 
 // DatasetState stores a specific state (snapshot) of a Dataset.
@@ -105,39 +113,43 @@ type DatasetState struct {
 	UniqueSize int64   // Size of unique data (added blocks)
 }
 
-func (d DatasetState) Serialize(w io.Writer) {
-	d.StateID.Serialize(w)
-	d.BlockID.Serialize(w)
-	WriteOrPanic(w, d.Size)
-	WriteOrPanic(w, d.UniqueSize)
+func (d DatasetState) Serialize(w io.Writer) (size int) {
+	size += d.StateID.Serialize(w)
+	size += d.BlockID.Serialize(w)
+	size += WriteOrPanic(w, d.Size)
+	size += WriteOrPanic(w, d.UniqueSize)
+	return
 }
-func (m *DatasetState) Unserialize(r io.Reader) {
-	m.StateID.Unserialize(r)
-	m.BlockID.Unserialize(r)
-	ReadOrPanic(r, &m.Size)
-	ReadOrPanic(r, &m.UniqueSize)
+func (m *DatasetState) Unserialize(r io.Reader) (size int) {
+	size += m.StateID.Unserialize(r)
+	size += m.BlockID.Unserialize(r)
+	size += ReadOrPanic(r, &m.Size)
+	size += ReadOrPanic(r, &m.UniqueSize)
+	return
 }
 
 type DatasetStateArray []DatasetState
 
-func (a DatasetStateArray) Serialize(w io.Writer) {
-	WriteOrPanic(w, uint32(len(a)))
+func (a DatasetStateArray) Serialize(w io.Writer) (size int) {
+	size += WriteOrPanic(w, uint32(len(a)))
 	for i := range a {
-		a[i].Serialize(w)
+		size += a[i].Serialize(w)
 	}
+	return
 }
-func (a *DatasetStateArray) Unserialize(r io.Reader) {
+func (a *DatasetStateArray) Unserialize(r io.Reader) (size int) {
 	var n uint32
-	ReadOrPanic(r, &n)
+	size += ReadOrPanic(r, &n)
 	if n > 0 {
 		A := make([]DatasetState, n)
 		for i := 0; i < int(n); i++ {
-			A[i].Unserialize(r)
+			size += A[i].Unserialize(r)
 		}
 		*a = A
 		return
 	}
 	*a = nil
+	return
 }
 func (a DatasetStateArray) Len() int      { return len(a) }
 func (a DatasetStateArray) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
@@ -211,17 +223,19 @@ func DeepHmac(depth int, data []byte, key Byte128) Byte128 {
 	return hash
 }
 
-func ReadOrPanic(r io.Reader, data interface{}) {
+func ReadOrPanic(r io.Reader, data interface{}) int {
 	err := binary.Read(r, binary.BigEndian, data)
 	if err != nil {
 		panic(err)
 	}
+	return binary.Size(data)
 }
-func WriteOrPanic(w io.Writer, data interface{}) {
+func WriteOrPanic(w io.Writer, data interface{}) int {
 	err := binary.Write(w, binary.BigEndian, data)
 	if err != nil {
 		panic(err)
 	}
+	return binary.Size(data)
 }
 
 var humanUnitName []string
@@ -243,4 +257,25 @@ func HumanSize(size int64) string {
 		precision = 1
 	}
 	return fmt.Sprintf("%.*f %s", precision, floatSize, humanUnitName[unit])
+}
+
+const MaxUint = ^uint(0)
+const MinUint = 0
+const MaxInt = int(MaxUint >> 1)
+const MinInt = -MaxInt - 1
+
+func BytesInt64(bytes []byte) (v int64) {
+	for _, b := range bytes {
+		v <<= 8
+		v |= int64(b)
+	}
+	return v
+}
+
+func LimitInt(big int64) (v int) {
+	v = MaxInt
+	if big < int64(v) {
+		v = int(big)
+	}
+	return v
 }
