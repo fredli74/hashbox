@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const DEFAULT_MAX_QUEUE_MEMORY int = 32 * 1024 * 1024 // 32 MB max memory
+const DEFAULT_MAX_QUEUE_MEMORY int = 32 * 1024 * 1024 // 32 MiB max memory
 
 type messageDispatch struct {
 	msg           *ProtocolMessage
@@ -44,7 +44,7 @@ type Client struct {
 	transmittedBlocks int32
 	skippedBlocks     int32
 
-	sendqueue   []*HashboxBlock
+	sendqueue   []*sendQueueEntry
 	sendworkers int32
 
 	WriteData           int64
@@ -106,41 +106,78 @@ func (c *Client) Close() {
 	c.wg.Wait()
 }
 
+type sendQueueEntry struct {
+	block *HashboxBlock
+	state int32 // 0 - new, 1 - compressing, 2 - compressed, 3 - sending, 4 - sent
+}
+
 func (c *Client) sendQueue(what Byte128) {
 	c.dispatchMutex.Lock()
 	defer c.dispatchMutex.Unlock()
 	block := c.blockbuffer[what]
 	if block != nil {
-		c.sendqueue = append(c.sendqueue, block)
+		c.sendqueue = append(c.sendqueue, &sendQueueEntry{block, 0})
+		//		fmt.Printf("+q=%d;", len(c.sendqueue))
 
 		if c.sendworkers < int32(runtime.NumCPU()) {
 			atomic.AddInt32(&c.sendworkers, 1)
 			go func() {
-				for {
-					var reply *HashboxBlock
+				for done := false; !done; {
+					var workItem *sendQueueEntry
 
 					c.dispatchMutex.Lock()
 					if len(c.sendqueue) > 0 {
-						reply, c.sendqueue = c.sendqueue[0], c.sendqueue[1:]
+						if c.sendqueue[0].state == 2 { // compressed
+							c.blockqueuesize -= ChunkQuantize(c.sendqueue[0].block.UncompressedSize)
+							c.blockqueuesize += ChunkQuantize(c.sendqueue[0].block.CompressedSize)
+							workItem = c.sendqueue[0] // send it
+						} else if c.sendqueue[0].state == 4 { // sent
+							c.sendqueue = c.sendqueue[1:] // remove it
+							//							fmt.Printf("-q=%d;", len(c.sendqueue))
+						} else {
+							for i := 0; i < len(c.sendqueue); i++ {
+								if c.sendqueue[i].state == 0 { // new
+									workItem = c.sendqueue[i] // compress it
+									break
+								}
+							}
+						}
+						if workItem != nil {
+							atomic.AddInt32(&workItem.state, 1)
+						}
+					} else {
+						done = true
+						atomic.AddInt32(&c.sendworkers, -1)
+						//						fmt.Println("worker stopping")
 					}
 					c.dispatchMutex.Unlock()
 
-					if reply != nil {
-						reply.EncodeData()
-						atomic.AddInt64(&c.WriteData, reply.DecodedSize())
-						atomic.AddInt64(&c.WriteDataCompressed, reply.EncodedSize())
-						atomic.AddInt32(&c.transmittedBlocks, 1) //	c.transmittedBlocks++
-						if c.Paint {
-							fmt.Print("*")
+					if workItem != nil {
+						switch workItem.state {
+						case 0:
+							panic("ASSERT!")
+						case 1:
+							workItem.block.CompressData()
+							atomic.AddInt32(&workItem.state, 1)
+						case 2:
+							panic("ASSERT!")
+						case 3:
+							atomic.AddInt64(&c.WriteData, int64(workItem.block.UncompressedSize))
+							atomic.AddInt64(&c.WriteDataCompressed, int64(workItem.block.CompressedSize))
+							atomic.AddInt32(&c.transmittedBlocks, 1) //	c.transmittedBlocks++
+							if c.Paint {
+								fmt.Print("*")
+							}
+							msg := &ProtocolMessage{Num: uint16(atomic.AddUint32(&c.msgNum, 1) - 1), Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: workItem.block}}
+							c.storeChannel <- &messageDispatch{msg: msg}
+							atomic.AddInt32(&workItem.state, 1)
+						default:
+							panic("ASSERT!")
 						}
-
-						msg := &ProtocolMessage{Num: uint16(atomic.AddUint32(&c.msgNum, 1) - 1), Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: reply}}
-						c.storeChannel <- &messageDispatch{msg: msg}
 					} else {
-						break
+						time.Sleep(25 * time.Millisecond)
 					}
 				}
-				atomic.AddInt32(&c.sendworkers, -1)
 			}()
 		}
 	}
@@ -168,15 +205,18 @@ func (c *Client) singleExchange(outgoing *messageDispatch) *ProtocolMessage {
 		var skipped bool = false
 
 		c.dispatchMutex.Lock()
-		if c.blockbuffer[d.BlockID] != nil {
-			if c.blockbuffer[d.BlockID].encodedData == nil { // no encoded data = never sent
+		block := c.blockbuffer[d.BlockID]
+		if block != nil {
+			if block.CompressedSize < 0 { // no encoded data = never sent
 				skipped = true
+				c.blockqueuesize -= ChunkQuantize(block.UncompressedSize)
+			} else {
+				c.blockqueuesize -= ChunkQuantize(block.CompressedSize)
 			}
-			c.blockqueuesize -= len(c.blockbuffer[d.BlockID].Data)
+			block.Release()
 			delete(c.blockbuffer, d.BlockID)
 		}
 		c.dispatchMutex.Unlock()
-		runtime.GC()
 
 		if skipped {
 			atomic.AddInt32(&c.skippedBlocks, 1) //c.skippedBlocks++
@@ -186,6 +226,7 @@ func (c *Client) singleExchange(outgoing *messageDispatch) *ProtocolMessage {
 		}
 	case *MsgServerReadBlock:
 		c.sendQueue(d.BlockID)
+	case *MsgServerWriteBlock:
 	}
 	return incoming
 }
@@ -297,28 +338,31 @@ func (c *Client) RemoveDatasetState(datasetName string, stateID Byte128) {
 }
 
 // StoreBlock is blocking if the blockbuffer is full
-func (c *Client) StoreBlock(dataType byte, data []byte, links []Byte128) Byte128 {
+func (c *Client) StoreBlock(dataType byte, data ByteArray, links []Byte128) Byte128 {
 	// Calculate the BlockID
 	block := NewHashboxBlock(dataType, data, links)
 
+	c.dispatchMutex.Lock()
+	defer c.dispatchMutex.Unlock()
 	// Add the block to the io queue
 	for full := true; full; { //
-		func() {
-			c.dispatchMutex.Lock()
-			defer c.dispatchMutex.Unlock() // I do like this because if I have a failure on anything, it will still release the mutex
-			if c.closing {
-				panic(errors.New("Connection closed"))
-			} else if c.blockqueuesize < c.QueueMax {
-				if c.blockbuffer[block.BlockID] == nil {
-					c.blockbuffer[block.BlockID] = block
-					c.blockqueuesize += len(block.Data)
-				}
-				full = false
+		if c.closing {
+			panic(errors.New("Connection closed"))
+		} else if c.blockqueuesize+ChunkQuantize(block.UncompressedSize)*2 < c.QueueMax {
+			if c.blockbuffer[block.BlockID] == nil {
+				c.blockbuffer[block.BlockID] = block
+				c.blockqueuesize += ChunkQuantize(block.UncompressedSize)
+			} else {
+				block.Release()
+				return block.BlockID
 			}
-		}()
+			full = false
+		}
 
 		if full {
+			c.dispatchMutex.Unlock()
 			time.Sleep(25 * time.Millisecond)
+			c.dispatchMutex.Lock()
 		}
 	}
 
@@ -328,7 +372,7 @@ func (c *Client) StoreBlock(dataType byte, data []byte, links []Byte128) Byte128
 }
 func (c *Client) ReadBlock(blockID Byte128) *HashboxBlock {
 	b := c.dispatchAndWait(MsgTypeReadBlock, &MsgClientReadBlock{BlockID: blockID}).(*MsgServerWriteBlock)
-	b.Block.DecodeData()
+	b.Block.UncompressData()
 	return b.Block
 }
 func (c *Client) Commit() {

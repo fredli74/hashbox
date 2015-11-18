@@ -21,15 +21,17 @@ func NewLockFile(name string) (*LockFile, error) {
 	var err error
 
 	lock := LockFile{name: name}
-	if lock.file, err = os.OpenFile(lock.name, os.O_CREATE|os.O_RDWR, os.ModeTemporary); err == nil {
+
+	if lock.file, err = os.OpenFile(lock.name, os.O_CREATE|os.O_RDWR, os.ModeTemporary|0640); err == nil {
 		var pid int
 		if _, err = fmt.Fscanf(lock.file, "%d\n", &pid); err == nil {
 			if pid != os.Getpid() {
-				if _, err := os.FindProcess(pid); err == nil {
+				if ProcessRunning(pid) {
 					return nil, errors.New("Locked by other process")
 				}
 			}
 		}
+
 		lock.file.Seek(0, 0)
 		if n, err := fmt.Fprintf(lock.file, "%d\n", os.Getpid()); err == nil {
 			lock.file.Truncate(int64(n))

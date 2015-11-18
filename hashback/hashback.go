@@ -6,10 +6,10 @@
 package main
 
 import (
-	"log"
-	"net/http"
-	_ "net/http/pprof"
-	"runtime"
+	//"log"
+	//"net/http"
+	//_ "net/http/pprof"
+	//"runtime"
 
 	cmd "bitbucket.org/fredli74/cmdparser"
 	"bitbucket.org/fredli74/hashbox/core"
@@ -29,8 +29,10 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,6 +40,11 @@ const PROGRESS_INTERVAL_SECS = 10 * time.Second
 const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MiB max blocksize
 const MIN_BLOCK_SIZE int = 64 * 1024       // 64kb minimum blocksize (before splitting it)
 
+const QUEUE_MAX_BYTES int = 48 * 1024 * 1024 // 48 MiB max memory (will use up to CPU*MAX_BLOCK_SIZE more when compressing)
+
+var DefaultIgnoreList []string // Default ignore list, populated by init() function from each platform
+
+// TODO: this...
 // const MAX_DEPTH int = 512 // Safety limit to avoid cyclic symbolic links and such
 
 func SoftError(err error) {
@@ -56,6 +63,11 @@ func UnserializeFromBuffer(data []byte, what core.Unserializer) core.Unserialize
 	buf := bytes.NewReader(data)
 	what.Unserialize(buf)
 	return what
+}
+func SerializeToByteArray(what core.Serializer) core.ByteArray {
+	var output core.ByteArray
+	what.Serialize(&output)
+	return output
 }
 
 type FileInfoSlice []os.FileInfo
@@ -100,7 +112,7 @@ func (e FileEntry) HasFileLink() bool {
 }
 
 func (e FileEntry) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, uint32(0x66656E74))
+	size += core.WriteOrPanic(w, uint32(0x66656E74)) // "fent"
 	size += e.FileName.Serialize(w)
 	size += core.WriteOrPanic(w, e.FileSize)
 	size += core.WriteOrPanic(w, e.FileMode)
@@ -122,7 +134,7 @@ func (e FileEntry) Serialize(w io.Writer) (size int) {
 func (e *FileEntry) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadOrPanic(r, &check)
-	if check != 0x66656E74 {
+	if check != 0x66656E74 { // "fent"
 		panic(errors.New("Corrupted FileEntry!"))
 	}
 	size += e.FileName.Unserialize(r)
@@ -151,7 +163,7 @@ type FileChainBlock struct {
 }
 
 func (b FileChainBlock) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, uint32(0x6663686E))
+	size += core.WriteOrPanic(w, uint32(0x6663686E)) // "fchn"
 	size += core.WriteOrPanic(w, uint32(len(b.ChainBlocks)))
 	for i := range b.ChainBlocks {
 		size += b.ChainBlocks[i].Serialize(w)
@@ -162,7 +174,7 @@ func (b FileChainBlock) Serialize(w io.Writer) (size int) {
 func (b *FileChainBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadOrPanic(r, &check)
-	if check != 0x6663686E {
+	if check != 0x6663686E { // "fchn"
 		panic(errors.New("Corrupted FileChainBlock!"))
 	}
 	var l uint32
@@ -181,7 +193,7 @@ type DirectoryBlock struct {
 }
 
 func (b DirectoryBlock) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, uint32(0x64626C6B))
+	size += core.WriteOrPanic(w, uint32(0x64626C6B)) // "dblk"
 	size += core.WriteOrPanic(w, uint32(len(b.File)))
 	for _, f := range b.File {
 		size += f.Serialize(w)
@@ -191,7 +203,7 @@ func (b DirectoryBlock) Serialize(w io.Writer) (size int) {
 func (b *DirectoryBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadOrPanic(r, &check)
-	if check != 0x64626C6B {
+	if check != 0x64626C6B { // "dblk"
 		panic(errors.New("Corrupted DirectoryBlock!"))
 	}
 	var l uint32
@@ -204,10 +216,6 @@ func (b *DirectoryBlock) Unserialize(r io.Reader) (size int) {
 	return
 }
 
-type referenceEntry struct {
-	Path string
-	File *FileEntry
-}
 type BackupSession struct {
 	ServerString string
 	User         string
@@ -229,7 +237,8 @@ type BackupSession struct {
 	Files          int
 	UnchangedFiles int
 
-	refQueue []referenceEntry // Used to compare against a reference backup during backup
+	ignoreList []ignoreEntry
+	reference  *referenceEngine
 }
 
 func NewBackupSession() *BackupSession {
@@ -250,6 +259,7 @@ func (session *BackupSession) Connect() *core.Client {
 	}
 
 	client := core.NewClient(conn, session.User, *session.AccessKey)
+	client.QueueMax = QUEUE_MAX_BYTES
 	client.Paint = session.Paint
 	session.Client = client
 	return session.Client
@@ -266,6 +276,13 @@ func (session *BackupSession) Log(v ...interface{}) {
 		fmt.Println(v...)
 	}
 }
+func (session *BackupSession) Important(v ...interface{}) {
+	if session.Paint {
+		fmt.Println()
+	}
+	fmt.Println(v...)
+}
+
 func (session *BackupSession) PrintStoreProgress() {
 	var compression float64
 	if session.Client.WriteData > 0 {
@@ -289,24 +306,32 @@ func (session *BackupSession) PrintRestoreProgress() {
 		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
 }
 
-var filebuffer []byte
-
 func (session *BackupSession) storeFile(path string, entry *FileEntry) error {
 	var links []core.Byte128
 
 	chain := FileChainBlock{}
 
-	fil, err := os.OpenFile(path, os.O_RDONLY, 444)
+	fil, err := os.Open(path) // Open = read-only
 	if err != nil {
 		return err
 	}
+	if fil == nil {
+		panic("ASSERT! err == nil and fil == nil")
+	}
 	defer fil.Close()
+
+	var maxSum rollsum.Rollsum
+	maxSum.Init()
+
+	var fileData core.ByteArray
+	defer fileData.Release()
 
 	for offset := int64(0); offset < int64(entry.FileSize); {
 		// TODO: add progress on storePath as well because incremental backups do not reach down here that often
 		if session.ShowProgress && time.Now().After(session.Progress) {
 			session.PrintStoreProgress()
 			session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
+			fmt.Println(core.Stats())
 		}
 
 		var left int64 = int64(entry.FileSize) - offset
@@ -315,58 +340,72 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) error {
 			maxBlockSize = int(left)
 		}
 
-		if filebuffer == nil {
-			filebuffer = make([]byte, MAX_BLOCK_SIZE)
-		}
-		rawdata := filebuffer[:maxBlockSize]
-		//rawdata := make([]byte, maxBlockSize)
-		{
-			rawlength, err := fil.ReadAt(rawdata, offset)
-			if err != nil {
-				panic(err)
-			}
+		var blockData core.ByteArray
 
-			if rawlength > MIN_BLOCK_SIZE {
-				var sum rollsum.Rollsum
-				sum.Init()
-				var maxd = uint32(0)
-				var maxi = rawlength
-				for i := 0; i < rawlength; {
-					if i >= MIN_BLOCK_SIZE {
-						sum.Rollout(rawdata[i-MIN_BLOCK_SIZE])
-					}
-					sum.Rollin(rawdata[i])
-					i++
-					if i >= MIN_BLOCK_SIZE {
-						d := sum.Digest()
-						if d >= maxd {
-							maxd = d
-							maxi = i
-						}
+		// Fill the fileData buffer
+		if fil == nil {
+			panic("ASSERT! fil == nil inside storeFile inner loop")
+		}
+
+		core.CopyNOrPanic(&fileData, fil, maxBlockSize-fileData.Len())
+		fileData.ReadSeek(0, core.SEEK_CUR)
+
+		var splitPosition int = fileData.Len()
+		if fileData.Len() > MIN_BLOCK_SIZE*2 { // Candidate for rolling sum split
+			rollIn, rollOut := fileData, fileData // Shallow copy the file data
+			rollInBase, rollOutBase := 0, 0
+			rollInPos, rollOutPos := 0, 0
+			rollInSlice, _ := rollIn.ReadSlice()
+			rollOutSlice, _ := rollOut.ReadSlice()
+
+			partSum := maxSum
+			var maxd = uint32(0)
+			for rollInPos < fileData.Len() {
+				if rollInPos-rollInBase >= len(rollInSlice) { // Next slice please
+					rollInBase, _ = rollIn.ReadSeek(len(rollInSlice), core.SEEK_CUR)
+					rollInSlice, _ = rollIn.ReadSlice()
+				}
+				if rollOutPos-rollOutBase >= len(rollOutSlice) { // Next slice please
+					rollOutBase, _ = rollOut.ReadSeek(len(rollOutSlice), core.SEEK_CUR)
+					rollOutSlice, _ = rollOut.ReadSlice()
+				}
+
+				if rollInPos >= MIN_BLOCK_SIZE {
+					partSum.Rollout(rollOutSlice[rollOutPos-rollOutBase])
+					rollOutPos++
+				}
+				partSum.Rollin(rollInSlice[rollInPos-rollInBase])
+				rollInPos++
+
+				if rollInPos >= MIN_BLOCK_SIZE {
+					d := partSum.Digest()
+					if d >= maxd {
+						maxd = d
+						splitPosition = rollInPos
+						maxSum = partSum // Keep the sum so we can continue from here
 					}
 				}
-				rawlength = maxi
 			}
-			rawdata = rawdata[:rawlength]
-			offset += int64(rawlength)
-
-			session.ReadData += int64(rawlength)
 		}
+		// Split an swap
+		right := fileData.Split(splitPosition)
+		blockData = fileData
+		fileData = right
+
+		offset += int64(blockData.Len())
+		session.ReadData += int64(blockData.Len())
 
 		// TODO: add encryption and custom compression here
 		var datakey core.Byte128
 
-		blockdata := make([]byte, len(rawdata))
-		copy(blockdata, rawdata)
-		id := session.Client.StoreBlock(core.BlockDataTypeZlib, blockdata, nil)
-		//id := session.Client.StoreBlock(core.BlockDataTypeZlib, rawdata, nil)
+		id := session.Client.StoreBlock(core.BlockDataTypeZlib, blockData, nil)
 		links = append(links, id)
 		chain.ChainBlocks = append(chain.ChainBlocks, id)
 		chain.DecryptKeys = append(chain.DecryptKeys, datakey)
 	}
 
 	if len(chain.ChainBlocks) > 1 {
-		id := session.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToBuffer(chain), links)
+		id := session.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToByteArray(chain), links)
 		entry.ContentType = ContentTypeFileChain
 		entry.ContentBlockID = id
 
@@ -397,7 +436,7 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) error {
 	for _, info := range fl {
 		e, err := session.storePath(filepath.Join(path, info.Name()), false)
 		if err != nil {
-			SoftError(err)
+			session.Important(fmt.Sprintf("Skipping (ERROR) %v", err))
 		} else if e != nil {
 			dir.File = append(dir.File, e)
 			if e.HasContentBlockID() {
@@ -406,7 +445,7 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) error {
 		}
 	}
 
-	id := session.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToBuffer(dir), links)
+	id := session.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToByteArray(dir), links)
 	entry.ContentType = ContentTypeDirectory
 	entry.ContentBlockID = id
 	return nil
@@ -427,6 +466,11 @@ func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry,
 		return nil, err
 	}
 
+	if match, pattern := session.ignoreMatch(path, info.IsDir()); match {
+		session.Log(fmt.Sprintf("Skipping (ignore %s) %s", pattern, path))
+		return nil, nil
+	}
+
 	entry := FileEntry{
 		FileName:    core.String(info.Name()),
 		FileSize:    int64(info.Size()),
@@ -436,16 +480,16 @@ func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry,
 	}
 
 	if entry.FileMode&uint32(os.ModeTemporary) > 0 {
-		session.Log("Skipping temporary file", path)
+		session.Log("Skipping (temporary file)", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeDevice) > 0 {
-		session.Log("Skipping device file", path)
+		session.Log("Skipping (device file)", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeNamedPipe) > 0 {
-		session.Log("Skipping named pipe file", path)
+		session.Log("Skipping (named pipe file)", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeSocket) > 0 {
-		session.Log("Skipping socket file", path)
+		session.Log("Skipping (socket file)", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeSymlink) > 0 {
 		entry.ContentType = ContentTypeSymLink
@@ -454,10 +498,16 @@ func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry,
 			return nil, err
 		}
 		entry.FileLink = core.String(sym)
-		session.findAndReuseReference(path, &entry)
+
+		//		same := session.findAndReuseReference(path, &entry)
+		same := session.reference.findAndReuseReference(path, &entry)
+		if !same {
+			session.Log("SYMLINK", path, "->", sym)
+		}
 	} else {
 		if entry.FileMode&uint32(os.ModeDir) > 0 {
-			refEntry := session.findReference(path, &entry)
+			//refEntry := session.findReference(path, &entry)
+			refEntry := session.reference.findReference(path)
 			if err := session.storeDir(path, &entry); err != nil {
 				return nil, err
 			}
@@ -467,15 +517,15 @@ func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry,
 
 			session.Directories++
 		} else {
-			same := session.findAndReuseReference(path, &entry)
-
+			//same := session.findAndReuseReference(path, &entry)
+			same := session.reference.findAndReuseReference(path, &entry)
 			if !same && entry.FileSize > 0 {
-				session.Log(path, entry.FileMode)
+				session.Log(fmt.Sprintf("%s" /*os.FileMode(entry.FileMode),*/, path))
 				if err := session.storeFile(path, &entry); err != nil {
 					return nil, err
 				}
 			} else {
-				if session.Client.Paint {
+				if session.Client.Paint && !session.Verbose && !session.ShowProgress {
 					fmt.Print(" ")
 				}
 				session.UnchangedFiles++
@@ -484,40 +534,116 @@ func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry,
 			session.State.Size += entry.FileSize
 		}
 	}
+
 	return &entry, nil
 }
 
-func (session *BackupSession) popReference() *FileEntry {
-	n := session.refQueue[0]
-	session.refQueue = session.refQueue[1:]
-	if n.File.ContentType == ContentTypeDirectory {
-		session.pushReference(n.Path, n.File.ContentBlockID)
-	}
-	return n.File
+var entryEOD = &FileEntry{} // end of dir marker
+type referenceEngine struct {
+	client    *core.Client
+	path      []string
+	queue     []*FileEntry
+	loadpoint int
+
+	lock sync.Mutex
 }
-func (session *BackupSession) pushReference(path string, referenceBlockID core.Byte128) {
+
+func (r *referenceEngine) downloadWorker() {
+	for func() bool {
+		r.lock.Lock()
+		if r.loadpoint >= len(r.queue) {
+			r.lock.Unlock()
+			return false
+		} else {
+			e := r.queue[r.loadpoint]
+			if e.ContentType == ContentTypeDirectory {
+				r.lock.Unlock()
+				r.pushReference(e.ContentBlockID)
+				return true
+			} else {
+				r.loadpoint++
+				r.lock.Unlock()
+				return true
+			}
+		}
+	}() {
+		runtime.Gosched()
+	}
+}
+
+func (r *referenceEngine) pushReference(referenceBlockID core.Byte128) {
 	var refdir DirectoryBlock
-	UnserializeFromBuffer(session.Client.ReadBlock(referenceBlockID).Data, &refdir)
-	var list []referenceEntry
-	for _, r := range refdir.File {
-		list = append(list, referenceEntry{filepath.Join(path, string(r.FileName)), r})
+
+	blockData := r.client.ReadBlock(referenceBlockID).Data
+	refdir.Unserialize(&blockData)
+	blockData.Release()
+
+	var list []*FileEntry
+	for _, e := range refdir.File {
+		list = append(list, e)
 	}
-	session.refQueue = append(list, session.refQueue...)
+	list = append(list, entryEOD)
+
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.loadpoint++
+	if r.loadpoint > len(r.queue) {
+		r.loadpoint = len(r.queue)
+	}
+	list = append(list, r.queue[r.loadpoint:]...)
+	r.queue = append(r.queue[:r.loadpoint], list...)
 }
-func (session *BackupSession) findReference(path string, entry *FileEntry) *FileEntry {
-	for len(session.refQueue) > 0 {
-		if pathLess(session.refQueue[0].Path, path) {
-			session.popReference()
-		} else if session.refQueue[0].Path == path {
-			return session.popReference()
+
+func (r *referenceEngine) popReference() *FileEntry {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	var e *FileEntry
+	if len(r.queue) > 0 {
+		e = r.queue[0]
+		if e.ContentType == ContentTypeDirectory {
+			r.path = append(r.path, string(e.FileName))
+		} else if e == entryEOD {
+			r.path = r.path[:len(r.path)-1]
+		}
+		r.queue = r.queue[1:]
+		r.loadpoint--
+	}
+	return e
+}
+func (r *referenceEngine) peekPath() (path string) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	for r.loadpoint < 1 {
+		r.lock.Unlock()
+		time.Sleep(10 * time.Millisecond)
+		r.lock.Lock()
+	}
+
+	if len(r.queue) > 0 {
+		for _, p := range r.path {
+			path = filepath.Join(path, p)
+		}
+		path = filepath.Join(path, string(r.queue[0].FileName))
+	}
+	return
+}
+func (r *referenceEngine) findReference(path string) *FileEntry {
+	for {
+		p := r.peekPath()
+		if pathLess(p, path) && r.popReference() != nil {
+			continue
+		} else if p == path {
+			return r.popReference()
 		} else {
 			break
 		}
 	}
 	return nil
 }
-func (session *BackupSession) findAndReuseReference(path string, entry *FileEntry) bool {
-	refEntry := session.findReference(path, entry)
+func (r *referenceEngine) findAndReuseReference(path string, entry *FileEntry) bool {
+	refEntry := r.findReference(path)
 	if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize && refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime && refEntry.FileLink == entry.FileLink {
 		// It's the same!
 		*entry = *refEntry
@@ -526,12 +652,38 @@ func (session *BackupSession) findAndReuseReference(path string, entry *FileEntr
 	return false
 }
 
+type ignoreEntry struct {
+	pattern   string
+	match     string
+	pathmatch bool
+	dirmatch  bool
+}
+
+func (session *BackupSession) ignoreMatch(path string, isDir bool) (bool, string) {
+	_, name := filepath.Split(path)
+	for _, pattern := range session.ignoreList {
+		var match bool
+		if pattern.dirmatch && !isDir {
+			// no match
+		} else if pattern.pathmatch {
+			match, _ = filepath.Match(pattern.match, path)
+		} else {
+			match, _ = filepath.Match(pattern.match, name)
+		}
+		if match {
+			return match, pattern.pattern
+		}
+	}
+	return false, ""
+}
+
 func (session *BackupSession) Store(datasetName string, path ...string) {
 	var referenceBlockID *core.Byte128
 	if !session.FullBackup {
 		list := session.Client.ListDataset(cmd.Args[2])
 		if len(list.States) > 0 {
 			referenceBlockID = &list.States[len(list.States)-1].BlockID
+			session.reference = &referenceEngine{client: session.Client}
 		}
 	}
 
@@ -551,16 +703,24 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		var links []core.Byte128
 
 		var refdir DirectoryBlock
-		if referenceBlockID != nil {
-			UnserializeFromBuffer(session.Client.ReadBlock(*referenceBlockID).Data, &refdir)
+		if session.reference != nil {
+			blockData := session.Client.ReadBlock(*referenceBlockID).Data
+			refdir.Unserialize(&blockData)
+			blockData.Release()
+
 			for _, s := range path {
 				name := filepath.Base(s)
 				for _, r := range refdir.File {
 					if string(r.FileName) == name {
-						session.refQueue = append(session.refQueue, referenceEntry{s, r})
+						r.FileName = core.String(s)
+						session.reference.queue = append(session.reference.queue, r)
+						//session.reference.addPath(s, r)
+						//						session.refQueue = append(session.refQueue, refEntry{s, r})
+						break
 					}
 				}
 			}
+			go session.reference.downloadWorker()
 		}
 
 		dir := DirectoryBlock{}
@@ -575,15 +735,20 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 				}
 			}
 		}
-		session.State.BlockID = session.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToBuffer(dir), links)
+		session.State.BlockID = session.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToByteArray(dir), links)
 	} else {
-		if referenceBlockID != nil {
+		if session.reference != nil {
 			// push the last backup root to reference list
-			session.pushReference(path[0], *referenceBlockID)
+			session.reference.pushReference(*referenceBlockID)
+			//			session.pushReference(path[0], *referenceBlockID)
+			go session.reference.downloadWorker()
 		}
-		e, err := session.storePath(path[0], true)
+		e, err := session.storePath(filepath.Clean(path[0]), true)
 		if err != nil {
 			panic(err)
+		}
+		if e == nil {
+			panic(errors.New("Nothing to store"))
 		}
 		session.State.BlockID = e.ContentBlockID
 	}
@@ -604,15 +769,16 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 	}
 
 	block := session.Client.ReadBlock(blockID)
-	session.ReadData += int64(block.EncodedSize())
+	session.ReadData += int64(block.CompressedSize)
 	// TODO: Decrypt block
 	// Uncompress block
 
 	if !block.VerifyBlock() {
 		panic(errors.New("Unable to verify block content, data is corrupted"))
 	}
-	core.WriteOrPanic(f, block.Data)
-	session.WriteData += int64(block.DecodedSize())
+	d := block.Data
+	core.CopyOrPanic(f, &d)
+	session.WriteData += int64(d.Len())
 	/*	buf := bytes.NewReader(block.Data)
 		zr, err := zlib.NewReader(buf)
 		if err != nil {
@@ -630,7 +796,11 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 
 func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error {
 	var dir DirectoryBlock
-	UnserializeFromBuffer(backup.Client.ReadBlock(blockID).Data, &dir)
+
+	blockData := backup.Client.ReadBlock(blockID).Data
+	dir.Unserialize(&blockData)
+	blockData.Release()
+
 	for _, e := range dir.File {
 		localname := filepath.Join(path, string(e.FileName))
 		if backup.Verbose {
@@ -676,7 +846,11 @@ func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error
 					// No data
 				case ContentTypeFileChain:
 					var chain FileChainBlock
-					UnserializeFromBuffer(backup.Client.ReadBlock(e.ContentBlockID).Data, &chain)
+
+					blockData := backup.Client.ReadBlock(e.ContentBlockID).Data
+					chain.Unserialize(&blockData)
+					blockData.Release()
+
 					for i := range chain.ChainBlocks {
 						if err := backup.restoreFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i]); err != nil {
 							return err
@@ -704,10 +878,10 @@ func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error
 func main() {
 	var lockFile *core.LockFile
 
-	runtime.SetBlockProfileRate(1000)
-	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
-	}()
+	//runtime.SetBlockProfileRate(1000)
+	//go func() {
+	//	log.Println(http.ListenAndServe("localhost:6060", nil))
+	//}()
 
 	/*	defer func() {
 		// Panic error handling
@@ -733,7 +907,7 @@ func main() {
 
 	session := NewBackupSession()
 
-	cmd.Title = "Hashback 0.2.2-go (Hashbox Backup Client)"
+	cmd.Title = "Hashback 0.2.3-go (Hashbox Backup Client)"
 	cmd.OptionsFile = filepath.Join(preferencesBaseFolder, ".hashback", "options.json")
 	/*	cmd.SaveOptions = func(options map[string]interface{}) error {
 		if options["password"] != nil {
@@ -790,9 +964,6 @@ func main() {
 			session.ShowProgress = false
 		}
 	})
-
-	var pidName string = ""
-	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 
 	cmd.Command("info", "", func() {
 		session.Connect()
@@ -851,7 +1022,32 @@ func main() {
 			fmt.Println("Dataset is empty or does not exist")
 		}
 	})
+
+	var pidName string = ""
+	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
+	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &DefaultIgnoreList, cmd.Standard|cmd.Preference)
 	cmd.Command("store", "<dataset> (<folder> | <file>)...", func() {
+		for _, d := range DefaultIgnoreList {
+			ignore := ignoreEntry{pattern: d, match: os.ExpandEnv(d)} // Expand ignore patterns
+
+			if ignore.match == "" {
+				continue
+			}
+			if _, err := filepath.Match(ignore.match, "ignore"); err != nil {
+				panic(errors.New(fmt.Sprintf("Invalid ignore pattern %s", ignore.pattern)))
+			}
+
+			if os.IsPathSeparator(ignore.match[len(ignore.match)-1]) {
+				ignore.match = ignore.match[:len(ignore.match)-1]
+				ignore.dirmatch = true
+			}
+			if strings.IndexRune(ignore.match, os.PathSeparator) >= 0 { // path in pattern
+				ignore.pathmatch = true
+			}
+
+			session.ignoreList = append(session.ignoreList, ignore)
+		}
+
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))
 		}
@@ -940,42 +1136,7 @@ func main() {
 		panic(err)
 	}
 
-	/*
-
-
-
-		Store("c:\\projects")
-
-		// create a file tree
-
-		FileRoot, err := GetFileInfo(os.Args[1])
-		if err != nil {
-			panic(err)
-		}
-		fmt.Println("Done!")
-
-		_ = FileRoot
-		/*
-			var filecount = 0
-			var foldercount = 0
-
-			filepath.Walk("c:\\projects", func(path string, f os.FileInfo, err error) error {
-					if err != nil {
-						fmt.Println(err)
-						// TODO: Add these to a post-report list instead
-
-					} else {
-						if f.Mode()&os.ModeDir > 0 {
-							foldercount++
-						} else {
-							filecount++
-						}
-
-						fmt.Printf("\r%d folders and %d files", foldercount, filecount)
-					}
-					return nil
-				})
-	*/
+	fmt.Println(core.Stats())
 }
 
 func GenerateAccessKey(account string, password string) core.Byte128 {

@@ -6,10 +6,7 @@
 package main
 
 import (
-	/*	"log"
-		"net/http"
-		_ "net/http/pprof"
-		"runtime"*/
+	//"github.com/davecheney/profile"
 
 	cmd "bitbucket.org/fredli74/cmdparser"
 	"bitbucket.org/fredli74/hashbox/core"
@@ -37,10 +34,11 @@ var done chan bool
 
 var logLock sync.Mutex
 
-const DEBUG = false
+var DEBUG bool = false
 
 func Debug(format string, a ...interface{}) {
 	if DEBUG {
+		fmt.Print("DEBUG: ")
 		fmt.Printf(format, a...)
 		fmt.Println()
 	}
@@ -115,7 +113,6 @@ func handleConnection(conn net.Conn) {
 			c := incoming.Data.(*core.MsgClientAddDatasetState)
 			unauthorized = !sessionAuthenticated || c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
 			if !unauthorized {
-				// TODO: Need to check that the root BlockID in state exists
 				if !storageHandler.doesBlockExist(c.State.BlockID) {
 					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
 					reply.Data = &core.MsgServerError{"Dataset pointing to a non existent block"}
@@ -180,15 +177,14 @@ func handleConnection(conn net.Conn) {
 		case core.MsgTypeWriteBlock:
 			c := incoming.Data.(*core.MsgClientWriteBlock)
 			if c.Block.VerifyBlock() {
-				// TODO: need to verify the blockchains on dataset creation because depending on the compression time of the blocks they might come in the wrong order
-				/*for _, l := range c.Block.Links {
+				for _, l := range c.Block.Links {
 					if !storageHandler.doesBlockExist(l) {
 						reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-						reply.Data = &core.MsgServerError{"Non existant link in block"}
+						reply.Data = &core.MsgServerError{"Linked to non existant block"}
 						break
 					}
 				}
-				if reply.Data == nil */{
+				if reply.Data == nil {
 					storageHandler.writeBlock(c.Block)
 					reply.Type = core.MsgTypeAcknowledgeBlock & core.MsgTypeServerMask
 					reply.Data = &core.MsgServerAcknowledgeBlock{BlockID: c.Block.BlockID}
@@ -197,6 +193,7 @@ func handleConnection(conn net.Conn) {
 				reply.Type = core.MsgTypeError & core.MsgTypeServerMask
 				reply.Data = &core.MsgServerError{"Unable to verify blockID"}
 			}
+			c.Block.Release()
 		case core.MsgTypeGoodbye:
 			keepAlive = false
 
@@ -213,6 +210,11 @@ func handleConnection(conn net.Conn) {
 		}
 		clientLog(remoteID, "> "+reply.String()+" "+reply.Details())
 		core.WriteMessage(conn, &reply)
+		if reply.Type == core.MsgTypeWriteBlock&core.MsgTypeServerMask {
+			block := reply.Data.(*core.MsgServerWriteBlock)
+			block.Block.Release()
+		}
+
 	}
 }
 
@@ -229,10 +231,7 @@ func connectionListener(listener *net.TCPListener) {
 }
 
 func main() {
-	/*runtime.SetBlockProfileRate(1000)
-	go func() {
-		log.Println(http.ListenAndServe("localhost:6061", nil))
-	}()*/
+	//defer profile.Start(&profile.Config{CPUProfile: false, MemProfile: true, ProfilePath: ".", NoShutdownHook: true}).Stop()
 
 	/*defer func() {
 		// Panic error handling
@@ -251,9 +250,11 @@ func main() {
 	var serverPort int64 = int64(core.DEFAULT_SERVER_IP_PORT)
 	datDirectory = filepath.Join(exeRoot, "data")
 
-	cmd.Title = "Hashbox Server 0.2.2-go"
+	cmd.Title = "Hashbox Server 0.2.3-go"
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
 	cmd.StringOption("db", "", "<path>", "Full path to database files", &datDirectory, cmd.Standard)
+
+	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
 
 	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers
 	// start opening files on their own
@@ -325,15 +326,20 @@ func main() {
 		}
 		accountNameH := core.Hash([]byte(cmd.Args[2]))
 		dataEncryptionKey := core.GenerateDataEncryptionKey()
-		fmt.Printf("DEBUG: DataEncryptionKey is: %x\n", dataEncryptionKey)
+		Debug("DataEncryptionKey is: %x", dataEncryptionKey)
 		core.EncryptDataInPlace(dataEncryptionKey[:], core.GenerateBackupKey(cmd.Args[2], cmd.Args[3]))
-		block := core.NewHashboxBlock(core.BlockDataTypeRaw, dataEncryptionKey[:], nil)
+
+		var blockData core.ByteArray
+		blockData.Write(dataEncryptionKey[:])
+		block := core.NewHashboxBlock(core.BlockDataTypeRaw, blockData, nil)
 		if !storageHandler.writeBlock(block) {
 			panic(errors.New("Error writing key block"))
 		}
 		if err := accountHandler.AddDatasetState(accountNameH, core.String("\x07HASHBACK_DEK"), core.DatasetState{BlockID: block.BlockID}); err != nil {
 			panic(err)
 		}
+
+		block.Release()
 		fmt.Println("User added")
 	})
 
@@ -348,6 +354,8 @@ func main() {
 		fmt.Printf("All checks completed in %.1f minutes\n\n", time.Since(start).Minutes())
 	})
 
+	var indexOnly bool
+	cmd.BoolOption("index", "gc", "Mark and sweep index only", &indexOnly, cmd.Standard)
 	cmd.Command("gc", "", func() {
 		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lock")); err != nil {
 			panic(err)
@@ -360,14 +368,18 @@ func main() {
 		roots := accountHandler.CollectAllRootBlocks()
 		storageHandler.MarkIndexes(roots, true)
 		storageHandler.SweepIndexes(true)
-		storageHandler.CompactData(true)
-
+		fmt.Printf("Stop the world duration %.1f minutes\n", time.Since(start).Minutes())
+		if !indexOnly {
+			storageHandler.CompactData(true)
+		}
 		fmt.Printf("Garbage collection completed in %.1f minutes\n\n", time.Since(start).Minutes())
 	})
 
 	if err := cmd.Parse(); err != nil {
 		panic(err)
 	}
+
+	fmt.Println(core.Stats())
 
 	os.Exit(0)
 }

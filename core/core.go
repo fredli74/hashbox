@@ -237,6 +237,20 @@ func WriteOrPanic(w io.Writer, data interface{}) int {
 	}
 	return binary.Size(data)
 }
+func CopyOrPanic(dst io.Writer, src io.Reader) int {
+	written, err := io.Copy(dst, src)
+	if err != nil {
+		panic(err)
+	}
+	return int(written)
+}
+func CopyNOrPanic(dst io.Writer, src io.Reader, n int) int {
+	written, err := io.CopyN(dst, src, int64(n))
+	if err != nil {
+		panic(err)
+	}
+	return int(written)
+}
 
 var humanUnitName []string
 

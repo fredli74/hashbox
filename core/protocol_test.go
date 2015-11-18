@@ -178,7 +178,7 @@ func TestMessageSerialization(t *testing.T) {
 		}
 	}
 
-	if ok, dump := protocolPipeCompare(MsgTypeAccountInfo&MsgTypeServerMask, &MsgServerAccountInfo{[]Dataset{Dataset{Name: randomMsgString(), Size: uint64(rand.Int63()), ListH: randomByte128()}}}); !ok {
+	if ok, dump := protocolPipeCompare(MsgTypeAccountInfo&MsgTypeServerMask, &MsgServerAccountInfo{[]Dataset{Dataset{Name: randomMsgString(), Size: rand.Int63(), ListH: randomByte128()}}}); !ok {
 		t.Errorf("MsgServerAccountInfo did not pass serialization / deserialization test:\n%s", dump)
 	} else {
 		if testing.Verbose() {
@@ -199,8 +199,8 @@ func TestMessageSerialization(t *testing.T) {
 			DatasetState{
 				StateID:    randomByte128(),
 				BlockID:    randomByte128(),
-				Size:       uint64(rand.Int63()),
-				UniqueSize: uint64(rand.Int63()),
+				Size:       rand.Int63(),
+				UniqueSize: rand.Int63(),
 			},
 		},
 		ListH: randomByte128()}); !ok {
@@ -211,7 +211,7 @@ func TestMessageSerialization(t *testing.T) {
 		}
 	}
 
-	if ok, dump := protocolPipeCompare(MsgTypeAddDatasetState, &MsgClientAddDatasetState{AccountNameH: randomByte128(), DatasetName: randomMsgString(), State: DatasetState{StateID: randomByte128(), BlockID: randomByte128(), Size: uint64(rand.Int63()), UniqueSize: uint64(rand.Int63())}}); !ok {
+	if ok, dump := protocolPipeCompare(MsgTypeAddDatasetState, &MsgClientAddDatasetState{AccountNameH: randomByte128(), DatasetName: randomMsgString(), State: DatasetState{StateID: randomByte128(), BlockID: randomByte128(), Size: rand.Int63(), UniqueSize: rand.Int63()}}); !ok {
 		t.Errorf("MsgClientAddDatasetState did not pass serialization / deserialization test:\n%s", dump)
 	} else {
 		if testing.Verbose() {

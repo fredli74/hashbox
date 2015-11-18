@@ -171,9 +171,9 @@ type ProtocolMessage struct {
 	Data interface{}
 }
 
-func (m *ProtocolMessage) Serialize(w io.Writer) {
-	WriteOrPanic(w, m.Num)
-	WriteOrPanic(w, m.Type)
+func (m *ProtocolMessage) Serialize(w io.Writer) (size int) {
+	size += WriteOrPanic(w, m.Num)
+	size += WriteOrPanic(w, m.Type)
 
 	if m.Data != nil {
 		mv := reflect.ValueOf(m.Data).Elem()
@@ -184,14 +184,15 @@ func (m *ProtocolMessage) Serialize(w io.Writer) {
 			/*if mv.Field(i).Kind() == reflect.Ptr {
 				mv.Field(i).Elem().Interface().(Serializer).Serialize(w)
 			} else */{
-				mv.Field(i).Interface().(Serializer).Serialize(w)
+				size += mv.Field(i).Interface().(Serializer).Serialize(w)
 			}
 		}
 	}
+	return
 }
-func (m *ProtocolMessage) Unserialize(r io.Reader) {
-	ReadOrPanic(r, &m.Num)
-	ReadOrPanic(r, &m.Type)
+func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
+	size += ReadOrPanic(r, &m.Num)
+	size += ReadOrPanic(r, &m.Type)
 
 	switch m.Type {
 	case MsgTypeListDataset | MsgTypeClientMask:
@@ -243,12 +244,13 @@ func (m *ProtocolMessage) Unserialize(r io.Reader) {
 		for i := 0; i < mt.NumField(); i++ {
 			if mv.Field(i).Kind() == reflect.Ptr { // pointer value, need to create the underlying type
 				mv.Field(i).Set(reflect.New(mv.Field(i).Type().Elem()))
-				mv.Field(i).Interface().(Unserializer).Unserialize(r)
+				size += mv.Field(i).Interface().(Unserializer).Unserialize(r)
 			} else {
-				mv.Field(i).Addr().Interface().(Unserializer).Unserialize(r)
+				size += mv.Field(i).Addr().Interface().(Unserializer).Unserialize(r)
 			}
 		}
 	}
+	return
 }
 func (m ProtocolMessage) String() string {
 	var b [4]byte
@@ -298,6 +300,7 @@ func (m ProtocolMessage) Details() string {
 	return ""
 }
 
+// IMPORTANT messages containing HashboxBlock data will ByteArray allocate memory that needs to be freed manually
 func ReadMessage(r io.Reader) *ProtocolMessage {
 	var msg ProtocolMessage
 	msg.Unserialize(r)

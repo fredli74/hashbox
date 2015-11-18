@@ -244,23 +244,33 @@ type storageDataEntry struct {
 	Block       *core.HashboxBlock
 }
 
+func (e *storageDataEntry) Release() {
+	if e.Block != nil {
+		e.Block.Release()
+	}
+}
+
 func (e *storageDataEntry) Serialize(w io.Writer) (size int) {
 	size += core.WriteOrPanic(w, storageDataMarker)
 	size += e.Block.Serialize(w)
 	return
 }
+
+// IMPORTANT Unserialize allocates memory that needs to be freed manually
 func (e *storageDataEntry) Unserialize(r io.Reader) (size int) {
 	size += core.ReadOrPanic(r, &e._datamarker)
 	if e._datamarker != storageDataMarker {
 		panic(errors.New(fmt.Sprintf("Incorrect Block on offset (%s/%s file corruption)", storageFileExtensionIndex, storageFileExtensionData)))
 	}
-	e.Block = &core.HashboxBlock{}
+	if e.Block == nil {
+		e.Block = &core.HashboxBlock{}
+	}
 	size += e.Block.Unserialize(r)
 	// TODO: remove this check, it is to heavy on every read for a small NAS
-	testhash := e.Block.HashData()
-	if !bytes.Equal(testhash[:], e.Block.BlockID[:]) {
-		panic(errors.New(fmt.Sprintf("Corrupted Block read from disk (hash check incorrect, %x != %x", e.Block.HashData(), e.Block.BlockID)))
-	}
+	//testhash := e.Block.HashData()
+	//if !bytes.Equal(testhash[:], e.Block.BlockID[:]) {
+	//		panic(errors.New(fmt.Sprintf("Corrupted Block read from disk (hash check incorrect, %x != %x)", e.Block.HashData(), e.Block.BlockID)))
+	//	}
 	return
 }
 
@@ -325,7 +335,7 @@ func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (*storageIXEntr
 			entry.Unserialize(ixFile)
 
 			if entry.Flags&entryFlagExists == 0 {
-				return nil, ixFileNumber, ixOffset, errors.New("BlockID entry not found")
+				return nil, ixFileNumber, ixOffset, errors.New(fmt.Sprintf("BlockID entry not found for %x", blockID[:]))
 			}
 			if bytes.Equal(blockID[:], entry.BlockID[:]) {
 				return &entry, ixFileNumber, ixOffset, nil
@@ -335,14 +345,12 @@ func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (*storageIXEntr
 		ixFileNumber++
 		ixOffset = baseOffset
 	}
-	return nil, ixFileNumber, ixOffset, errors.New("BlockID entry not found")
+	return nil, ixFileNumber, ixOffset, errors.New(fmt.Sprintf("BlockID entry not found for %x", blockID[:]))
 }
 func (handler *StorageHandler) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *storageIXEntry) {
 	var ixFile = handler.getNumberedFile(storageFileExtensionIndex, ixFileNumber, true)
 	ixFile.Seek(ixOffset, os.SEEK_SET)
-	w := bufio.NewWriter(ixFile)
-	entry.Serialize(w) // (ixFile)
-	w.Flush()
+	entry.Serialize(ixFile)
 }
 
 func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
@@ -381,7 +389,15 @@ func (handler *StorageHandler) readBlockLinks(blockID core.Byte128, datFileNumbe
 	var links []core.Byte128
 
 	datFile := handler.getNumberedFile(storageFileExtensionData, datFileNumber, false)
-	datFile.Seek(datOffset+4, os.SEEK_SET) // 4 bytes to skip the datamarker
+	if datFile == nil {
+		panic(errors.New(fmt.Sprintf("Error reading block %x, index is pointing to file %x which cannot be opened", blockID[:], datFileNumber)))
+	}
+
+	offset, err := datFile.Seek(datOffset+4, os.SEEK_SET) // 4 bytes to skip the datamarker
+	if offset != datOffset+4 {
+		panic(err)
+	}
+
 	var dataBlockID core.Byte128
 	dataBlockID.Unserialize(datFile)
 	if blockID.Compare(dataBlockID) != 0 {
@@ -398,8 +414,8 @@ func (handler *StorageHandler) readBlockLinks(blockID core.Byte128, datFileNumbe
 	return links, nil
 }
 
+// IMPORTANT readBlockFile allocates memory that needs to be freed manually
 func (handler *StorageHandler) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, error) {
-	_ = "breakpoint"
 	var dataEntry storageDataEntry
 
 	indexEntry, _, _, err := handler.readIXEntry(blockID)
@@ -482,13 +498,17 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 
 	deletedBlocks := 0
 	for ixFileNumber := int32(0); ; ixFileNumber++ {
+		var lastActiveEntry int64 = -1
+
 		var ixFile = handler.getNumberedFile(storageFileExtensionIndex, ixFileNumber, false)
 		if ixFile == nil {
 			break // no more indexes
 		}
 
 		ixSize, _ := ixFile.Seek(0, os.SEEK_END)
-		fmt.Printf("Sweeping index file #%d (%s)\n", ixFileNumber, core.HumanSize(ixSize))
+		if Paint {
+			fmt.Printf("Sweeping index file #%d (%s)\n", ixFileNumber, core.HumanSize(ixSize))
+		}
 
 		filename := handler.getNumberedFileName(storageFileExtensionIndex, ixFileNumber)
 		readOnly, err := os.OpenFile(filename, os.O_RDONLY|os.O_SYNC, 0666)
@@ -510,47 +530,84 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 					// Delete it! Well we need to compact or we will break linear probing
 					deletedBlocks++
 					blanks = append(blanks, offset)
+					Debug("Deleted orphan Block %x IX from %x:%x", entry.BlockID[:], ixFileNumber, offset)
 				} else {
-					newOffset := offset
-					blockbase := int64(calculateEntryOffset(entry.BlockID))
-					for i := range blanks {
-						if blanks[i] >= blockbase {
-							newOffset = blanks[i]
-							blanks = append(blanks[:i], blanks[i+1:]...)
-							blanks = append(blanks, offset)
-							break
-						}
-					}
-
 					entry.Flags &^= entryFlagMarked
-					ixFile.Seek(newOffset, os.SEEK_SET)
-					if offset == newOffset { // no need to rewrite whole record
-						core.WriteOrPanic(ixFile, entry.Flags)
+
+					// Move it down to a lower idx file?
+					e, f, o, err := handler.readIXEntry(entry.BlockID)
+					if f < ixFileNumber {
+						Debug("Moving file for Block %x IX from %x:%x to %x:%x", entry.BlockID[:], ixFileNumber, offset, f, o)
+						if e != nil || err == nil {
+							panic("ASSERT, this makes no sense, the block is in a lower idx already?")
+						}
+						handler.writeIXEntry(f, o, &entry)
+						deletedBlocks++
+						blanks = append(blanks, offset)
 					} else {
-						entry.Serialize(ixFile)
+						// Move it inside same idx file
+						newOffset := offset
+						blockbase := int64(calculateEntryOffset(entry.BlockID))
+
+						for i := range blanks {
+							if blanks[i] >= blockbase {
+								newOffset = blanks[i]
+								blanks = append(blanks[:i], blanks[i+1:]...)
+								blanks = append(blanks, offset)
+								break
+							}
+						}
+
+						if newOffset > lastActiveEntry {
+							lastActiveEntry = newOffset
+						}
+						ixFile.Seek(newOffset, os.SEEK_SET)
+						if offset == newOffset { // no need to rewrite whole record
+							core.WriteOrPanic(ixFile, entry.Flags)
+						} else {
+							Debug("Moving Block %x IX from %x:%x to %x:%x", entry.BlockID[:], ixFileNumber, offset, ixFileNumber, newOffset)
+							entry.Serialize(ixFile)
+						}
 					}
 				}
 			} else {
 
 				// We found a hole, so we have nothing left to move
 				for len(blanks) > 0 {
+					Debug("Clearing %x:%x", ixFileNumber, blanks[0])
 					ixFile.Seek(blanks[0], os.SEEK_SET)
 					blankEntry.Serialize(ixFile)
 					blanks = blanks[1:]
 				}
 			}
 
-			p := int(offset * 100 / ixSize)
-			if p > lastProgress {
-				lastProgress = p
-				fmt.Printf("%d%% %d\r", lastProgress, -deletedBlocks)
+			if ixSize > 0 {
+				p := int(offset * 100 / ixSize)
+				if Paint && p > lastProgress {
+					lastProgress = p
+					fmt.Printf("%d%% %d\r", lastProgress, -deletedBlocks)
+				}
 			}
 		}
 		readOnly.Close()
+		if lastActiveEntry < 0 {
+			lastActiveEntry = 0
+		} else {
+			lastActiveEntry += int64(storageIXEntrySize)
+		}
+		if lastActiveEntry < ixSize {
+			Debug("Truncating file %s at %x", filename, lastActiveEntry)
+			ixFile.Truncate(lastActiveEntry)
+		}
 	}
-	fmt.Printf("Removed %d blocks\n", deletedBlocks)
+	if Paint {
+		fmt.Printf("Removed %d blocks\n", deletedBlocks)
+	}
 }
 func (handler *StorageHandler) CompactData(Paint bool) {
+	var dataEntry storageDataEntry
+	defer dataEntry.Release()
+
 	var compacted int64
 	for datFileNumber := int32(0); ; datFileNumber++ {
 		var datFile = handler.getNumberedFile(storageFileExtensionData, datFileNumber, false)
@@ -559,7 +616,9 @@ func (handler *StorageHandler) CompactData(Paint bool) {
 		}
 
 		datSize, _ := datFile.Seek(0, os.SEEK_END)
-		fmt.Printf("Compacting data file #%d (%s)\n", datFileNumber, core.HumanSize(datSize))
+		if Paint {
+			fmt.Printf("Compacting data file #%d (%s)\n", datFileNumber, core.HumanSize(datSize))
+		}
 
 		filename := handler.getNumberedFileName(storageFileExtensionData, datFileNumber)
 		readOnly, err := os.OpenFile(filename, os.O_RDONLY|os.O_SYNC, 0666)
@@ -572,8 +631,6 @@ func (handler *StorageHandler) CompactData(Paint bool) {
 		var lastProgress = -1
 		offset, writeOffset := int64(0), int64(0)
 		for offset < datSize {
-			var dataEntry storageDataEntry
-
 			peek, err := reader.Peek(12)
 			if err != nil {
 				panic(err)
@@ -602,7 +659,7 @@ func (handler *StorageHandler) CompactData(Paint bool) {
 			} else {
 				f, o := ixEntry.GetLocation()
 				if f != datFileNumber || o != readOffset {
-					Debug("Orphan block, index does not point to %d:%d but %d:%d", datFileNumber, readOffset, f, o)
+					Debug("Orphan block, index does not point to %x:%x but %x:%x", datFileNumber, readOffset, f, o)
 					entrySize = 0 // Block found in a different location (most likely an interrupted compact)
 				}
 			}
@@ -610,41 +667,59 @@ func (handler *StorageHandler) CompactData(Paint bool) {
 			if readOffset != writeOffset && entrySize > 0 {
 				newOffset := writeOffset
 				if readOffset-writeOffset < int64(entrySize)+12 { // 12 bytes for the Cgap marker
-					Debug("No room to move block to %d, %d < %d+12", writeOffset, readOffset-writeOffset, entrySize)
+					Debug("No room to move block to %x, %d < %d (+12 bytes)", writeOffset, readOffset-writeOffset, entrySize)
 
-					newOffset, err = datFile.Seek(0, os.SEEK_END)
-					if err != nil {
-						panic(err)
+					var newDatFile *os.File
+					var newOffset int64
+					var newDatFileNumber int32 = 0
+					for {
+						newDatFile = handler.getNumberedFile(storageFileExtensionData, newDatFileNumber, true)
+						newOffset, err = newDatFile.Seek(0, os.SEEK_END)
+						if err != nil {
+							panic(err)
+						}
+						if newOffset+int64(entrySize)+12 <= storageDataFileSize {
+							break
+						}
+						newDatFileNumber++
 					}
-					datSize += int64(dataEntry.Serialize(datFile))
-					Debug("Moved block to end of file %d, filesize is now %d", newOffset, datSize)
+					written := int64(dataEntry.Serialize(newDatFile))
+					Debug("Moved block to end of file %d, bytes %x:%x", newDatFileNumber, newOffset, newOffset+written)
+					if newDatFileNumber == datFileNumber {
+						Debug("File %d, increased in size from %x to %x", datFileNumber, datSize, datSize+written)
+						datSize += written
+					}
+
+					Debug("Rewriting index for block %x to point to %x:%x", ixEntry.BlockID[:], newDatFileNumber, newOffset)
+					ixEntry.SetLocation(newDatFileNumber, newOffset)
+					handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
 
 				} else {
-					Debug("Moving block from %d to %d", readOffset, writeOffset)
-
 					datFile.Seek(newOffset, os.SEEK_SET)
-					writeOffset += int64(dataEntry.Serialize(datFile))
+					written := int64(dataEntry.Serialize(datFile))
+					Debug("Moved block from %x to %x:%x", readOffset, writeOffset, writeOffset+written)
+					writeOffset += written
 
-					Debug("Writing Cgap skip marker to %d (skip %d)", readOffset, readOffset-writeOffset)
+					Debug("Writing Cgap skip marker to %x (skip %d)", readOffset, readOffset-writeOffset)
 
 					core.WriteOrPanic(datFile, []byte("Cgap"))
 					core.WriteOrPanic(datFile, readOffset-writeOffset)
+
+					Debug("Rewriting index for block %x to point to %x:%x", ixEntry.BlockID[:], datFileNumber, newOffset)
+					ixEntry.SetLocation(datFileNumber, newOffset)
+					handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
 				}
-				Debug("Rewriting index for block %x to point to %d:%d", ixEntry.BlockID[:], datFileNumber, newOffset)
-				ixEntry.SetLocation(datFileNumber, newOffset)
-				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
 			} else {
 				writeOffset += int64(entrySize)
-				Debug("No need to write, moving writeOffset to %d", writeOffset)
+				Debug("No need to write, moving writeOffset to %x", writeOffset)
 			}
 
 			p := int(offset * 100 / datSize)
-			if p > lastProgress {
+			if Paint && p > lastProgress {
 				//lastProgress =
 				fmt.Printf("%d (%d%%)\r", writeOffset-offset, p)
 			}
 		}
-		_ = "breakpoint"
 		if writeOffset < offset {
 			compacted += (offset - writeOffset)
 			datFile.Truncate(writeOffset)
@@ -653,7 +728,9 @@ func (handler *StorageHandler) CompactData(Paint bool) {
 		}
 		readOnly.Close()
 	}
-	fmt.Printf("Removed %s          \n", core.HumanSize(compacted))
+	if Paint {
+		fmt.Printf("Removed %s          \n", core.HumanSize(compacted))
+	}
 }
 
 func (handler *StorageHandler) CheckIndexes() {
@@ -702,31 +779,33 @@ func (handler *StorageHandler) CheckIndexes() {
 }
 
 func (handler *StorageHandler) CheckData() {
+	var dataEntry storageDataEntry
+	defer dataEntry.Release()
 
 	for datFileNumber := int32(0); ; datFileNumber++ {
 		info, err := os.Stat(handler.getNumberedFileName(storageFileExtensionData, datFileNumber))
 		if err != nil {
 			break // no more indexes
 		}
-		fmt.Printf("Checking data file #%d (%s)\n", datFileNumber, core.HumanSize(info.Size()))
+		Debug("Checking data file #%d (%s)", datFileNumber, core.HumanSize(info.Size()))
 		var datFile = handler.getNumberedFile(storageFileExtensionData, datFileNumber, false)
 		datFile.Seek(0, os.SEEK_SET)
 
-		var dataEntry storageDataEntry
-
 		var lastProgress = -1
+
 		for offset := int64(0); offset < info.Size(); offset, _ = datFile.Seek(0, os.SEEK_CUR) {
+			_ = "breakpoint"
 			dataEntry.Unserialize(datFile)
 			if !dataEntry.Block.VerifyBlock() {
 				panic(errors.New(fmt.Sprintf("Unable to verify block %x at %d in data file %d", dataEntry.Block.BlockID, offset, datFileNumber)))
 			}
 			ixEntry, _, _, err := handler.readIXEntry(dataEntry.Block.BlockID)
 			if err != nil {
-				fmt.Printf("Orphan block %x (%s)\n", dataEntry.Block.BlockID[:], err.Error())
+				Debug("Orphan block %x (%s)", dataEntry.Block.BlockID[:], err.Error())
 			} else {
 				f, o := ixEntry.GetLocation()
 				if f != datFileNumber || o != offset {
-					fmt.Printf("Orphan block %x (%d:%d != %d:%d)\n", dataEntry.Block.BlockID[:], f, o, datFileNumber, offset)
+					Debug("Orphan block %x (%d:%d != %d:%d)", dataEntry.Block.BlockID[:], f, o, datFileNumber, offset)
 				}
 			}
 
