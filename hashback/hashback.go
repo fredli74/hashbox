@@ -6,10 +6,9 @@
 package main
 
 import (
-	//"log"
-	//"net/http"
-	//_ "net/http/pprof"
-	//"runtime"
+	// "log"
+	// "net/http"
+	// _ "net/http/pprof"
 
 	cmd "bitbucket.org/fredli74/cmdparser"
 	"bitbucket.org/fredli74/hashbox/core"
@@ -47,6 +46,16 @@ var DefaultIgnoreList []string // Default ignore list, populated by init() funct
 // TODO: this...
 // const MAX_DEPTH int = 512 // Safety limit to avoid cyclic symbolic links and such
 
+var DEBUG bool = false
+
+func Debug(format string, a ...interface{}) {
+	if DEBUG {
+		fmt.Print("DEBUG: ")
+		fmt.Printf(format, a...)
+		fmt.Println()
+	}
+}
+
 func SoftError(err error) {
 	fmt.Println("!!!", err)
 }
@@ -77,7 +86,7 @@ func (p FileInfoSlice) Less(i, j int) bool { return p[i].Name() < p[j].Name() }
 func (p FileInfoSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 func pathLess(a, b string) bool {
-	return strings.Replace(a, "\\", "\x01", -1) < strings.Replace(b, "\\", "\x01", -1)
+	return strings.Replace(a, string(os.PathSeparator), "\x01", -1) < strings.Replace(b, string(os.PathSeparator), "\x01", -1)
 }
 
 type FileEntry struct {
@@ -611,20 +620,24 @@ func (r *referenceEngine) popReference() *FileEntry {
 	}
 	return e
 }
+func (r *referenceEngine) joinPath() (path string) {
+	for _, p := range r.path {
+		path = filepath.Join(path, p)
+	}
+	return
+}
 func (r *referenceEngine) peekPath() (path string) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	for r.loadpoint < 1 {
+	for len(r.queue) > 0 && r.loadpoint < 1 {
 		r.lock.Unlock()
 		time.Sleep(10 * time.Millisecond)
 		r.lock.Lock()
 	}
 
 	if len(r.queue) > 0 {
-		for _, p := range r.path {
-			path = filepath.Join(path, p)
-		}
+		path = r.joinPath()
 		path = filepath.Join(path, string(r.queue[0].FileName))
 	}
 	return
@@ -633,10 +646,13 @@ func (r *referenceEngine) findReference(path string) *FileEntry {
 	for {
 		p := r.peekPath()
 		if pathLess(p, path) && r.popReference() != nil {
+			Debug("Reference %s < %s, roll forward", p, path)
 			continue
 		} else if p == path {
+			Debug("Reference %s == %s", p, path)
 			return r.popReference()
 		} else {
+			Debug("Reference %s > %s", p, path)
 			break
 		}
 	}
@@ -684,6 +700,13 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		if len(list.States) > 0 {
 			referenceBlockID = &list.States[len(list.States)-1].BlockID
 			session.reference = &referenceEngine{client: session.Client}
+		}
+	}
+
+	for i := 0; i < len(path); i++ {
+		p, err := filepath.Abs(path[i])
+		if err == nil {
+			path[i] = p
 		}
 	}
 
@@ -737,13 +760,15 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		}
 		session.State.BlockID = session.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToByteArray(dir), links)
 	} else {
+		p := filepath.Clean(path[0])
+		_ = "breakpoint"
 		if session.reference != nil {
 			// push the last backup root to reference list
+			session.reference.path = append(session.reference.path, p)
 			session.reference.pushReference(*referenceBlockID)
-			//			session.pushReference(path[0], *referenceBlockID)
 			go session.reference.downloadWorker()
 		}
-		e, err := session.storePath(filepath.Clean(path[0]), true)
+		e, err := session.storePath(p, true)
 		if err != nil {
 			panic(err)
 		}
@@ -878,10 +903,10 @@ func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error
 func main() {
 	var lockFile *core.LockFile
 
-	//runtime.SetBlockProfileRate(1000)
-	//go func() {
-	//	log.Println(http.ListenAndServe("localhost:6060", nil))
-	//}()
+	// runtime.SetBlockProfileRate(1000)
+	// go func() {
+	// 	log.Println(http.ListenAndServe("localhost:6060", nil))
+	// }()
 
 	/*	defer func() {
 		// Panic error handling
@@ -922,6 +947,7 @@ func main() {
 		}
 		return nil
 	}*/
+	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
 
 	cmd.StringOption("user", "", "<username>", "Username", &session.User, cmd.Preference|cmd.Required)
 	var accesskey []byte
@@ -999,7 +1025,7 @@ func main() {
 		}
 
 	})
-	cmd.Command("list", "<dataset>", func() {
+	cmd.Command("list", "<dataset> [ <backup id>  ]", func() { // [<path>...]
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))
 		}
@@ -1009,18 +1035,44 @@ func main() {
 
 		list := session.Client.ListDataset(cmd.Args[2])
 		if len(list.States) > 0 {
-			fmt.Println("Backup id                           Backup date                  Total size    Used space")
-			fmt.Println("--------------------------------    -------------------------    ----------    ----------")
 
-			for _, s := range list.States {
-				timestamp := binary.BigEndian.Uint64(s.StateID[:])
-				date := time.Unix(0, int64(timestamp))
+			if len(cmd.Args) < 4 {
 
-				fmt.Printf("%-32x    %-25s    %10s    %10s\n", s.StateID, date.Format(time.RFC3339), core.HumanSize(s.Size), core.HumanSize(s.UniqueSize))
+				fmt.Println("Backup id                           Backup date                  Total size    Used space")
+				fmt.Println("--------------------------------    -------------------------    ----------    ----------")
+
+				for _, s := range list.States {
+					timestamp := binary.BigEndian.Uint64(s.StateID[:])
+					date := time.Unix(0, int64(timestamp))
+
+					fmt.Printf("%-32x    %-25s    %10s    %10s\n", s.StateID, date.Format(time.RFC3339), core.HumanSize(s.Size), core.HumanSize(s.UniqueSize))
+				}
+			} else {
+				var state *core.DatasetState
+				for _, s := range list.States {
+					if fmt.Sprintf("%x", s.StateID[:]) == cmd.Args[3] {
+						state = &s
+					}
+				}
+				if state == nil {
+					panic(errors.New("Backup id not found"))
+				}
+
+				var dir DirectoryBlock
+
+				blockData := session.Client.ReadBlock(state.BlockID).Data
+				dir.Unserialize(&blockData)
+				blockData.Release()
+
+				for _, f := range dir.File {
+					date := time.Unix(0, int64(f.ModTime))
+					fmt.Printf("%-10s  %10s  %-25s  %s\n", os.FileMode(f.FileMode), core.HumanSize(f.FileSize), date.Format(time.RFC3339), f.FileName)
+				}
 			}
 		} else {
 			fmt.Println("Dataset is empty or does not exist")
 		}
+
 	})
 
 	var pidName string = ""
