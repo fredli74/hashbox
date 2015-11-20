@@ -250,7 +250,7 @@ func main() {
 	var serverPort int64 = int64(core.DEFAULT_SERVER_IP_PORT)
 	datDirectory = filepath.Join(exeRoot, "data")
 
-	cmd.Title = "Hashbox Server 0.2.3-go"
+	cmd.Title = "Hashbox Server 0.2.4-go"
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
 	cmd.StringOption("db", "", "<path>", "Full path to database files", &datDirectory, cmd.Standard)
 

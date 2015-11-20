@@ -470,13 +470,15 @@ func GC() {
 			memoryMutex.Lock()
 			defer memoryMutex.Unlock()
 
-			for s := range slabs {
-				if slabs[s] != nil {
-					fmt.Printf("slab %d, free %d, total %d, touched %.2f sec\n", s, slabs[s].free, len(slabs[s].next), time.Since(slabs[s].touched).Seconds())
-				}
-				if slabs[s] != nil && slabs[s].free == len(slabs[s].next) && time.Since(slabs[s].touched).Seconds() > 74 {
-					deallocateSlab(uint16(s))
-					runtime.GC()
+			if allocatedSlabs > 0 {
+				for s := range slabs {
+					if slabs[s] != nil {
+						fmt.Printf("slab %d, free %d, total %d, touched %.2f sec\n", s, slabs[s].free, len(slabs[s].next), time.Since(slabs[s].touched).Seconds())
+					}
+					if slabs[s] != nil && slabs[s].free == len(slabs[s].next) && time.Since(slabs[s].touched).Seconds() > 74 {
+						deallocateSlab(uint16(s))
+						runtime.GC()
+					}
 				}
 			}
 		}()
