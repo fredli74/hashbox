@@ -65,8 +65,6 @@ func (b *ByteArray) Release() {
 	}
 }
 
-var SPLIT_ON_EDGE bool
-
 // Split a byte array into a new ByteArray at the specified offset
 func (b *ByteArray) Split(offset int) (newArray ByteArray) {
 	if offset > b.usedBytes {
@@ -95,7 +93,6 @@ func (b *ByteArray) Split(offset int) (newArray ByteArray) {
 		setNextLocation(newArray.rootChunk, getNextLocation(splitPosition.chunk))
 		setNextLocation(splitPosition.chunk, emptyLocation)
 	} else {
-		SPLIT_ON_EDGE = true
 		var splitPosition position
 		splitPosition = b.seek(splitPosition, offset-1, SEEK_SET) // -1 just to get the index of the previous chunk
 		newArray.rootChunk = getNextLocation(splitPosition.chunk)
@@ -393,8 +390,6 @@ func deallocateSlab(ix uint16) {
 	setFree := true
 	last := emptyLocation
 
-	_ = "breakpoint"
-
 	for this := freeChunk; this != emptyLocation || last != emptyLocation; this = getNextLocation(this) {
 		s, _ := getChunkLocation(this)
 		if s != ix {
@@ -410,14 +405,12 @@ func deallocateSlab(ix uint16) {
 			slabs[ix].free--
 		}
 	}
-	_ = "breakpoint"
 
 	if slabs[ix].free > 0 {
 		panic("ASSERT: Unable to remove all chunks from free-chain")
 	}
 	slabs[ix] = nil
 	allocatedSlabs--
-	fmt.Println("deallocated slab ix", ix)
 }
 
 // grab a free chunk
@@ -472,9 +465,9 @@ func GC() {
 
 			if allocatedSlabs > 0 {
 				for s := range slabs {
-					if slabs[s] != nil {
-						fmt.Printf("slab %d, free %d, total %d, touched %.2f sec\n", s, slabs[s].free, len(slabs[s].next), time.Since(slabs[s].touched).Seconds())
-					}
+					//if slabs[s] != nil {
+					//	fmt.Printf("slab %d, free %d, total %d, touched %.2f sec\n", s, slabs[s].free, len(slabs[s].next), time.Since(slabs[s].touched).Seconds())
+					//}
 					if slabs[s] != nil && slabs[s].free == len(slabs[s].next) && time.Since(slabs[s].touched).Seconds() > 74 {
 						deallocateSlab(uint16(s))
 						runtime.GC()

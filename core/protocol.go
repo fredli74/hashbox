@@ -299,11 +299,11 @@ func (m ProtocolMessage) Details() string {
 	}
 	return ""
 }
-func (m ProtocolMessage) Release() {
-	if b, ok := m.Data.(*MsgServerWriteBlock); ok {
+func (m *ProtocolMessage) Release() {
+	switch b := m.Data.(type) {
+	case *MsgServerWriteBlock:
 		b.Block.Release()
-	}
-	if b, ok := m.Data.(*MsgClientWriteBlock); ok {
+	case *MsgClientWriteBlock:
 		b.Block.Release()
 	}
 }

@@ -540,6 +540,8 @@ func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry,
 				if err := session.storeFile(path, &entry); err != nil {
 					return nil, err
 				}
+				// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server
+				session.State.UniqueSize += entry.FileSize
 			} else {
 				if session.Client.Paint && !session.Verbose && !session.ShowProgress {
 					fmt.Print(" ")
@@ -787,7 +789,6 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 
 	// Commit all pending writes
 	session.Client.Commit()
-	session.State.UniqueSize = session.Client.WriteDataCompressed
 	session.Client.AddDatasetState(datasetName, *session.State)
 
 	fmt.Println()
@@ -1083,7 +1084,7 @@ func main() {
 
 			if len(cmd.Args) < 4 {
 
-				fmt.Println("Backup id                           Backup date                  Total size      Inc size")
+				fmt.Println("Backup id                           Backup date                  Total size       Touched")
 				fmt.Println("--------------------------------    -------------------------    ----------    ----------")
 
 				for _, s := range list.States {
@@ -1271,10 +1272,6 @@ func main() {
 
 	fmt.Print("Memory stats: ")
 	fmt.Println(core.Stats())
-	if core.SPLIT_ON_EDGE {
-		fmt.Println("ByteArray SPLIT ON EDGE in the wild! Please do a restore and compare!")
-	}
-
 }
 
 func GenerateAccessKey(account string, password string) core.Byte128 {

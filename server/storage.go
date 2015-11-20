@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type ChannelCommand struct {
@@ -420,12 +421,12 @@ func (handler *StorageHandler) readBlockLinks(blockID core.Byte128, datFileNumbe
 
 // IMPORTANT readBlockFile allocates memory that needs to be freed manually
 func (handler *StorageHandler) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, error) {
-	var dataEntry storageDataEntry
-
 	indexEntry, _, _, err := handler.readIXEntry(blockID)
 	if err != nil {
 		return nil, err
 	}
+
+	var dataEntry storageDataEntry
 
 	file, offset := indexEntry.GetLocation()
 	datFile := handler.getNumberedFile(storageFileExtensionData, file, false)
@@ -438,6 +439,7 @@ func (handler *StorageHandler) CheckChain(roots []core.Byte128, Paint bool) {
 	var chain []core.Byte128
 	visited := make(map[core.Byte128]bool) // Keep track if we have read the links from the block already
 
+	var progress time.Time
 	chain = append(chain, roots...)
 	for i := 0; len(chain) > 0; i++ {
 		blockID := chain[len(chain)-1]
@@ -456,8 +458,9 @@ func (handler *StorageHandler) CheckChain(roots []core.Byte128, Paint bool) {
 			chain = append(chain, links...)
 		}
 
-		if Paint && i%2000 == 74 {
+		if Paint && time.Now().After(progress) {
 			fmt.Printf("%8d links\r", len(chain))
+			progress = time.Now().Add(500 * time.Millisecond)
 		}
 	}
 }
@@ -466,6 +469,7 @@ func (handler *StorageHandler) MarkIndexes(roots []core.Byte128, Paint bool) {
 	var chain []core.Byte128
 	visited := make(map[core.Byte128]bool) // Keep track if we have read the links from the block already
 
+	var progress time.Time
 	chain = append(chain, roots...)
 	for i := 0; len(chain) > 0; i++ {
 		blockID := chain[len(chain)-1]
@@ -491,8 +495,9 @@ func (handler *StorageHandler) MarkIndexes(roots []core.Byte128, Paint bool) {
 			visited[blockID] = true // Mark that we do not need to check this block again
 		}
 
-		if Paint && i%2000 == 74 {
+		if Paint && time.Now().After(progress) {
 			fmt.Printf("%8d links\r", len(chain))
+			progress = time.Now().Add(500 * time.Millisecond)
 		}
 	}
 }

@@ -91,7 +91,7 @@ func handleConnection(conn net.Conn) {
 			incoming := core.ReadMessage(conn)
 			defer incoming.Release()
 			clientLog(remoteID, "< "+incoming.String()+" "+incoming.Details())
-			reply := core.ProtocolMessage{Num: incoming.Num, Type: incoming.Type & core.MsgTypeServerMask}
+			reply := &core.ProtocolMessage{Num: incoming.Num, Type: incoming.Type & core.MsgTypeServerMask}
 			defer reply.Release()
 
 			switch incoming.Type {
@@ -111,96 +111,100 @@ func handleConnection(conn net.Conn) {
 					sessionAuthenticated = bytes.Equal(myAuthenticationH[:], c.AuthenticationH[:])
 				}
 				unauthorized = !sessionAuthenticated
-				// No need to set any data in reply
-			case core.MsgTypeAddDatasetState:
-				c := incoming.Data.(*core.MsgClientAddDatasetState)
-				unauthorized = !sessionAuthenticated || c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
-				if !unauthorized {
-					if !storageHandler.doesBlockExist(c.State.BlockID) {
-						reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-						reply.Data = &core.MsgServerError{"Dataset pointing to a non existent block"}
-					} else {
-						accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State)
-						// No need to set any data in reply
-					}
-				}
-			case core.MsgTypeRemoveDatasetState:
-				c := incoming.Data.(*core.MsgClientRemoveDatasetState)
-				unauthorized = !sessionAuthenticated || c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
-				if !unauthorized {
-					accountHandler.RemoveDatasetState(c.AccountNameH, c.DatasetName, c.StateID)
-					// No need to set any data in reply
-				}
-			case core.MsgTypeListDataset:
-				c := incoming.Data.(*core.MsgClientListDataset)
-				unauthorized = !sessionAuthenticated || c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
-				if !unauthorized {
-					list := accountHandler.ListDataset(c.AccountNameH, c.DatasetName)
-					if list == nil {
-						list = new(dbStateCollection)
-					}
-					reply.Data = &core.MsgServerListDataset{States: list.States, ListH: list.ListH}
-					//				} else {
-					//					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-					//					reply.Data = &core.MsgServerError{"Cannot list dataset named " + c.DatasetName}
-
-				}
-			case core.MsgTypeAccountInfo:
-				c := incoming.Data.(*core.MsgClientAccountInfo)
-				unauthorized = !sessionAuthenticated || c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
-				if !unauthorized {
-					account := accountHandler.GetInfo(c.AccountNameH)
-					if account != nil {
-						reply.Data = &core.MsgServerAccountInfo{DatasetList: account.Datasets}
-					} else {
-						reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-						reply.Data = &core.MsgServerError{"Cannot find account information"}
-					}
-				}
-			case core.MsgTypeAllocateBlock:
-				c := incoming.Data.(*core.MsgClientAllocateBlock)
-				if storageHandler.doesBlockExist(c.BlockID) {
-					reply.Type = core.MsgTypeAcknowledgeBlock & core.MsgTypeServerMask
-					reply.Data = &core.MsgServerAcknowledgeBlock{BlockID: c.BlockID}
-				} else {
-					reply.Type = core.MsgTypeReadBlock & core.MsgTypeServerMask
-					reply.Data = &core.MsgServerReadBlock{BlockID: c.BlockID}
-				}
-			case core.MsgTypeReadBlock:
-				c := incoming.Data.(*core.MsgClientReadBlock)
-				block := storageHandler.readBlock(c.BlockID)
-				if block == nil {
-					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-					reply.Data = &core.MsgServerError{"Invalid blockID"}
-					keepAlive = false
-				} else {
-					reply.Type = core.MsgTypeWriteBlock & core.MsgTypeServerMask
-					reply.Data = &core.MsgServerWriteBlock{Block: block}
-				}
-			case core.MsgTypeWriteBlock:
-				c := incoming.Data.(*core.MsgClientWriteBlock)
-				if c.Block.VerifyBlock() {
-					for _, l := range c.Block.Links {
-						if !storageHandler.doesBlockExist(l) {
-							reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-							reply.Data = &core.MsgServerError{"Linked to non existant block"}
-							break
-						}
-					}
-					if reply.Data == nil {
-						storageHandler.writeBlock(c.Block)
-						reply.Type = core.MsgTypeAcknowledgeBlock & core.MsgTypeServerMask
-						reply.Data = &core.MsgServerAcknowledgeBlock{BlockID: c.Block.BlockID}
-					}
-				} else {
-					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-					reply.Data = &core.MsgServerError{"Unable to verify blockID"}
-				}
 			case core.MsgTypeGoodbye:
 				keepAlive = false
-
 			default:
-				panic(errors.New("ASSERT: Well if we reach this point, we have not implemented everything correctly (missing " + incoming.String() + ")"))
+				unauthorized = !sessionAuthenticated
+				if !unauthorized {
+					switch incoming.Type {
+					case core.MsgTypeAddDatasetState:
+						c := incoming.Data.(*core.MsgClientAddDatasetState)
+						unauthorized = c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
+						if !unauthorized {
+							if !storageHandler.doesBlockExist(c.State.BlockID) {
+								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+								reply.Data = &core.MsgServerError{"Dataset pointing to a non existent block"}
+							} else {
+								accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State)
+								// No need to set any data in reply
+							}
+						}
+					case core.MsgTypeRemoveDatasetState:
+						c := incoming.Data.(*core.MsgClientRemoveDatasetState)
+						unauthorized = c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
+						if !unauthorized {
+							accountHandler.RemoveDatasetState(c.AccountNameH, c.DatasetName, c.StateID)
+							// No need to set any data in reply
+						}
+					case core.MsgTypeListDataset:
+						c := incoming.Data.(*core.MsgClientListDataset)
+						unauthorized = c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
+						if !unauthorized {
+							list := accountHandler.ListDataset(c.AccountNameH, c.DatasetName)
+							if list == nil {
+								list = new(dbStateCollection)
+							}
+							reply.Data = &core.MsgServerListDataset{States: list.States, ListH: list.ListH}
+							//				} else {
+							//					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+							//					reply.Data = &core.MsgServerError{"Cannot list dataset named " + c.DatasetName}
+
+						}
+					case core.MsgTypeAccountInfo:
+						c := incoming.Data.(*core.MsgClientAccountInfo)
+						unauthorized = c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
+						if !unauthorized {
+							account := accountHandler.GetInfo(c.AccountNameH)
+							if account != nil {
+								reply.Data = &core.MsgServerAccountInfo{DatasetList: account.Datasets}
+							} else {
+								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+								reply.Data = &core.MsgServerError{"Cannot find account information"}
+							}
+						}
+					case core.MsgTypeAllocateBlock:
+						c := incoming.Data.(*core.MsgClientAllocateBlock)
+						if storageHandler.doesBlockExist(c.BlockID) {
+							reply.Type = core.MsgTypeAcknowledgeBlock & core.MsgTypeServerMask
+							reply.Data = &core.MsgServerAcknowledgeBlock{BlockID: c.BlockID}
+						} else {
+							reply.Type = core.MsgTypeReadBlock & core.MsgTypeServerMask
+							reply.Data = &core.MsgServerReadBlock{BlockID: c.BlockID}
+						}
+					case core.MsgTypeReadBlock:
+						c := incoming.Data.(*core.MsgClientReadBlock)
+						block := storageHandler.readBlock(c.BlockID)
+						if block == nil {
+							reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+							reply.Data = &core.MsgServerError{"Invalid blockID"}
+							keepAlive = false
+						} else {
+							reply.Type = core.MsgTypeWriteBlock & core.MsgTypeServerMask
+							reply.Data = &core.MsgServerWriteBlock{Block: block}
+						}
+					case core.MsgTypeWriteBlock:
+						c := incoming.Data.(*core.MsgClientWriteBlock)
+						if c.Block.VerifyBlock() {
+							for _, l := range c.Block.Links {
+								if !storageHandler.doesBlockExist(l) {
+									reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+									reply.Data = &core.MsgServerError{"Linked to non existant block"}
+									break
+								}
+							}
+							if reply.Data == nil {
+								storageHandler.writeBlock(c.Block)
+								reply.Type = core.MsgTypeAcknowledgeBlock & core.MsgTypeServerMask
+								reply.Data = &core.MsgServerAcknowledgeBlock{BlockID: c.Block.BlockID}
+							}
+						} else {
+							reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+							reply.Data = &core.MsgServerError{"Unable to verify blockID"}
+						}
+					default:
+						panic(errors.New("ASSERT: Well if we reach this point, we have not implemented everything correctly (missing " + incoming.String() + ")"))
+					}
+				}
 			}
 
 			if unauthorized {
@@ -211,7 +215,7 @@ func handleConnection(conn net.Conn) {
 				keepAlive = false
 			}
 			clientLog(remoteID, "> "+reply.String()+" "+reply.Details())
-			core.WriteMessage(conn, &reply)
+			core.WriteMessage(conn, reply)
 		}()
 	}
 }
@@ -265,7 +269,7 @@ func main() {
 	cmd.Command("", "", func() { // Default
 		serverAddr := net.TCPAddr{nil, int(serverPort), ""}
 
-		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lock")); err != nil {
+		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
 		} else {
 			defer lock.Close()
@@ -309,7 +313,7 @@ func main() {
 	// TODO: This is a temporary hack to allow creation of hashback users on the server side
 	// It should be an interface to an adminsitrative tool instead
 	cmd.Command("adduser", "<username> <password>", func() {
-		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lock")); err != nil {
+		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
 		} else {
 			defer lock.Close()
@@ -355,7 +359,7 @@ func main() {
 	var indexOnly bool
 	cmd.BoolOption("index", "gc", "Mark and sweep index only", &indexOnly, cmd.Standard)
 	cmd.Command("gc", "", func() {
-		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lock")); err != nil {
+		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
 		} else {
 			defer lock.Close()
