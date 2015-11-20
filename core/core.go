@@ -12,6 +12,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
 )
 
 // const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MB max blocksize
@@ -252,25 +256,29 @@ func CopyNOrPanic(dst io.Writer, src io.Reader, n int) int {
 	return int(written)
 }
 
-var humanUnitName []string
+var humanUnitName []string = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
+var shortHumanUnitName []string = []string{"B", "K", "M", "G", "T", "P", "E"}
 
-func init() {
-	humanUnitName = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "really?"}
-}
-
-func HumanSize(size int64) string {
-	floatSize := float64(size)
-	unit := 0
-	for ; floatSize > 1000; floatSize /= 1024 {
+func unitize(size int64, limit int) (floatSize float64, unit int, precision int) {
+	floatSize = float64(size)
+	for ; unit < limit && floatSize > 1000; floatSize /= 1024 {
 		unit++
 	}
-	precision := 0
 	if unit > 0 && floatSize < 10 {
 		precision = 2
 	} else if unit > 0 && floatSize < 100 {
 		precision = 1
 	}
-	return fmt.Sprintf("%.*f %s", precision, floatSize, humanUnitName[unit])
+	return floatSize, unit, precision
+}
+
+func HumanSize(size int64) string {
+	s, u, p := unitize(size, len(humanUnitName))
+	return fmt.Sprintf("%.*f %s", p, s, humanUnitName[u])
+}
+func ShortHumanSize(size int64) string {
+	s, u, p := unitize(size, len(shortHumanUnitName))
+	return fmt.Sprintf("%.*f%s", p, s, shortHumanUnitName[u])
 }
 
 const MaxUint = ^uint(0)
@@ -292,4 +300,25 @@ func LimitInt(big int64) (v int) {
 		v = int(big)
 	}
 	return v
+}
+
+func ExpandEnv(s string) string {
+	return os.Expand(s, func(key string) string {
+		if key == "$" {
+			return key
+		} else {
+			v, _ := syscall.Getenv(key)
+			return v
+		}
+	})
+}
+func SplitPath(path string) []string {
+	list := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	filtered := list[:0]
+	for _, l := range list {
+		if l != "" {
+			filtered = append(filtered, l)
+		}
+	}
+	return filtered
 }

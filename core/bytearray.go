@@ -7,14 +7,11 @@
 package core
 
 import (
-	// "bytes"
-	// "compress/zlib"
-	// "crypto/md5"
-	//	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"sync"
-	"sync/atomic"
+	"time"
 )
 
 const c_CHUNKSIZE = 2048              // 2KiB chunks
@@ -68,6 +65,8 @@ func (b *ByteArray) Release() {
 	}
 }
 
+var SPLIT_ON_EDGE bool
+
 // Split a byte array into a new ByteArray at the specified offset
 func (b *ByteArray) Split(offset int) (newArray ByteArray) {
 	if offset > b.usedBytes {
@@ -82,12 +81,12 @@ func (b *ByteArray) Split(offset int) (newArray ByteArray) {
 		b.rootChunk = emptyLocation
 	} else if offset == b.usedBytes {
 		// optimization because no copy or rootOffset is needed
-	} else if offset%c_CHUNKSIZE > 0 { // Split inside a chunk
+	} else if (b.rootOffset+offset)%c_CHUNKSIZE > 0 { // Split inside a chunk
 		var splitPosition position
 		splitPosition = b.seek(splitPosition, offset, SEEK_SET)
 		splitSlice := getSlice(splitPosition)
 
-		newArray.rootOffset = offset % c_CHUNKSIZE
+		newArray.rootOffset = splitPosition.chunkPos
 		newArray.prepare()
 		newSlice := newArray.WriteSlice()
 
@@ -96,8 +95,9 @@ func (b *ByteArray) Split(offset int) (newArray ByteArray) {
 		setNextLocation(newArray.rootChunk, getNextLocation(splitPosition.chunk))
 		setNextLocation(splitPosition.chunk, emptyLocation)
 	} else {
+		SPLIT_ON_EDGE = true
 		var splitPosition position
-		splitPosition = b.seek(splitPosition, offset-1, SEEK_SET)
+		splitPosition = b.seek(splitPosition, offset-1, SEEK_SET) // -1 just to get the index of the previous chunk
 		newArray.rootChunk = getNextLocation(splitPosition.chunk)
 		setNextLocation(splitPosition.chunk, emptyLocation)
 	}
@@ -309,6 +309,8 @@ var releasedChunks int64
 
 const emptyLocation uint32 = 0 // Location is empty
 
+var memoryMutex sync.Mutex
+
 type byteChunkLocation uint32 // upper 16bit is slabIndex, lower 16bit is chunkIndex
 func getChunkLocation(chunk uint32) (slabIndex, chunkIndex uint16) {
 	return uint16(chunk >> 16), uint16(chunk)
@@ -320,15 +322,14 @@ func getNextLocation(chunk uint32) uint32 {
 	if chunk == emptyLocation {
 		return emptyLocation
 	} else {
-		return atomic.LoadUint32(&slabs[(chunk>>16)&0xffff].next[(chunk & 0xffff)])
+		return slabs[(chunk>>16)&0xffff].next[(chunk & 0xffff)]
 	}
 }
 func setNextLocation(chunk uint32, next uint32) {
 	if chunk == emptyLocation {
 		panic("ASSERT!")
 	}
-
-	atomic.StoreUint32(&slabs[(chunk>>16)&0xffff].next[(chunk&0xffff)], next)
+	slabs[(chunk>>16)&0xffff].next[(chunk & 0xffff)] = next
 }
 
 // getSlice gets a byte slice for a chunk position
@@ -355,89 +356,149 @@ type byteSlab struct {
 	memory []byte
 	next   []uint32
 	used   []bool // Only used for ASSERT checking, should be removed
-	//used   int32
-	//free   int32
+	free   int
+
+	touched time.Time
 }
 
-var growMutex sync.Mutex // We only need this because we do not want to allocate more than one buffer at a time
+func allocateSlab() (ix uint16) {
+	slab := &byteSlab{
+		memory: make([]byte, c_SLABSIZE),
+		next:   make([]uint32, c_SLABSIZE/c_CHUNKSIZE),
+		used:   make([]bool, c_SLABSIZE/c_CHUNKSIZE), // Only used for ASSERT checking, should be removed
+	}
+	ix = 1
+	for ; slabs[ix] != nil; ix++ {
+	}
+	slabs[ix] = slab
+	allocatedSlabs++
+
+	for i, _ := range slab.next {
+		slabs[ix].used[i] = false
+		slabs[ix].free++
+
+		release := setChunkLocation(uint16(ix), uint16(i))
+		setNextLocation(release, freeChunk)
+		freeChunk = release
+	}
+	return ix
+}
+func deallocateSlab(ix uint16) {
+	for i := range slabs[ix].used {
+		if slabs[ix].used[i] {
+			panic("ASSERT: Deallocate on a slab that has a chunk in use")
+		}
+	}
+
+	setFree := true
+	last := emptyLocation
+
+	_ = "breakpoint"
+
+	for this := freeChunk; this != emptyLocation || last != emptyLocation; this = getNextLocation(this) {
+		s, _ := getChunkLocation(this)
+		if s != ix {
+			if last != emptyLocation {
+				setNextLocation(last, this)
+			}
+			last = this
+			if setFree {
+				freeChunk = this
+				setFree = false
+			}
+		} else {
+			slabs[ix].free--
+		}
+	}
+	_ = "breakpoint"
+
+	if slabs[ix].free > 0 {
+		panic("ASSERT: Unable to remove all chunks from free-chain")
+	}
+	slabs[ix] = nil
+	allocatedSlabs--
+	fmt.Println("deallocated slab ix", ix)
+}
 
 // grab a free chunk
 func grabChunk() uint32 {
-	for {
-		grab := atomic.LoadUint32(&freeChunk)
-		if grab == emptyLocation {
-			slabIX := atomic.LoadUint32(&allocatedSlabs)
-			growMutex.Lock()
-			if atomic.CompareAndSwapUint32(&allocatedSlabs, slabIX, slabIX+1) {
-				slab := &byteSlab{
-					memory: make([]byte, c_SLABSIZE),
-					next:   make([]uint32, c_SLABSIZE/c_CHUNKSIZE),
-					used:   make([]bool, c_SLABSIZE/c_CHUNKSIZE), // Only used for ASSERT checking, should be removed
-				}
-				slabs[slabIX+1] = slab
-				for i, _ := range slab.next {
-					slabs[slabIX+1].used[i] = true
-					releaseChunk(setChunkLocation(uint16(slabIX+1), uint16(i)))
-					atomic.AddInt64(&releasedChunks, -1)
-					//atomic.AddInt32(&slabs[slabIX].free, 1)
-				}
-			}
-			growMutex.Unlock()
-		} else {
-			next := getNextLocation(grab)
-			if atomic.CompareAndSwapUint32(&freeChunk, grab, next) {
-				atomic.AddInt64(&grabbedChunks, 1)
-				{
-					s, i := getChunkLocation(grab)
-					if slabs[s].used[i] {
-						panic(fmt.Sprintf("ASSERT: Grabbing chunk already in use %x", grab))
-					}
-					slabs[s].used[i] = true
-					//atomic.AddInt32(&slabs[s].used, 1)
-					//atomic.AddInt32(&slabs[s].free, -1)
-				}
-				setNextLocation(grab, emptyLocation)
-				return grab
-			}
-		}
+	memoryMutex.Lock()
+	defer memoryMutex.Unlock()
+
+	if freeChunk == emptyLocation {
+		allocateSlab()
 	}
+
+	grabbed := freeChunk
+	freeChunk = getNextLocation(grabbed)
+	grabbedChunks++
+
+	s, i := getChunkLocation(grabbed)
+	if slabs[s].used[i] {
+		panic(fmt.Sprintf("ASSERT: Grabbing chunk already in use %x", grabbed))
+	}
+	slabs[s].used[i] = true
+	slabs[s].free--
+	slabs[s].touched = time.Now()
+
+	setNextLocation(grabbed, emptyLocation)
+	return grabbed
 }
 
 func releaseChunk(release uint32) {
+	memoryMutex.Lock()
+	defer memoryMutex.Unlock()
+
 	s, i := getChunkLocation(release)
 	if !slabs[s].used[i] {
 		panic(fmt.Sprintf("ASSERT: Releasing chunk not in use %x", release))
 	}
 	slabs[s].used[i] = false
+	slabs[s].free++
+	slabs[s].touched = time.Now()
 
-	for {
-		free := atomic.LoadUint32(&freeChunk)
-		setNextLocation(release, free)
-		if atomic.CompareAndSwapUint32(&freeChunk, free, release) {
-			atomic.AddInt64(&releasedChunks, 1)
-			{
-				//atomic.AddInt32(&slabs[s].used, -1)
-				//atomic.AddInt32(&slabs[s].free, 1)
+	setNextLocation(release, freeChunk)
+	freeChunk = release
+	releasedChunks++
+}
+
+// Not really a GC, more of a slab releaser in case it has not been used for a while.
+func GC() {
+	for { // ever
+		time.Sleep(1 * time.Minute)
+		func() {
+			memoryMutex.Lock()
+			defer memoryMutex.Unlock()
+
+			for s := range slabs {
+				if slabs[s] != nil {
+					fmt.Printf("slab %d, free %d, total %d, touched %.2f sec\n", s, slabs[s].free, len(slabs[s].next), time.Since(slabs[s].touched).Seconds())
+				}
+				if slabs[s] != nil && slabs[s].free == len(slabs[s].next) && time.Since(slabs[s].touched).Seconds() > 74 {
+					deallocateSlab(uint16(s))
+					runtime.GC()
+				}
 			}
-			return
-		}
+		}()
 	}
 }
 
-/*
-func GC() {
-	// We dont have one...
-}
-*/
-
 func Stats() (AllocatedSlabs int64, GrabbedChunks int64, ReleasedChunks int64, MemoryAllocated int64, MemoryInUse int64) {
-	AllocatedSlabs = int64(atomic.LoadUint32(&allocatedSlabs))
-	GrabbedChunks = atomic.LoadInt64(&grabbedChunks)
-	ReleasedChunks = atomic.LoadInt64(&releasedChunks)
+	memoryMutex.Lock()
+	defer memoryMutex.Unlock()
+
+	AllocatedSlabs = int64(allocatedSlabs)
+	GrabbedChunks = grabbedChunks
+	ReleasedChunks = releasedChunks
 	MemoryInUse = (GrabbedChunks - ReleasedChunks) * c_CHUNKSIZE
 	MemoryAllocated = AllocatedSlabs * c_SLABSIZE
 	return
 }
+
 func ChunkQuantize(size int) int {
 	return c_CHUNKSIZE + (size/c_CHUNKSIZE)*c_CHUNKSIZE
+}
+
+func init() {
+	go GC()
 }

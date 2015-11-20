@@ -6,9 +6,9 @@
 package main
 
 import (
-	// "log"
-	// "net/http"
-	// _ "net/http/pprof"
+	//"log"
+	//"net/http"
+	//_ "net/http/pprof"
 
 	cmd "bitbucket.org/fredli74/cmdparser"
 	"bitbucket.org/fredli74/hashbox/core"
@@ -43,7 +43,7 @@ const QUEUE_MAX_BYTES int = 48 * 1024 * 1024 // 48 MiB max memory (will use up t
 
 var DefaultIgnoreList []string // Default ignore list, populated by init() function from each platform
 
-// TODO: this...
+// TODO: do we need this when we do not follow symlinks?
 // const MAX_DEPTH int = 512 // Safety limit to avoid cyclic symbolic links and such
 
 var DEBUG bool = false
@@ -340,6 +340,7 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) error {
 		if session.ShowProgress && time.Now().After(session.Progress) {
 			session.PrintStoreProgress()
 			session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
+			fmt.Print("Memory stats: ")
 			fmt.Println(core.Stats())
 		}
 
@@ -396,6 +397,7 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) error {
 				}
 			}
 		}
+
 		// Split an swap
 		right := fileData.Split(splitPosition)
 		blockData = fileData
@@ -441,6 +443,7 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) error {
 	if err != nil {
 		return err
 	}
+
 	sort.Sort(FileInfoSlice(fl))
 	for _, info := range fl {
 		e, err := session.storePath(filepath.Join(path, info.Name()), false)
@@ -461,23 +464,27 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) error {
 }
 
 func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry, error) {
-	// At top level we follow symbolic links
-	var statFunc func(name string) (os.FileInfo, error)
-	if toplevel {
-		statFunc = os.Stat
-	} else {
-		statFunc = os.Lstat
-	}
-
 	// Get file info from disk
-	info, err := statFunc(path)
-	if err != nil {
-		return nil, err
-	}
+	var info os.FileInfo
+	{
+		var isDir bool
+		var err error
 
-	if match, pattern := session.ignoreMatch(path, info.IsDir()); match {
-		session.Log(fmt.Sprintf("Skipping (ignore %s) %s", pattern, path))
-		return nil, nil
+		if toplevel {
+			info, err = os.Stat(path) // At top level we follow symbolic links
+		} else {
+			info, err = os.Lstat(path) // At all other levels we do not
+		}
+		if info != nil {
+			isDir = info.IsDir() // Check ignore even if we cannot open the file (to avoid output errors on files we already ignore)
+		}
+		if match, pattern := session.ignoreMatch(path, isDir); match {
+			session.Log(fmt.Sprintf("Skipping (ignore %s) %s", pattern, path))
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	entry := FileEntry{
@@ -694,12 +701,13 @@ func (session *BackupSession) ignoreMatch(path string, isDir bool) (bool, string
 }
 
 func (session *BackupSession) Store(datasetName string, path ...string) {
+	session.reference = &referenceEngine{client: session.Client}
+
 	var referenceBlockID *core.Byte128
 	if !session.FullBackup {
 		list := session.Client.ListDataset(cmd.Args[2])
 		if len(list.States) > 0 {
 			referenceBlockID = &list.States[len(list.States)-1].BlockID
-			session.reference = &referenceEngine{client: session.Client}
 		}
 	}
 
@@ -726,7 +734,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		var links []core.Byte128
 
 		var refdir DirectoryBlock
-		if session.reference != nil {
+		if referenceBlockID != nil {
 			blockData := session.Client.ReadBlock(*referenceBlockID).Data
 			refdir.Unserialize(&blockData)
 			blockData.Release()
@@ -761,8 +769,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		session.State.BlockID = session.Client.StoreBlock(core.BlockDataTypeZlib, SerializeToByteArray(dir), links)
 	} else {
 		p := filepath.Clean(path[0])
-		_ = "breakpoint"
-		if session.reference != nil {
+		if referenceBlockID != nil {
 			// push the last backup root to reference list
 			session.reference.path = append(session.reference.path, p)
 			session.reference.pushReference(*referenceBlockID)
@@ -794,6 +801,10 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 	}
 
 	block := session.Client.ReadBlock(blockID)
+	if !block.VerifyBlock() {
+		panic(errors.New(fmt.Sprintf("Block %x corrupted, hash does not match")))
+	}
+
 	session.ReadData += int64(block.CompressedSize)
 	// TODO: Decrypt block
 	// Uncompress block
@@ -802,20 +813,82 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 		panic(errors.New("Unable to verify block content, data is corrupted"))
 	}
 	d := block.Data
+	d.ReadSeek(0, core.SEEK_SET)
 	core.CopyOrPanic(f, &d)
 	session.WriteData += int64(d.Len())
-	/*	buf := bytes.NewReader(block.Data)
-		zr, err := zlib.NewReader(buf)
-		if err != nil {
-			return err
+	d.Release()
+	return nil
+}
+
+func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
+	localname := filepath.Join(path, string(e.FileName))
+	backup.Log(localname)
+
+	if e.FileMode&uint32(os.ModeSymlink) > 0 {
+		switch e.ContentType {
+		case ContentTypeSymLink:
+			if err := os.Symlink(string(e.FileLink), localname); err != nil {
+				return err
+			}
+		default:
+			panic(errors.New(fmt.Sprintf("Invalid ContentType for a Symlink (%d)", e.ContentType)))
 		}
-		defer zr.Close()
-		written, err := io.Copy(f, zr)
-		if err != nil {
+	} else if e.FileMode&uint32(os.ModeDir) > 0 {
+		if err := os.MkdirAll(localname, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
 			return err
 		}
 
-		session.WriteData += int64(written)*/
+		switch e.ContentType {
+		case ContentTypeDirectory:
+			if err := backup.restoreDir(e.ContentBlockID, localname); err != nil {
+				return err
+			}
+		case ContentTypeEmpty:
+		default:
+			panic(errors.New(fmt.Sprintf("Invalid ContentType for a directory (%d)", e.ContentType)))
+		}
+		backup.Directories++
+	} else {
+		if e.ContentType != ContentTypeFileChain && e.ContentType != ContentTypeFileData && e.ContentType != ContentTypeEmpty {
+			panic(errors.New(fmt.Sprintf("Invalid ContentType for a file (%d)", e.ContentType)))
+		}
+		err := func() error {
+			fil, err := os.OpenFile(localname, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(e.FileMode) /*&os.ModePerm*/)
+			if err != nil {
+				return err
+			}
+			defer fil.Close()
+
+			switch e.ContentType {
+			case ContentTypeEmpty:
+				// No data
+			case ContentTypeFileChain:
+				var chain FileChainBlock
+
+				blockData := backup.Client.ReadBlock(e.ContentBlockID).Data
+				chain.Unserialize(&blockData)
+				blockData.Release()
+
+				for i := range chain.ChainBlocks {
+					if err := backup.restoreFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i]); err != nil {
+						return err
+					}
+				}
+			case ContentTypeFileData:
+				if err := backup.restoreFileData(fil, e.ContentBlockID, e.DecryptKey); err != nil {
+					return err
+				}
+			}
+			return nil
+		}()
+		if err != nil {
+			return err
+		}
+		if err := os.Chtimes(localname, time.Now(), time.Unix(0, e.ModTime)); err != nil {
+			return err
+		}
+		backup.Files++
+	}
 	return nil
 }
 
@@ -827,86 +900,70 @@ func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error
 	blockData.Release()
 
 	for _, e := range dir.File {
-		localname := filepath.Join(path, string(e.FileName))
-		if backup.Verbose {
-			fmt.Println(localname)
-		}
-		if e.FileMode&uint32(os.ModeSymlink) > 0 {
-			switch e.ContentType {
-			case ContentTypeSymLink:
-				if err := os.Symlink(string(e.FileLink), localname); err != nil {
-					return err
-				}
-			default:
-				panic(errors.New(fmt.Sprintf("Invalid ContentType for a Symlink (%d)", e.ContentType)))
-			}
-		} else if e.FileMode&uint32(os.ModeDir) > 0 {
-			if err := os.MkdirAll(localname, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
-				return err
-			}
-
-			switch e.ContentType {
-			case ContentTypeDirectory:
-				if err := backup.restoreDir(e.ContentBlockID, localname); err != nil {
-					return err
-				}
-			case ContentTypeEmpty:
-			default:
-				panic(errors.New(fmt.Sprintf("Invalid ContentType for a directory (%d)", e.ContentType)))
-			}
-			backup.Directories++
-		} else {
-			if e.ContentType != ContentTypeFileChain && e.ContentType != ContentTypeFileData && e.ContentType != ContentTypeEmpty {
-				panic(errors.New(fmt.Sprintf("Invalid ContentType for a file (%d)", e.ContentType)))
-			}
-			err := func() error {
-				fil, err := os.OpenFile(localname, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(e.FileMode) /*&os.ModePerm*/)
-				if err != nil {
-					return err
-				}
-				defer fil.Close()
-
-				switch e.ContentType {
-				case ContentTypeEmpty:
-					// No data
-				case ContentTypeFileChain:
-					var chain FileChainBlock
-
-					blockData := backup.Client.ReadBlock(e.ContentBlockID).Data
-					chain.Unserialize(&blockData)
-					blockData.Release()
-
-					for i := range chain.ChainBlocks {
-						if err := backup.restoreFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i]); err != nil {
-							return err
-						}
-					}
-				case ContentTypeFileData:
-					if err := backup.restoreFileData(fil, e.ContentBlockID, e.DecryptKey); err != nil {
-						return err
-					}
-				}
-				return nil
-			}()
-			if err != nil {
-				return err
-			}
-			if err := os.Chtimes(localname, time.Now(), time.Unix(0, e.ModTime)); err != nil {
-				return err
-			}
-			backup.Files++
+		if err := backup.restoreEntry(e, path); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
+func (backup *BackupSession) changeDir(blockID core.Byte128, pathList []string) (*DirectoryBlock, int, error) {
+	var dir DirectoryBlock
+	blockData := backup.Client.ReadBlock(blockID).Data
+	dir.Unserialize(&blockData)
+	blockData.Release()
+
+	if len(pathList) > 0 {
+		for _, f := range dir.File {
+			if string(f.FileName) == pathList[0] && f.ContentType == ContentTypeDirectory {
+				return backup.changeDir(f.ContentBlockID, pathList[1:])
+			}
+		}
+		return &dir, len(pathList), errors.New("Path not found")
+	}
+	return &dir, len(pathList), nil
+}
+
+func (backup *BackupSession) findPathMatch(rootBlockID core.Byte128, path string) ([]*FileEntry, error) {
+	//var fileList []*FileEntry
+
+	pathList := core.SplitPath(path)
+	dir, unmatched, err := backup.changeDir(rootBlockID, pathList)
+	if unmatched == 1 {
+		filtered := dir.File[:0]
+		for _, x := range dir.File {
+			if match, _ := filepath.Match(pathList[len(pathList)-1], string(x.FileName)); match {
+				filtered = append(filtered, x)
+			}
+		}
+		if len(filtered) > 0 {
+			return filtered, nil
+		} else {
+			return nil, errors.New(fmt.Sprintf("No match found on \"%s\"", path))
+		}
+	} else if unmatched > 0 {
+		return nil, err
+	} else {
+		return dir.File, nil
+	}
+}
+func filterDir(dir []*FileEntry, match string) []*FileEntry {
+	filtered := dir[:0]
+	for _, x := range dir {
+		if match, _ := filepath.Match(match, string(x.FileName)); match {
+			filtered = append(filtered, x)
+		}
+	}
+	return filtered
+}
+
 func main() {
 	var lockFile *core.LockFile
 
-	// runtime.SetBlockProfileRate(1000)
-	// go func() {
-	// 	log.Println(http.ListenAndServe("localhost:6060", nil))
-	// }()
+	//runtime.SetBlockProfileRate(1000)
+	//go func() {
+	//	log.Println(http.ListenAndServe("localhost:6060", nil))
+	//}()
 
 	/*	defer func() {
 		// Panic error handling
@@ -932,21 +989,9 @@ func main() {
 
 	session := NewBackupSession()
 
-	cmd.Title = "Hashback 0.2.3-go (Hashbox Backup Client)"
+	cmd.Title = "Hashback 0.2.4-go (Hashbox Backup Client)"
 	cmd.OptionsFile = filepath.Join(preferencesBaseFolder, ".hashback", "options.json")
-	/*	cmd.SaveOptions = func(options map[string]interface{}) error {
-		if options["password"] != nil {
-			if options["user"] == nil {
-				return errors.New("Unable to save login unless both user and password options are specified")
-			} else {
-				key := GenerateAccessKey(cmd.Option["user"].String(), cmd.Option["password"].String())
-				options["accesskey"] = base64.RawURLEncoding.EncodeToString(key[:])
-				key = GenerateBackupKey(cmd.Option["user"].String(), cmd.Option["password"].String())
-				options["backupkey"] = base64.RawURLEncoding.EncodeToString(key[:])
-			}
-		}
-		return nil
-	}*/
+
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
 
 	cmd.StringOption("user", "", "<username>", "Username", &session.User, cmd.Preference|cmd.Required)
@@ -1025,7 +1070,7 @@ func main() {
 		}
 
 	})
-	cmd.Command("list", "<dataset> [ <backup id>  ]", func() { // [<path>...]
+	cmd.Command("list", "<dataset> [(<backup id>|.) [\"<path>\"]]", func() {
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))
 		}
@@ -1038,7 +1083,7 @@ func main() {
 
 			if len(cmd.Args) < 4 {
 
-				fmt.Println("Backup id                           Backup date                  Total size    Used space")
+				fmt.Println("Backup id                           Backup date                  Total size      Inc size")
 				fmt.Println("--------------------------------    -------------------------    ----------    ----------")
 
 				for _, s := range list.States {
@@ -1049,24 +1094,43 @@ func main() {
 				}
 			} else {
 				var state *core.DatasetState
-				for _, s := range list.States {
-					if fmt.Sprintf("%x", s.StateID[:]) == cmd.Args[3] {
-						state = &s
+				for i, s := range list.States {
+					if cmd.Args[3] == "." || fmt.Sprintf("%x", s.StateID[:]) == cmd.Args[3] {
+						state = &list.States[i]
 					}
 				}
 				if state == nil {
 					panic(errors.New("Backup id not found"))
 				}
 
-				var dir DirectoryBlock
+				var filelist []*FileEntry
+				var listpath string = "*"
+				if len(cmd.Args) > 4 {
+					listpath = cmd.Args[4]
+				}
+				filelist, err = session.findPathMatch(state.BlockID, listpath)
+				if err != nil {
+					panic(err)
+				}
 
-				blockData := session.Client.ReadBlock(state.BlockID).Data
-				dir.Unserialize(&blockData)
-				blockData.Release()
+				fmt.Printf("Listing %s\n", listpath)
+				if len(filelist) > 0 {
+					for _, f := range filelist {
+						var niceDate, niceSize string
+						date := time.Unix(0, int64(f.ModTime))
 
-				for _, f := range dir.File {
-					date := time.Unix(0, int64(f.ModTime))
-					fmt.Printf("%-10s  %10s  %-25s  %s\n", os.FileMode(f.FileMode), core.HumanSize(f.FileSize), date.Format(time.RFC3339), f.FileName)
+						if time.Since(date).Hours() > 24*300 { // 300 days
+							niceDate = date.Format("Jan _2  2006")
+						} else {
+							niceDate = date.Format("Jan _2 15:04")
+						}
+						if f.ContentType != ContentTypeDirectory {
+							niceSize = core.ShortHumanSize(f.FileSize)
+						}
+						fmt.Printf("%-10s  %6s   %-12s   %s\n", os.FileMode(f.FileMode), niceSize, niceDate /*date.Format(time.RFC3339)*/, f.FileName)
+					}
+				} else {
+					fmt.Println("No files matching")
 				}
 			}
 		} else {
@@ -1080,7 +1144,7 @@ func main() {
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &DefaultIgnoreList, cmd.Standard|cmd.Preference)
 	cmd.Command("store", "<dataset> (<folder> | <file>)...", func() {
 		for _, d := range DefaultIgnoreList {
-			ignore := ignoreEntry{pattern: d, match: os.ExpandEnv(d)} // Expand ignore patterns
+			ignore := ignoreEntry{pattern: d, match: core.ExpandEnv(d)} // Expand ignore patterns
 
 			if ignore.match == "" {
 				continue
@@ -1122,11 +1186,14 @@ func main() {
 		session.State = &core.DatasetState{StateID: session.Client.SessionNonce}
 		session.Store(cmd.Args[2], cmd.Args[3:]...)
 	})
-	cmd.Command("restore", "<dataset> [backup-id] <folder>", func() {
+	cmd.Command("restore", "<dataset> (<backup id>|.) [\"<path>\"...] <dest-folder>", func() {
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))
 		}
 		if len(cmd.Args) < 4 {
+			panic(errors.New("Missing backup id (or \".\")"))
+		}
+		if len(cmd.Args) < 5 {
 			panic(errors.New("Missing destination folder argument"))
 		}
 
@@ -1135,38 +1202,52 @@ func main() {
 
 		list := session.Client.ListDataset(cmd.Args[2])
 
+		var stateid string = cmd.Args[3]
+		var restorepath string = cmd.Args[len(cmd.Args)-1]
+		var restorelist []string = cmd.Args[4 : len(cmd.Args)-1]
+
 		var found int = -1
-		var path string
-		if len(cmd.Args) > 4 {
-			path = cmd.Args[4]
+		if stateid == "." {
+			found = len(list.States) - 1
+		} else {
 			for i, s := range list.States {
-				if cmd.Args[3] == fmt.Sprintf("%x", s.StateID) {
+				if stateid == fmt.Sprintf("%x", s.StateID) {
 					found = i
 					break
 				}
 			}
-		} else {
-			found = len(list.States) - 1
 			if found < 0 {
-				panic(errors.New("No backup found under dataset " + cmd.Args[2]))
+				panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
 			}
-			path = cmd.Args[3]
 		}
-
 		if found < 0 {
-			panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
+			panic(errors.New("No backup found under dataset " + cmd.Args[2]))
 		}
 
 		timestamp := binary.BigEndian.Uint64(list.States[found].StateID[:])
 		date := time.Unix(0, int64(timestamp))
-		fmt.Printf("Restoring %x (%s) to path %s\n", list.States[found].StateID, date.Format(time.RFC3339), path)
+		fmt.Printf("Restoring from %x (%s) to path %s\n", list.States[found].StateID, date.Format(time.RFC3339), restorepath)
 
-		if err := os.MkdirAll(path, 0777); err != nil {
+		if err := os.MkdirAll(restorepath, 0777); err != nil {
 			panic(err)
 		}
 
-		if err := session.restoreDir(list.States[found].BlockID, path); err != nil {
-			panic(err)
+		if len(restorelist) > 0 {
+			for _, r := range restorelist {
+				list, err := session.findPathMatch(list.States[found].BlockID, r)
+				if err != nil {
+					panic(err)
+				}
+				for _, e := range list {
+					if err := session.restoreEntry(e, restorepath); err != nil {
+						panic(err)
+					}
+				}
+			}
+		} else {
+			if err := session.restoreDir(list.States[found].BlockID, restorepath); err != nil {
+				panic(err)
+			}
 		}
 		session.PrintRestoreProgress()
 	})
@@ -1188,7 +1269,9 @@ func main() {
 		panic(err)
 	}
 
+	fmt.Print("Memory stats: ")
 	fmt.Println(core.Stats())
+	fmt.Println(core.SPLIT_ON_EDGE)
 }
 
 func GenerateAccessKey(account string, password string) core.Byte128 {

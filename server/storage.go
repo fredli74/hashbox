@@ -315,6 +315,7 @@ func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (*storageIXEntr
 	ixFileNumber := int32(0)
 	ixOffset := baseOffset
 
+OuterLoop:
 	for {
 		ixFile := handler.getNumberedFile(storageFileExtensionIndex, ixFileNumber, false)
 		if ixFile == nil {
@@ -331,11 +332,14 @@ func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (*storageIXEntr
 		}
 
 		var entry storageIXEntry
-		for i := 0; ixOffset < ixSize && i < storageIXEntryProbeLimit; i++ {
+		for i := 0; i < storageIXEntryProbeLimit; i++ {
+			if ixOffset >= ixSize {
+				break OuterLoop
+			}
 			entry.Unserialize(ixFile)
 
 			if entry.Flags&entryFlagExists == 0 {
-				return nil, ixFileNumber, ixOffset, errors.New(fmt.Sprintf("BlockID entry not found for %x", blockID[:]))
+				break OuterLoop
 			}
 			if bytes.Equal(blockID[:], entry.BlockID[:]) {
 				return &entry, ixFileNumber, ixOffset, nil
