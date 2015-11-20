@@ -299,6 +299,14 @@ func (m ProtocolMessage) Details() string {
 	}
 	return ""
 }
+func (m ProtocolMessage) Release() {
+	if b, ok := m.Data.(*MsgServerWriteBlock); ok {
+		b.Block.Release()
+	}
+	if b, ok := m.Data.(*MsgClientWriteBlock); ok {
+		b.Block.Release()
+	}
+}
 
 // IMPORTANT messages containing HashboxBlock data will ByteArray allocate memory that needs to be freed manually
 func ReadMessage(r io.Reader) *ProtocolMessage {

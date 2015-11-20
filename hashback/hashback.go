@@ -1271,7 +1271,10 @@ func main() {
 
 	fmt.Print("Memory stats: ")
 	fmt.Println(core.Stats())
-	fmt.Println(core.SPLIT_ON_EDGE)
+	if core.SPLIT_ON_EDGE {
+		fmt.Println("ByteArray SPLIT ON EDGE in the wild! Please do a restore and compare!")
+	}
+
 }
 
 func GenerateAccessKey(account string, password string) core.Byte128 {

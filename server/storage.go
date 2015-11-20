@@ -349,7 +349,7 @@ OuterLoop:
 		ixFileNumber++
 		ixOffset = baseOffset
 	}
-	return nil, ixFileNumber, ixOffset, errors.New(fmt.Sprintf("BlockID entry not found for %x", blockID[:]))
+	return nil, ixFileNumber, ixOffset, errors.New(fmt.Sprintf("BlockID index entry not found for %x", blockID[:]))
 }
 func (handler *StorageHandler) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *storageIXEntry) {
 	var ixFile = handler.getNumberedFile(storageFileExtensionIndex, ixFileNumber, true)
