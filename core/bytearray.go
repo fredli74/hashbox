@@ -475,6 +475,9 @@ func GC() {
 		}()
 	}
 }
+func init() {
+	go GC()
+}
 
 func Stats() (AllocatedSlabs int64, GrabbedChunks int64, ReleasedChunks int64, MemoryAllocated int64, MemoryInUse int64) {
 	memoryMutex.Lock()
@@ -492,6 +495,7 @@ func ChunkQuantize(size int) int {
 	return c_CHUNKSIZE + (size/c_CHUNKSIZE)*c_CHUNKSIZE
 }
 
-func init() {
-	go GC()
+func MemoryStats() string {
+	a, _, _, m, u := Stats()
+	return fmt.Sprintf("Memory stats: %d slabs, %s allocated, %s used", a, ShortHumanSize(m), ShortHumanSize(u))
 }

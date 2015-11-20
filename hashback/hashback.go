@@ -305,6 +305,7 @@ func (session *BackupSession) PrintStoreProgress() {
 		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(session.Client.WriteDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
 		sent, skipped+sent, core.HumanSize(int64(queuedsize)))
 
+	fmt.Println(core.MemoryStats())
 }
 func (session *BackupSession) PrintRestoreProgress() {
 	var compression float64
@@ -313,6 +314,8 @@ func (session *BackupSession) PrintRestoreProgress() {
 	}
 	fmt.Printf("*** %.1f min, read: %s (%.0f%% compr), write: %s, %d folders, %d files\n",
 		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
+
+	fmt.Println(core.MemoryStats())
 }
 
 func (session *BackupSession) storeFile(path string, entry *FileEntry) error {
@@ -340,8 +343,6 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) error {
 		if session.ShowProgress && time.Now().After(session.Progress) {
 			session.PrintStoreProgress()
 			session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
-			fmt.Print("Memory stats: ")
-			fmt.Println(core.Stats())
 		}
 
 		var left int64 = int64(entry.FileSize) - offset
@@ -1269,9 +1270,6 @@ func main() {
 	if err := cmd.Parse(); err != nil {
 		panic(err)
 	}
-
-	fmt.Print("Memory stats: ")
-	fmt.Println(core.Stats())
 }
 
 func GenerateAccessKey(account string, password string) core.Byte128 {

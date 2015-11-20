@@ -377,11 +377,23 @@ func main() {
 		fmt.Printf("Garbage collection completed in %.1f minutes\n\n", time.Since(start).Minutes())
 	})
 
+	go func() {
+		var lastStats string
+		for { // ever
+			time.Sleep(1 * time.Minute)
+			s := core.MemoryStats()
+			if s != lastStats {
+				fmt.Println(s)
+				lastStats = s
+			}
+		}
+	}()
+
 	if err := cmd.Parse(); err != nil {
 		panic(err)
 	}
 
-	fmt.Println(core.Stats())
+	fmt.Println(core.MemoryStats())
 
 	os.Exit(0)
 }
