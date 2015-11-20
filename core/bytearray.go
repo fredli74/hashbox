@@ -387,19 +387,17 @@ func deallocateSlab(ix uint16) {
 		}
 	}
 
-	setFree := true
-	last := emptyLocation
-
-	for this := freeChunk; this != emptyLocation || last != emptyLocation; this = getNextLocation(this) {
+	this, last := freeChunk, emptyLocation
+	freeChunk = emptyLocation
+	for ; this != emptyLocation || last != emptyLocation; this = getNextLocation(this) {
 		s, _ := getChunkLocation(this)
 		if s != ix {
 			if last != emptyLocation {
 				setNextLocation(last, this)
 			}
 			last = this
-			if setFree {
+			if freeChunk == emptyLocation {
 				freeChunk = this
-				setFree = false
 			}
 		} else {
 			slabs[ix].free--
