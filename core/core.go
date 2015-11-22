@@ -9,16 +9,8 @@ package core
 import (
 	"bytes"
 	"crypto/md5"
-	"encoding/binary"
-	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"strings"
-	"syscall"
 )
-
-// const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MB max blocksize
 
 // Unserializer is our own form of BinaryUnmarshaler but it works directly off a stream so we do not need to know the full size beforehand
 type Unserializer interface {
@@ -46,6 +38,43 @@ func (b *Byte128) Compare(a Byte128) int {
 }
 func (b *Byte128) Set(from []byte) {
 	copy(b[:16], from)
+}
+
+// Hash wrapper that returns Byte128 type
+func Hash(data []byte) Byte128 {
+	return md5.Sum(data)
+}
+
+// Hmac is a standard HMAC-MD5 that runs on Byte128 types
+func Hmac(data []byte, key Byte128) Byte128 {
+	// ipad = 0x363636... (64 bytes)
+	// opad = 0x5c5c5c... (64 bytes)
+	// hmac(data, key) = md5([key ^ opad] md5([key ^ ipad] data))
+
+	// Setup ipad and opad keys
+	ipadkey := make([]byte, md5.BlockSize)
+	opadkey := make([]byte, md5.BlockSize)
+	copy(ipadkey, key[:])
+	copy(opadkey, ipadkey)
+	for i := range ipadkey {
+		ipadkey[i] ^= 0x36
+		opadkey[i] ^= 0x5c
+	}
+
+	// Calculate the hashes
+	inner := md5.Sum(append(ipadkey, data...))
+	return md5.Sum(append(opadkey, inner[:]...))
+}
+
+// DeepHmac runs N number of Hmac on the data
+func DeepHmac(depth int, data []byte, key Byte128) Byte128 {
+	var hash Byte128
+
+	for N := 0; N < depth; N++ {
+		hash = Hmac(data, key)
+		data = hash[:]
+	}
+	return hash
 }
 
 // String is serialized as uint32(length) + [length]byte arrays
@@ -166,159 +195,4 @@ func (a DatasetStateArray) Less(i, j int) bool {
 		}
 	}
 	return false
-}
-
-// LEGACY STUFF (to be moved)
-
-// DEFAULTS
-
-const DEFAULT_SERVER_IP_PORT int = 7411
-
-// HB CONSTANTS
-
-const BLUPP_ID_SIZE int32 = 16 // 128 bits
-
-// HB TYPES
-
-type BluppData struct {
-	DataLength int32
-	DataBytes  []byte // bytes is "owned" by 'BluppData', never shared. Destroy when finished with this entire struct.
-	LinkCount  int32
-	Links      []BluppId
-}
-type BluppId struct {
-	IDBytes [BLUPP_ID_SIZE]byte // initial cap to make exported
-}
-
-// Hash wrapper that returns Byte128 type
-func Hash(data []byte) Byte128 {
-	return md5.Sum(data)
-}
-
-// Hmac is a standard HMAC-MD5 that runs on Byte128 types
-func Hmac(data []byte, key Byte128) Byte128 {
-	// ipad = 0x363636... (64 bytes)
-	// opad = 0x5c5c5c... (64 bytes)
-	// hmac(data, key) = md5([key ^ opad] md5([key ^ ipad] data))
-
-	// Setup ipad and opad keys
-	ipadkey := make([]byte, md5.BlockSize)
-	opadkey := make([]byte, md5.BlockSize)
-	copy(ipadkey, key[:])
-	copy(opadkey, ipadkey)
-	for i := range ipadkey {
-		ipadkey[i] ^= 0x36
-		opadkey[i] ^= 0x5c
-	}
-
-	// Calculate the hashes
-	inner := md5.Sum(append(ipadkey, data...))
-	return md5.Sum(append(opadkey, inner[:]...))
-}
-
-// DeepHmac runs N number of Hmac on the data
-func DeepHmac(depth int, data []byte, key Byte128) Byte128 {
-	var hash Byte128
-
-	for N := 0; N < depth; N++ {
-		hash = Hmac(data, key)
-		data = hash[:]
-	}
-	return hash
-}
-
-func ReadOrPanic(r io.Reader, data interface{}) int {
-	err := binary.Read(r, binary.BigEndian, data)
-	if err != nil {
-		panic(err)
-	}
-	return binary.Size(data)
-}
-func WriteOrPanic(w io.Writer, data interface{}) int {
-	err := binary.Write(w, binary.BigEndian, data)
-	if err != nil {
-		panic(err)
-	}
-	return binary.Size(data)
-}
-func CopyOrPanic(dst io.Writer, src io.Reader) int {
-	written, err := io.Copy(dst, src)
-	if err != nil {
-		panic(err)
-	}
-	return int(written)
-}
-func CopyNOrPanic(dst io.Writer, src io.Reader, n int) int {
-	written, err := io.CopyN(dst, src, int64(n))
-	if err != nil {
-		panic(err)
-	}
-	return int(written)
-}
-
-var humanUnitName []string = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
-var shortHumanUnitName []string = []string{"B", "K", "M", "G", "T", "P", "E"}
-
-func unitize(size int64, limit int) (floatSize float64, unit int, precision int) {
-	floatSize = float64(size)
-	for ; unit < limit && floatSize > 1000; floatSize /= 1024 {
-		unit++
-	}
-	if unit > 0 && floatSize < 10 {
-		precision = 2
-	} else if unit > 0 && floatSize < 100 {
-		precision = 1
-	}
-	return floatSize, unit, precision
-}
-
-func HumanSize(size int64) string {
-	s, u, p := unitize(size, len(humanUnitName))
-	return fmt.Sprintf("%.*f %s", p, s, humanUnitName[u])
-}
-func ShortHumanSize(size int64) string {
-	s, u, p := unitize(size, len(shortHumanUnitName))
-	return fmt.Sprintf("%.*f%s", p, s, shortHumanUnitName[u])
-}
-
-const MaxUint = ^uint(0)
-const MinUint = 0
-const MaxInt = int(MaxUint >> 1)
-const MinInt = -MaxInt - 1
-
-func BytesInt64(bytes []byte) (v int64) {
-	for _, b := range bytes {
-		v <<= 8
-		v |= int64(b)
-	}
-	return v
-}
-
-func LimitInt(big int64) (v int) {
-	v = MaxInt
-	if big < int64(v) {
-		v = int(big)
-	}
-	return v
-}
-
-func ExpandEnv(s string) string {
-	return os.Expand(s, func(key string) string {
-		if key == "$" {
-			return key
-		} else {
-			v, _ := syscall.Getenv(key)
-			return v
-		}
-	})
-}
-func SplitPath(path string) []string {
-	list := strings.Split(filepath.Clean(path), string(filepath.Separator))
-	filtered := list[:0]
-	for _, l := range list {
-		if l != "" {
-			filtered = append(filtered, l)
-		}
-	}
-	return filtered
 }

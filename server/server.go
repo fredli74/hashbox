@@ -8,8 +8,10 @@ package main
 import (
 	//"github.com/davecheney/profile"
 
+	"bitbucket.org/fredli74/bytearray"
 	cmd "bitbucket.org/fredli74/cmdparser"
 	"bitbucket.org/fredli74/hashbox/core"
+	"bitbucket.org/fredli74/lockfile"
 
 	"bitbucket.org/kardianos/osext"
 	"bytes"
@@ -25,6 +27,8 @@ import (
 	"sync"
 	"time"
 )
+
+const DEFAULT_SERVER_IP_PORT int = 7411
 
 var datDirectory string
 var accountHandler *AccountHandler
@@ -233,6 +237,8 @@ func connectionListener(listener *net.TCPListener) {
 }
 
 func main() {
+	bytearray.EnableAutoGC(60, 74)
+
 	//defer profile.Start(&profile.Config{CPUProfile: false, MemProfile: true, ProfilePath: ".", NoShutdownHook: true}).Stop()
 
 	/*defer func() {
@@ -249,7 +255,7 @@ func main() {
 
 	datDirectory = *flag.String("db", filepath.Join(exeRoot, "data"), "Full path to database files")
 
-	var serverPort int64 = int64(core.DEFAULT_SERVER_IP_PORT)
+	var serverPort int64 = int64(DEFAULT_SERVER_IP_PORT)
 	datDirectory = filepath.Join(exeRoot, "data")
 
 	cmd.Title = "Hashbox Server 0.2.5-go"
@@ -269,10 +275,10 @@ func main() {
 	cmd.Command("", "", func() { // Default
 		serverAddr := net.TCPAddr{nil, int(serverPort), ""}
 
-		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
+		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
 		} else {
-			defer lock.Close()
+			defer lock.Unlock()
 		}
 
 		var listener *net.TCPListener
@@ -325,10 +331,10 @@ func main() {
 	// TODO: This is a temporary hack to allow creation of hashback users on the server side
 	// It should be an interface to an adminsitrative tool instead
 	cmd.Command("adduser", "<username> <password>", func() {
-		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
+		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
 		} else {
-			defer lock.Close()
+			defer lock.Unlock()
 		}
 
 		if len(cmd.Args) < 4 {
@@ -343,7 +349,7 @@ func main() {
 		Debug("DataEncryptionKey is: %x", dataEncryptionKey)
 		core.EncryptDataInPlace(dataEncryptionKey[:], core.GenerateBackupKey(cmd.Args[2], cmd.Args[3]))
 
-		var blockData core.ByteArray
+		var blockData bytearray.ByteArray
 		blockData.Write(dataEncryptionKey[:])
 		block := core.NewHashboxBlock(core.BlockDataTypeRaw, blockData, nil)
 		if !storageHandler.writeBlock(block) {
@@ -361,10 +367,10 @@ func main() {
 	cmd.BoolOption("repair", "check-storage", "Try to repair non-fatal errors", &doRepair, cmd.Standard)
 	cmd.Command("check-storage", "", func() {
 		if doRepair {
-			if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
+			if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 				panic(err)
 			} else {
-				defer lock.Close()
+				defer lock.Unlock()
 			}
 		}
 
@@ -390,16 +396,15 @@ func main() {
 		if critical == 0 && repaired == 0 {
 			fmt.Printf("All checks completed successfully in %.1f minutes\n\n", time.Since(start).Minutes())
 		}
-		fmt.Println(readsSkipped)
 	})
 
 	var indexOnly bool
 	cmd.BoolOption("index", "gc", "Mark and sweep index only", &indexOnly, cmd.Standard)
 	cmd.Command("gc", "", func() {
-		if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
+		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
 		} else {
-			defer lock.Close()
+			defer lock.Unlock()
 		}
 
 		start := time.Now()

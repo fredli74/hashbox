@@ -7,6 +7,8 @@
 package core
 
 import (
+	"bitbucket.org/fredli74/bytearray"
+
 	"errors"
 	"fmt"
 	"io"
@@ -128,8 +130,8 @@ func (c *Client) sendQueue(what Byte128) {
 					c.dispatchMutex.Lock()
 					if len(c.sendqueue) > 0 {
 						if c.sendqueue[0].state == 2 { // compressed
-							c.blockqueuesize -= ChunkQuantize(c.sendqueue[0].block.UncompressedSize)
-							c.blockqueuesize += ChunkQuantize(c.sendqueue[0].block.CompressedSize)
+							c.blockqueuesize -= bytearray.ChunkQuantize(c.sendqueue[0].block.UncompressedSize)
+							c.blockqueuesize += bytearray.ChunkQuantize(c.sendqueue[0].block.CompressedSize)
 							workItem = c.sendqueue[0] // send it
 						} else if c.sendqueue[0].state == 4 { // sent
 							c.sendqueue = c.sendqueue[1:] // remove it
@@ -209,9 +211,9 @@ func (c *Client) singleExchange(outgoing *messageDispatch) *ProtocolMessage {
 		if block != nil {
 			if block.CompressedSize < 0 { // no encoded data = never sent
 				skipped = true
-				c.blockqueuesize -= ChunkQuantize(block.UncompressedSize)
+				c.blockqueuesize -= bytearray.ChunkQuantize(block.UncompressedSize)
 			} else {
-				c.blockqueuesize -= ChunkQuantize(block.CompressedSize)
+				c.blockqueuesize -= bytearray.ChunkQuantize(block.CompressedSize)
 			}
 			block.Release()
 			delete(c.blockbuffer, d.BlockID)
@@ -338,7 +340,7 @@ func (c *Client) RemoveDatasetState(datasetName string, stateID Byte128) {
 }
 
 // StoreBlock is blocking if the blockbuffer is full
-func (c *Client) StoreBlock(dataType byte, data ByteArray, links []Byte128) Byte128 {
+func (c *Client) StoreBlock(dataType byte, data bytearray.ByteArray, links []Byte128) Byte128 {
 	// Calculate the BlockID
 	block := NewHashboxBlock(dataType, data, links)
 
@@ -348,10 +350,10 @@ func (c *Client) StoreBlock(dataType byte, data ByteArray, links []Byte128) Byte
 	for full := true; full; { //
 		if c.closing {
 			panic(errors.New("Connection closed"))
-		} else if c.blockqueuesize+ChunkQuantize(block.UncompressedSize)*2 < c.QueueMax {
+		} else if c.blockqueuesize+bytearray.ChunkQuantize(block.UncompressedSize)*2 < c.QueueMax {
 			if c.blockbuffer[block.BlockID] == nil {
 				c.blockbuffer[block.BlockID] = block
-				c.blockqueuesize += ChunkQuantize(block.UncompressedSize)
+				c.blockqueuesize += bytearray.ChunkQuantize(block.UncompressedSize)
 			} else {
 				block.Release()
 				return block.BlockID

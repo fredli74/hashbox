@@ -7,6 +7,8 @@
 package core
 
 import (
+	"bitbucket.org/fredli74/bytearray"
+
 	"bytes"
 	"compress/zlib"
 	"crypto/md5"
@@ -27,14 +29,14 @@ type HashboxBlock struct {
 	Links    []Byte128 // Array of BlockIDs
 	DataType byte      // 1 byte data type
 
-	Data ByteArray
+	Data bytearray.ByteArray
 
 	Compressed       bool
 	CompressedSize   int
 	UncompressedSize int
 }
 
-func NewHashboxBlock(dataType byte, data ByteArray, links []Byte128) *HashboxBlock {
+func NewHashboxBlock(dataType byte, data bytearray.ByteArray, links []Byte128) *HashboxBlock {
 	block := HashboxBlock{Links: links, DataType: dataType, Data: data, Compressed: false, CompressedSize: -1, UncompressedSize: data.Len()}
 	block.BlockID = block.HashData()
 	return &block
@@ -100,7 +102,7 @@ func (b *HashboxBlock) HashData() (BlockID Byte128) {
 	//	WriteOrPanic(hash, b.DataType)   not part of the hash
 
 	WriteOrPanic(hash, uint32(b.Data.Len()))
-	b.Data.ReadSeek(0, SEEK_SET)
+	b.Data.ReadSeek(0, bytearray.SEEK_SET)
 	CopyOrPanic(hash, &b.Data)
 
 	copy(BlockID[:], hash.Sum(nil)[:16])
@@ -124,7 +126,7 @@ func (b *HashboxBlock) UncompressData() {
 		}
 		b.UncompressedSize = b.Data.Len()
 	}
-	b.Data.ReadSeek(0, SEEK_SET)
+	b.Data.ReadSeek(0, bytearray.SEEK_SET)
 }
 
 func (b *HashboxBlock) CompressData() {
@@ -142,7 +144,7 @@ func (b *HashboxBlock) CompressData() {
 		}
 		b.CompressedSize = b.Data.Len()
 	}
-	b.Data.ReadSeek(0, SEEK_SET)
+	b.Data.ReadSeek(0, bytearray.SEEK_SET)
 }
 
 func (b *HashboxBlock) VerifyBlock() bool {
@@ -169,16 +171,16 @@ func (b *HashboxBlock) VerifyBlock() bool {
 	return bytes.Equal(verifyID[:], b.BlockID[:])
 }
 
-func ZlibCompress(src ByteArray) (dst ByteArray) {
-	src.ReadSeek(0, SEEK_SET)
+func ZlibCompress(src bytearray.ByteArray) (dst bytearray.ByteArray) {
+	src.ReadSeek(0, bytearray.SEEK_SET)
 	zw := zpool.GetWriter(&dst)
 	CopyOrPanic(zw, &src)
 	zw.Close()
 	zpool.PutWriter(zw)
 	return dst
 }
-func ZlibUncompress(src ByteArray) (dst ByteArray) {
-	src.ReadSeek(0, SEEK_SET)
+func ZlibUncompress(src bytearray.ByteArray) (dst bytearray.ByteArray) {
+	src.ReadSeek(0, bytearray.SEEK_SET)
 	zr, err := zlib.NewReader(&src)
 	if err != nil {
 		panic(err)

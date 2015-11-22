@@ -24,62 +24,6 @@ type ChannelCommand struct {
 	result  chan interface{}
 }
 
-type BufferedFile struct {
-	ReadFile  *os.File
-	Reader    *bufio.Reader
-	WriteFile *os.File
-	Writer    *bufio.Writer
-}
-
-func OpenBufferedFile(name string, buffersize int, flag int, perm os.FileMode) (*BufferedFile, error) {
-	b := new(BufferedFile)
-	var err error
-	if b.WriteFile, err = os.OpenFile(name, flag|os.O_WRONLY, perm); err != nil {
-		return nil, err
-	}
-	if b.ReadFile, err = os.OpenFile(name, flag|os.O_RDONLY, perm); err != nil {
-		return nil, err
-	}
-	b.Reader = bufio.NewReaderSize(b.ReadFile, buffersize)
-	b.Writer = bufio.NewWriterSize(b.WriteFile, buffersize)
-	return b, nil
-}
-func (b *BufferedFile) ReaderSeek(offset int64, whence int) (ret int64, err error) {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
-	ret, err = b.ReadFile.Seek(offset, whence)
-	if err == nil {
-		b.Reader.Reset(b.ReadFile)
-	}
-	return ret, err
-}
-func (b *BufferedFile) WriterSeek(offset int64, whence int) (ret int64, err error) {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
-	ret, err = b.WriteFile.Seek(offset, whence)
-	if err == nil {
-		b.Writer.Reset(b.WriteFile)
-	}
-	return ret, err
-}
-func (b *BufferedFile) Size() int64 {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
-	_ = "breakpoint"
-	size, err := b.ReadFile.Seek(0, os.SEEK_END)
-	if err != nil {
-		panic(err)
-	}
-	return size
-}
-func (b *BufferedFile) Close() (err error) {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
-	if e := b.ReadFile.Close(); e != nil {
-		err = e
-	}
-	if e := b.WriteFile.Close(); e != nil {
-		err = e
-	}
-	return err
-}
-
 type StorageHandler struct {
 	signal  chan error // goroutine signal channel, returns raised errors and stops goroutine when closed
 	closing bool
@@ -921,4 +865,64 @@ func (handler *StorageHandler) CheckData(doRepair bool) (repaired int, critical 
 		}
 	}
 	return repaired, critical
+}
+
+//********************************************************************************//
+//                                  BufferedFile                                  //
+//********************************************************************************//
+
+type BufferedFile struct {
+	ReadFile  *os.File
+	Reader    *bufio.Reader
+	WriteFile *os.File
+	Writer    *bufio.Writer
+}
+
+func OpenBufferedFile(name string, buffersize int, flag int, perm os.FileMode) (*BufferedFile, error) {
+	b := new(BufferedFile)
+	var err error
+	if b.WriteFile, err = os.OpenFile(name, flag|os.O_WRONLY, perm); err != nil {
+		return nil, err
+	}
+	if b.ReadFile, err = os.OpenFile(name, flag|os.O_RDONLY, perm); err != nil {
+		return nil, err
+	}
+	b.Reader = bufio.NewReaderSize(b.ReadFile, buffersize)
+	b.Writer = bufio.NewWriterSize(b.WriteFile, buffersize)
+	return b, nil
+}
+func (b *BufferedFile) ReaderSeek(offset int64, whence int) (ret int64, err error) {
+	b.Writer.Flush() // Always flush in case we want to read what we have written
+	ret, err = b.ReadFile.Seek(offset, whence)
+	if err == nil {
+		b.Reader.Reset(b.ReadFile)
+	}
+	return ret, err
+}
+func (b *BufferedFile) WriterSeek(offset int64, whence int) (ret int64, err error) {
+	b.Writer.Flush() // Always flush in case we want to read what we have written
+	ret, err = b.WriteFile.Seek(offset, whence)
+	if err == nil {
+		b.Writer.Reset(b.WriteFile)
+	}
+	return ret, err
+}
+func (b *BufferedFile) Size() int64 {
+	b.Writer.Flush() // Always flush in case we want to read what we have written
+	_ = "breakpoint"
+	size, err := b.ReadFile.Seek(0, os.SEEK_END)
+	if err != nil {
+		panic(err)
+	}
+	return size
+}
+func (b *BufferedFile) Close() (err error) {
+	b.Writer.Flush() // Always flush in case we want to read what we have written
+	if e := b.ReadFile.Close(); e != nil {
+		err = e
+	}
+	if e := b.WriteFile.Close(); e != nil {
+		err = e
+	}
+	return err
 }
