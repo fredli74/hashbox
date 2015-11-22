@@ -11,6 +11,7 @@ import (
 	"compress/zlib"
 	"crypto/md5"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 )
@@ -57,7 +58,11 @@ func (b *HashboxBlock) Serialize(w io.Writer) (size int) {
 
 	b.CompressData()
 	size += WriteOrPanic(w, uint32(b.Data.Len()))
-	size += CopyOrPanic(w, &b.Data)
+	l := CopyOrPanic(w, &b.Data)
+	if l != b.Data.Len() {
+		panic(errors.New(fmt.Sprintf("ASSERT! Writing block %x with data length %d bytes, but wrote %d bytes")))
+	}
+	size += l
 
 	return
 }

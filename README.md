@@ -74,11 +74,9 @@ Show a list of datasets
 ### Todo (in somewhat prio order) ###
 (Lots of TODOs comments inside the source)
 
-* Change client list command so you can list into backup directories
-* Client selective restore
+* Client dataset deletion (automatic cleanup)
 * Client platform specific file information (User/Group on linux, system/hidden on Windows for example)
-* Client data encryption
-* Client dataset deletion
-* Server garbage collection
+* Server garbage collection (we have one, but it takes hours of offline mangling)
 * Server quota calculations and restrictions
 * Server admin interface
+* Client data encryption

@@ -232,7 +232,6 @@ func (b *ByteArray) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// TODO: Implement WriteTo and ReadFrom to optimize io.Copy
 func (b *ByteArray) WriteTo(w io.Writer) (n int64, err error) {
 	for b.readPos.current < b.usedBytes {
 		slice, er := b.ReadSlice()
@@ -275,7 +274,6 @@ func (b *ByteArray) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// TODO: Implement WriteTo and ReadFrom to optimize io.Copy
 func (b *ByteArray) ReadFrom(r io.Reader) (n int64, err error) {
 	for {
 		slice := b.WriteSlice()

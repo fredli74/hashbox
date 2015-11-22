@@ -809,7 +809,6 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 
 	session.ReadData += int64(block.CompressedSize)
 	// TODO: Decrypt block
-	// Uncompress block
 
 	if !block.VerifyBlock() {
 		panic(errors.New("Unable to verify block content, data is corrupted"))
@@ -991,7 +990,7 @@ func main() {
 
 	session := NewBackupSession()
 
-	cmd.Title = "Hashback 0.2.4-go (Hashbox Backup Client)"
+	cmd.Title = "Hashback 0.2.5-go (Hashbox Backup Client)"
 	cmd.OptionsFile = filepath.Join(preferencesBaseFolder, ".hashback", "options.json")
 
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
@@ -1085,7 +1084,7 @@ func main() {
 
 			if len(cmd.Args) < 4 {
 
-				fmt.Println("Backup id                           Backup date                  Total size       Touched")
+				fmt.Println("Backup id                           Backup date                  Total size     Diff prev")
 				fmt.Println("--------------------------------    -------------------------    ----------    ----------")
 
 				for _, s := range list.States {

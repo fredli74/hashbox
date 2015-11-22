@@ -252,7 +252,7 @@ func main() {
 	var serverPort int64 = int64(core.DEFAULT_SERVER_IP_PORT)
 	datDirectory = filepath.Join(exeRoot, "data")
 
-	cmd.Title = "Hashbox Server 0.2.4-go"
+	cmd.Title = "Hashbox Server 0.2.5-go"
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
 	cmd.StringOption("db", "", "<path>", "Full path to database files", &datDirectory, cmd.Standard)
 
@@ -300,6 +300,18 @@ func main() {
 
 		go connectionListener(listener)
 
+		go func() {
+			var lastStats string
+			for { // ever
+				time.Sleep(10 * time.Second)
+				s := core.MemoryStats()
+				if s != lastStats {
+					fmt.Println(s)
+					lastStats = s
+				}
+			}
+		}()
+
 		// blocking channel read
 		select {
 		case <-done:
@@ -345,15 +357,40 @@ func main() {
 		fmt.Println("User added")
 	})
 
-	cmd.Command("verify-storage", "", func() {
+	var doRepair bool
+	cmd.BoolOption("repair", "check-storage", "Try to repair non-fatal errors", &doRepair, cmd.Standard)
+	cmd.Command("check-storage", "", func() {
+		if doRepair {
+			if lock, err := core.NewLockFile(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
+				panic(err)
+			} else {
+				defer lock.Close()
+			}
+		}
+
 		start := time.Now()
-		fmt.Println("Checking dataset transactions")
-		roots := accountHandler.CollectAllRootBlocks()
-		fmt.Println("Checking block chain integrity")
-		storageHandler.CheckChain(roots, true)
-		storageHandler.CheckIndexes()
-		storageHandler.CheckData()
-		fmt.Printf("All checks completed in %.1f minutes\n\n", time.Since(start).Minutes())
+		fmt.Println("Checking data files")
+		repaired, critical := storageHandler.CheckData(doRepair)
+		if repaired == 0 {
+			fmt.Println("Checking index files")
+			storageHandler.CheckIndexes()
+
+			fmt.Println("Checking dataset transactions")
+			roots := accountHandler.CollectAllRootBlocks()
+			fmt.Println("Checking block chain integrity")
+			storageHandler.CheckChain(roots, true)
+		}
+
+		if critical > 0 {
+			fmt.Printf("Detected %d critical errors, DO NOT start the server unless everything is repaired\n", critical)
+		}
+		if repaired > 0 {
+			fmt.Printf("Performed %d repairs, please run again to verify repairs\n", repaired)
+		}
+		if critical == 0 && repaired == 0 {
+			fmt.Printf("All checks completed successfully in %.1f minutes\n\n", time.Since(start).Minutes())
+		}
+		fmt.Println(readsSkipped)
 	})
 
 	var indexOnly bool
@@ -376,18 +413,6 @@ func main() {
 		}
 		fmt.Printf("Garbage collection completed in %.1f minutes\n\n", time.Since(start).Minutes())
 	})
-
-	go func() {
-		var lastStats string
-		for { // ever
-			time.Sleep(1 * time.Minute)
-			s := core.MemoryStats()
-			if s != lastStats {
-				fmt.Println(s)
-				lastStats = s
-			}
-		}
-	}()
 
 	if err := cmd.Parse(); err != nil {
 		panic(err)

@@ -90,13 +90,6 @@ func (handler *AccountHandler) dispatcher() {
 					accountInfo := q.data.(AccountInfo)
 					accountNameH := core.Hash([]byte(accountInfo.AccountName))
 
-					// TODO: is is now moving the old dataset, should we do this?
-					//old := readInfoFile(accountNameH)
-					//if old != nil {
-					//	if accountInfo.Datasets == nil {
-					//		accountInfo.Datasets = old.Datasets
-					//	}
-					//}
 					writeInfoFile(accountNameH, accountInfo)
 					q.result <- true
 
