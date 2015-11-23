@@ -828,7 +828,7 @@ func (handler *StorageHandler) CheckData(doRepair bool) (repaired int, critical 
 			rewriteIX := false
 			ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(dataEntry.Block.BlockID)
 			if err != nil {
-				fmt.Printf("Orphan block %x (%s)\n", dataEntry.Block.BlockID[:], err.Error())
+				fmt.Printf("Orphan block at %x:%x (%s)\n", datFileNumber, blockOffset, err.Error())
 				ixEntry = &storageIXEntry{Flags: entryFlagExists, BlockID: dataEntry.Block.BlockID}
 				ixEntry.SetLocation(datFileNumber, blockOffset)
 				rewriteIX = true
@@ -841,12 +841,16 @@ func (handler *StorageHandler) CheckData(doRepair bool) (repaired int, critical 
 				}
 			}
 			if ixEntry.Flags&entryFlagNoLinks == entryFlagNoLinks && len(dataEntry.Block.Links) > 0 {
-				fmt.Printf("Block %x has %d links but the index NoLinks flag is set\n", dataEntry.Block.BlockID[:], len(dataEntry.Block.Links))
+				if !rewriteIX {
+					fmt.Printf("Block %x has %d links but the index NoLinks flag is set\n", dataEntry.Block.BlockID[:], len(dataEntry.Block.Links))
+				}
 				ixEntry.Flags &^= entryFlagNoLinks
 				rewriteIX = true
 				critical++
 			} else if ixEntry.Flags&entryFlagNoLinks == 0 && len(dataEntry.Block.Links) == 0 {
-				fmt.Printf("Block %x has no links but the index NoLinks flag is not set\n", dataEntry.Block.BlockID[:])
+				if !rewriteIX {
+					fmt.Printf("Block %x has no links but the index NoLinks flag is not set\n", dataEntry.Block.BlockID[:])
+				}
 				ixEntry.Flags |= entryFlagNoLinks
 				rewriteIX = true
 			}
@@ -861,6 +865,9 @@ func (handler *StorageHandler) CheckData(doRepair bool) (repaired int, critical 
 			if p > lastProgress {
 				lastProgress = p
 				fmt.Printf("%d%%\r", lastProgress)
+				if doRepair {
+					fmt.Println()
+				}
 			}
 		}
 	}
