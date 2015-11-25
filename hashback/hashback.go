@@ -347,7 +347,7 @@ func main() {
 
 	session := NewBackupSession()
 
-	cmd.Title = "Hashback 0.2.6-go (Hashbox Backup Client)"
+	cmd.Title = "Hashback 0.2.7-go (Hashbox Backup Client)"
 	cmd.OptionsFile = filepath.Join(preferencesBaseFolder, ".hashback", "options.json")
 
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)

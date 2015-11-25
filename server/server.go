@@ -40,6 +40,12 @@ var logLock sync.Mutex
 
 var DEBUG bool = false
 
+func PanicOn(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
 func Debug(format string, a ...interface{}) {
 	if DEBUG {
 		fmt.Print("DEBUG: ")
@@ -257,7 +263,7 @@ func main() {
 	datDirectory = filepath.Join(exeRoot, "data")
 	idxDirectory = datDirectory
 
-	cmd.Title = "Hashbox Server 0.2.6-go"
+	cmd.Title = "Hashbox Server 0.2.7-go"
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
 	cmd.StringOption("data", "", "<path>", "Full path to data files", &datDirectory, cmd.Standard).OnChange(func() {
 		idxDirectory = datDirectory
@@ -359,9 +365,8 @@ func main() {
 		if !storageHandler.writeBlock(block) {
 			panic(errors.New("Error writing key block"))
 		}
-		if err := accountHandler.AddDatasetState(accountNameH, core.String("\x07HASHBACK_DEK"), core.DatasetState{BlockID: block.BlockID}); err != nil {
-			panic(err)
-		}
+		err := accountHandler.AddDatasetState(accountNameH, core.String("\x07HASHBACK_DEK"), core.DatasetState{BlockID: block.BlockID})
+		PanicOn(err)
 
 		block.Release()
 		fmt.Println("User added")
@@ -434,14 +439,14 @@ func main() {
 		storageHandler.SweepIndexes(true)
 		fmt.Printf("Stop the world duration %.1f minutes\n", time.Since(start).Minutes())
 		if !indexOnly {
-			storageHandler.CompactData(true)
+			storageHandler.CompactAll(storageFileTypeData)
+			storageHandler.CompactAll(storageFileTypeMeta)
 		}
 		fmt.Printf("Garbage collection completed in %.1f minutes\n\n", time.Since(start).Minutes())
 	})
 
-	if err := cmd.Parse(); err != nil {
-		panic(err)
-	}
+	err = cmd.Parse()
+	PanicOn(err)
 
 	fmt.Println(core.MemoryStats())
 

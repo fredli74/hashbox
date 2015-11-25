@@ -7,6 +7,7 @@ package main
 
 import (
 	"bitbucket.org/fredli74/hashbox/core"
+
 	"bufio"
 	"bytes"
 	"encoding/binary"
@@ -193,10 +194,8 @@ const (
 
 	storageFileHeaderSize int64 = 16 // 16 bytes (filetype + version + deadspace)
 
-	storageMetaFileSize int64 = (1 << 34) - 1 // 0x3ffffffff = 16 GiB data files (overkill but we use the same location type as for data files)
-
-	storageDataFileSize int64  = (1 << 34) - 1 // 0x3ffffffff = 16 GiB data files
-	storageDataMarker   uint32 = 0x68626C6B    // "hblk"
+	storageMaxFileSize int64  = (1 << 34) - 1 // 0x3ffffffff = 16 GiB data and metadata files
+	storageDataMarker  uint32 = 0x68626C6B    // "hblk"
 )
 
 const ( // 2 bytes, max 16 flags
@@ -233,7 +232,7 @@ func (h *storageFileHeader) Unserialize(r io.Reader) (size int) {
 // total addressable storage = 256TiB
 type sixByteLocation [6]byte
 
-func (b *sixByteLocation) SetLocation(File int32, Offset int64) {
+func (b *sixByteLocation) Set(File int32, Offset int64) {
 	var l int64 = int64(File)<<34 | (Offset & 0x3ffffffff)
 	b[0] = byte(l >> 40)
 	b[1] = byte(l >> 32)
@@ -242,7 +241,7 @@ func (b *sixByteLocation) SetLocation(File int32, Offset int64) {
 	b[4] = byte(l >> 8)
 	b[5] = byte(l)
 }
-func (b sixByteLocation) GetLocation() (File int32, Offset int64) {
+func (b sixByteLocation) Get() (File int32, Offset int64) {
 	var l int64 = int64(b[5]) | (int64(b[4]) << 8) | (int64(b[3]) << 16) | (int64(b[2]) << 24) | (int64(b[1]) << 32) | (int64(b[0]) << 40)
 	return int32(l >> 34), (l & 0x3ffffffff)
 }
@@ -263,22 +262,37 @@ const storageIXEntrySize int64 = 24      // 24 bytes
 const storageIXEntryProbeLimit int = 682 // 682*24 bytes = 16368 < 16k
 
 type storageIXEntry struct { // 24 bytes data
-	Flags    int16           // 2 bytes
-	BlockID  core.Byte128    // 16 bytes
-	Location sixByteLocation // 6 bytes
+	flags    int16           // 2 bytes
+	blockID  core.Byte128    // 16 bytes
+	location sixByteLocation // 6 bytes
+}
+
+func (e *storageIXEntry) BlockID() core.Byte128 {
+	return e.blockID
 }
 
 func (e *storageIXEntry) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, e.Flags)
-	size += e.BlockID.Serialize(w)
-	size += e.Location.Serialize(w)
+	size += core.WriteOrPanic(w, e.flags)
+	size += e.blockID.Serialize(w)
+	size += e.location.Serialize(w)
 	return
 }
 func (e *storageIXEntry) Unserialize(r io.Reader) (size int) {
-	size += core.ReadOrPanic(r, &e.Flags)
-	size += e.BlockID.Unserialize(r)
-	size += e.Location.Unserialize(r)
+	size += core.ReadOrPanic(r, &e.flags)
+	size += e.blockID.Unserialize(r)
+	size += e.location.Unserialize(r)
 	return
+}
+
+//******************************************************************************//
+//                                 storageEntry                                 //
+//******************************************************************************//
+type storageEntry interface {
+	BlockID() core.Byte128
+	ChangeLocation(handler *StorageHandler, fileNumber int32, fileOffset int64)
+	VerifyLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) bool
+	core.Serializer
+	core.Unserializer
 }
 
 //*******************************************************************************//
@@ -287,76 +301,114 @@ func (e *storageIXEntry) Unserialize(r io.Reader) (size int) {
 
 // storageMetaEntry used for double-storing data links, size and location (this is to speed up links and size checking)
 type storageMetaEntry struct {
-	_datamarker uint32          // = storageDataMarker, used to find / align blocks in case of recovery
-	BlockID     core.Byte128    // 16 bytes
-	Location    sixByteLocation // 6 bytes
-	DataSize    uint32          // Size of hashboxBlock Data
+	datamarker uint32          // = storageDataMarker, used to find / align blocks in case of recovery
+	blockID    core.Byte128    // 16 bytes
+	location   sixByteLocation // 6 bytes
+	dataSize   uint32          // Size of hashboxBlock Data
 	// BranchSize int64          // Size of all hashboxBlock Data linked to
-	Links []core.Byte128 // Array of BlockIDs
+	links []core.Byte128 // Array of BlockIDs
+}
+
+func (e *storageMetaEntry) BlockID() core.Byte128 {
+	return e.blockID
 }
 
 func (e *storageMetaEntry) Serialize(w io.Writer) (size int) {
 	size += core.WriteOrPanic(w, storageDataMarker)
-	size += e.BlockID.Serialize(w)
-	size += e.Location.Serialize(w)
-	size += core.WriteOrPanic(w, e.DataSize)
+	size += e.blockID.Serialize(w)
+	size += e.location.Serialize(w)
+	size += core.WriteOrPanic(w, e.dataSize)
 	// size += core.WriteOrPanic(w, e.BranchSize)
-	size += core.WriteOrPanic(w, uint32(len(e.Links)))
-	for i := range e.Links {
-		size += e.Links[i].Serialize(w)
+	size += core.WriteOrPanic(w, uint32(len(e.links)))
+	for i := range e.links {
+		size += e.links[i].Serialize(w)
 	}
 	return
 }
 func (e *storageMetaEntry) Unserialize(r io.Reader) (size int) {
-	size += core.ReadOrPanic(r, &e._datamarker)
-	if e._datamarker != storageDataMarker {
-		panic(errors.New(fmt.Sprintf("Incorrect metadata cache marker %x (should be %x)", e._datamarker, storageDataMarker)))
+	size += core.ReadOrPanic(r, &e.datamarker)
+	if e.datamarker != storageDataMarker {
+		panic(errors.New(fmt.Sprintf("Incorrect metadata cache marker %x (should be %x)", e.datamarker, storageDataMarker)))
 	}
-	size += e.BlockID.Unserialize(r)
-	size += e.Location.Unserialize(r)
-	size += core.ReadOrPanic(r, &e.DataSize)
+	size += e.blockID.Unserialize(r)
+	size += e.location.Unserialize(r)
+	size += core.ReadOrPanic(r, &e.dataSize)
 	// size += core.ReadOrPanic(r, &e.BranchSize)
 	var n uint32
 	size += core.ReadOrPanic(r, &n)
-	e.Links = make([]core.Byte128, n)
+	e.links = make([]core.Byte128, n)
 	for i := 0; i < int(n); i++ {
-		size += e.Links[i].Unserialize(r)
+		size += e.links[i].Unserialize(r)
 	}
 	return
 }
-
-//*******************************************************************************//
-//                          storageDataEntry                                     //
-//*******************************************************************************//
-
-type storageDataEntry struct {
-	_datamarker uint32 // = storageDataMarker, used to find / align blocks in case of recovery
-	Block       *core.HashboxBlock
+func (e *storageMetaEntry) ChangeLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) {
+	ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(e.blockID)
+	PanicOn(err)
+	ixEntry.location.Set(fileNumber, fileOffset)
+	handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
+}
+func (e *storageMetaEntry) VerifyLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) bool {
+	ixEntry, _, _, err := handler.readIXEntry(e.blockID)
+	PanicOn(err)
+	f, o := ixEntry.location.Get()
+	return f == fileNumber && o == fileOffset
 }
 
+//******************************************************************************//
+//                               storageDataEntry                               //
+//******************************************************************************//
+
+type storageDataEntry struct {
+	datamarker uint32 // = storageDataMarker, used to find / align blocks in case of recovery
+	block      *core.HashboxBlock
+}
+
+func (e *storageDataEntry) BlockID() core.Byte128 {
+	return e.block.BlockID
+}
 func (e *storageDataEntry) Release() {
-	if e.Block != nil {
-		e.Block.Release()
+	if e.block != nil {
+		e.block.Release()
 	}
 }
 
 func (e *storageDataEntry) Serialize(w io.Writer) (size int) {
 	size += core.WriteOrPanic(w, storageDataMarker)
-	size += e.Block.Serialize(w)
+	size += e.block.Serialize(w)
 	return
 }
 
 // IMPORTANT Unserialize allocates memory that needs to be freed manually
 func (e *storageDataEntry) Unserialize(r io.Reader) (size int) {
-	size += core.ReadOrPanic(r, &e._datamarker)
-	if e._datamarker != storageDataMarker {
-		panic(errors.New(fmt.Sprintf("Incorrect datamarker %x (should be %x)", e._datamarker, storageDataMarker)))
+	size += core.ReadOrPanic(r, &e.datamarker)
+	if e.datamarker != storageDataMarker {
+		panic(errors.New(fmt.Sprintf("Incorrect datamarker %x (should be %x)", e.datamarker, storageDataMarker)))
 	}
-	if e.Block == nil {
-		e.Block = &core.HashboxBlock{}
+	if e.block == nil {
+		e.block = &core.HashboxBlock{}
 	}
-	size += e.Block.Unserialize(r)
+	size += e.block.Unserialize(r)
 	return
+}
+func (e *storageDataEntry) ChangeLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) {
+	metaEntry := storageMetaEntry{blockID: e.block.BlockID, dataSize: uint32(e.block.Data.Len()), links: e.block.Links}
+	metaEntry.location.Set(fileNumber, fileOffset)
+
+	metaFileNumber, metaOffset := handler.writeMetaEntry(&metaEntry)
+	ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(e.block.BlockID)
+	PanicOn(err)
+	ixEntry.location.Set(metaFileNumber, metaOffset)
+	handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
+}
+func (e *storageDataEntry) VerifyLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) bool {
+	ixEntry, _, _, err := handler.readIXEntry(e.block.BlockID)
+	metaFileNumber, metaOffset := ixEntry.location.Get()
+	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+	PanicOn(err)
+
+	f, o := metaEntry.location.Get()
+	return f == fileNumber && o == fileOffset
 }
 
 //********************************************************************************//
@@ -413,16 +465,22 @@ func (handler *StorageHandler) getNumberedFile(fileType int, fileNumber int32, c
 	}
 	return handler.filepool[name]
 }
-func (handler *StorageHandler) addDeadSpace(fileType int, fileNumber int32, size int64) {
+
+// setDeadSpace is used to mark the amount of dead space in a meta or data file
+func (handler *StorageHandler) setDeadSpace(fileType int, fileNumber int32, size int64, add bool) {
 	file := handler.getNumberedFile(fileType, fileNumber, false)
 	if file == nil {
 		panic(errors.New(fmt.Sprintf("Trying to mark free space in %.8X%s which does not exist", fileNumber, storageFileTypeInfo[fileType].Extension)))
 	}
 	var header storageFileHeader
-	file.ReaderSeek(0, os.SEEK_SET)
+	file.Reader.Seek(0, os.SEEK_SET)
 	header.Unserialize(file.Reader)
-	header.deadspace += size
-	file.WriterSeek(0, os.SEEK_SET)
+	if add {
+		header.deadspace += size
+	} else {
+		header.deadspace = size
+	}
+	file.Writer.Seek(0, os.SEEK_SET)
 	header.Serialize(file.Writer)
 	file.Writer.Flush()
 }
@@ -450,9 +508,8 @@ OuterLoop:
 			Debug("%d > %d", ixOffset, ixSize)
 			break
 		}
-		if _, err := ixFile.ReaderSeek(ixOffset, os.SEEK_SET); err != nil {
-			panic(err)
-		}
+		_, err := ixFile.Reader.Seek(ixOffset, os.SEEK_SET)
+		PanicOn(err)
 
 		var entry storageIXEntry
 		for i := 0; i < storageIXEntryProbeLimit; i++ {
@@ -461,10 +518,10 @@ OuterLoop:
 			}
 			entry.Unserialize(ixFile.Reader)
 
-			if entry.Flags&entryFlagExists == 0 {
+			if entry.flags&entryFlagExists == 0 {
 				break OuterLoop
 			}
-			if bytes.Equal(blockID[:], entry.BlockID[:]) {
+			if bytes.Equal(blockID[:], entry.blockID[:]) {
 				return &entry, ixFileNumber, ixOffset, nil
 			}
 			ixOffset += storageIXEntrySize
@@ -476,26 +533,27 @@ OuterLoop:
 }
 func (handler *StorageHandler) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *storageIXEntry) {
 	var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, true)
-	ixFile.WriterSeek(ixOffset, os.SEEK_SET)
+	ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
 	entry.Serialize(ixFile.Writer)
 	ixFile.Writer.Flush()
 }
-func (handler *StorageHandler) killMetaEntry(blockID core.Byte128, metaFileNumber int32, metaOffset int64) {
+func (handler *StorageHandler) killMetaEntry(blockID core.Byte128, metaFileNumber int32, metaOffset int64) (size int64) {
 	entry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-	if err != nil {
-		panic(err)
-	}
-	if entry.BlockID.Compare(blockID) == 0 {
+	PanicOn(err)
+	if entry.blockID.Compare(blockID) == 0 {
 		var data = new(bytes.Buffer)
 		entry.Serialize(data)
 		entrySize := data.Len()
-		handler.addDeadSpace(storageFileTypeMeta, metaFileNumber, int64(entrySize))
+		handler.setDeadSpace(storageFileTypeMeta, metaFileNumber, int64(entrySize), true)
+		size += int64(entrySize)
 
-		dataFileNumber, _ := entry.Location.GetLocation()
-		handler.addDeadSpace(storageFileTypeData, dataFileNumber, int64(entry.DataSize))
+		dataFileNumber, _ := entry.location.Get()
+		handler.setDeadSpace(storageFileTypeData, dataFileNumber, int64(entry.dataSize), true)
+		size += int64(entry.dataSize)
 	} else {
-		panic(errors.New(fmt.Sprintf("Incorrect block %x (should be %x) read on metadata location %x:%x", entry.BlockID[:], blockID[:], metaFileNumber, metaOffset)))
+		panic(errors.New(fmt.Sprintf("Incorrect block %x (should be %x) read on metadata location %x:%x", entry.blockID[:], blockID[:], metaFileNumber, metaOffset)))
 	}
+	return size
 }
 func (handler *StorageHandler) writeMetaEntry(entry *storageMetaEntry) (metaFileNumber int32, metaOffset int64) {
 	var data = new(bytes.Buffer)
@@ -504,9 +562,9 @@ func (handler *StorageHandler) writeMetaEntry(entry *storageMetaEntry) (metaFile
 	var metaFile *BufferedFile
 	for {
 		metaFile = handler.getNumberedFile(storageFileTypeMeta, handler.topMetaFileNumber, true)
-		metaOffset, _ = metaFile.WriterSeek(0, os.SEEK_END)
+		metaOffset, _ = metaFile.Writer.Seek(0, os.SEEK_END)
 		Debug("writeMetaEntry %x:%x", handler.topMetaFileNumber, metaOffset)
-		if metaOffset+int64(data.Len()) <= storageMetaFileSize {
+		if metaOffset+int64(data.Len()) <= storageMaxFileSize {
 			break
 		}
 		handler.topMetaFileNumber++
@@ -528,7 +586,7 @@ func (handler *StorageHandler) readMetaEntry(metaFileNumber int32, metaOffset in
 	if metaFile == nil {
 		return nil, errors.New(fmt.Sprintf("Error reading metadata cache from file %x, file does not exist", metaFileNumber))
 	}
-	metaFile.ReaderSeek(metaOffset, os.SEEK_SET)
+	metaFile.Reader.Seek(metaOffset, os.SEEK_SET)
 
 	metaEntry = new(storageMetaEntry)
 	metaEntry.Unserialize(metaFile.Reader)
@@ -539,14 +597,10 @@ func (handler *StorageHandler) readMetaEntry(metaFileNumber int32, metaOffset in
 func (handler *StorageHandler) sumBranch(links []core.Byte128) (size int64) {
 	for _, l := range links {
 		entry, _, _, err := handler.readIXEntry(l)
-		if err != nil {
-			panic(err)
-		}
-		f, o := entry.Location.GetLocation()
+PanicOn(err)
+		f, o := entry.location.Get()
 		meta, err := handler.readMetaEntry(f, o)
-		if err != nil {
-			panic(err)
-		}
+PanicOn(err)
 		size += meta.BranchSize + int64(meta.DataSize)
 	}
 	return size
@@ -558,7 +612,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 		return false
 	}
 
-	dataEntry := storageDataEntry{Block: block}
+	dataEntry := storageDataEntry{block: block}
 	var data = new(bytes.Buffer)
 	dataEntry.Serialize(data)
 
@@ -566,8 +620,8 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	var datOffset int64
 	for {
 		datFile = handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber, true)
-		datOffset, _ = datFile.WriterSeek(0, os.SEEK_END)
-		if datOffset+int64(data.Len()) <= storageDataFileSize {
+		datOffset, _ = datFile.Writer.Seek(0, os.SEEK_END)
+		if datOffset+int64(data.Len()) <= storageMaxFileSize {
 			break
 		}
 		handler.topDatFileNumber++
@@ -576,15 +630,15 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	data.WriteTo(datFile.Writer)
 	datFile.Writer.Flush()
 
-	metaEntry := storageMetaEntry{BlockID: block.BlockID, DataSize: uint32(block.Data.Len()), Links: block.Links} // , BranchSize: handler.sumBranch(block.Links)}
-	metaEntry.Location.SetLocation(handler.topDatFileNumber, datOffset)
+	metaEntry := storageMetaEntry{blockID: block.BlockID, dataSize: uint32(block.Data.Len()), links: block.Links} // , BranchSize: handler.sumBranch(block.Links)}
+	metaEntry.location.Set(handler.topDatFileNumber, datOffset)
 	metaFileNumber, metaOffset := handler.writeMetaEntry(&metaEntry)
 
-	ixEntry := storageIXEntry{Flags: entryFlagExists, BlockID: block.BlockID}
+	ixEntry := storageIXEntry{flags: entryFlagExists, blockID: block.BlockID}
 	if len(block.Links) == 0 {
-		ixEntry.Flags |= entryFlagNoLinks
+		ixEntry.flags |= entryFlagNoLinks
 	}
-	ixEntry.Location.SetLocation(metaFileNumber, metaOffset)
+	ixEntry.location.Set(metaFileNumber, metaOffset)
 	handler.writeIXEntry(ixFileNumber, ixOffset, &ixEntry)
 	return true
 }
@@ -596,22 +650,20 @@ func (handler *StorageHandler) readBlockFile(blockID core.Byte128) (*core.Hashbo
 		return nil, err
 	}
 
-	metaFileNumber, metaOffset := indexEntry.Location.GetLocation()
+	metaFileNumber, metaOffset := indexEntry.location.Get()
 	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-	if err != nil {
-		panic(err)
-	}
+	PanicOn(err)
 
-	dataFileNumber, dataOffset := metaEntry.Location.GetLocation()
+	dataFileNumber, dataOffset := metaEntry.location.Get()
 	dataFile := handler.getNumberedFile(storageFileTypeData, dataFileNumber, false)
 	if dataFile == nil {
 		panic(errors.New(fmt.Sprintf("Error reading block from file %x, file does not exist", dataFileNumber)))
 	}
-	dataFile.ReaderSeek(dataOffset, os.SEEK_SET)
+	dataFile.Reader.Seek(dataOffset, os.SEEK_SET)
 
 	var dataEntry storageDataEntry
 	dataEntry.Unserialize(dataFile.Reader)
-	return dataEntry.Block, nil
+	return dataEntry.block, nil
 }
 
 func (handler *StorageHandler) CheckChain(roots []core.Byte128, Paint bool) {
@@ -619,34 +671,33 @@ func (handler *StorageHandler) CheckChain(roots []core.Byte128, Paint bool) {
 	visited := make(map[core.Byte128]bool) // Keep track if we have read the links from the block already
 
 	var progress time.Time
-	chain = append(chain, roots...)
-	for i := 0; len(chain) > 0; i++ {
-		blockID := chain[len(chain)-1]
-		chain = chain[:len(chain)-1]
-		if !visited[blockID] {
-			entry, _, _, err := handler.readIXEntry(blockID)
-			if err != nil {
-				panic(err)
-			}
-			if entry.Flags&entryFlagNoLinks == 0 {
-				metaFileNumber, metaOffset := entry.Location.GetLocation()
-				metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-				if err != nil {
-					panic(err)
+	for _, r := range roots {
+		Debug("CheckChain on %x", r[:])
+		chain = append(chain, r)
+		for i := 0; len(chain) > 0; i++ {
+			blockID := chain[len(chain)-1]
+			chain = chain[:len(chain)-1]
+			if !visited[blockID] {
+				entry, _, _, err := handler.readIXEntry(blockID)
+				PanicOn(err)
+				if entry.flags&entryFlagNoLinks == 0 {
+					metaFileNumber, metaOffset := entry.location.Get()
+					metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+					PanicOn(err)
+					if len(metaEntry.links) > 0 && entry.flags&entryFlagNoLinks == entryFlagNoLinks {
+						//panic(errors.New(fmt.Sprintf("Index entry for block %x is marked with NoLinks but the block has %d links", blockID[:], len(metaEntry.links))))
+					} else if len(metaEntry.links) == 0 && entry.flags&entryFlagNoLinks == 0 {
+						Debug("Block %x has no links but the index is missing NoLinks flag", blockID[:])
+					}
+					chain = append(chain, metaEntry.links...)
 				}
-				if len(metaEntry.Links) > 0 && entry.Flags&entryFlagNoLinks == entryFlagNoLinks {
-					//panic(errors.New(fmt.Sprintf("Index entry for block %x is marked with NoLinks but the block has %d links", blockID[:], len(metaEntry.Links))))
-				} else if len(metaEntry.Links) == 0 && entry.Flags&entryFlagNoLinks == 0 {
-					Debug("Block %x has no links but the index is missing NoLinks flag", blockID[:])
-				}
-				chain = append(chain, metaEntry.Links...)
+				visited[blockID] = true
 			}
-			visited[blockID] = true
-		}
 
-		if Paint && time.Now().After(progress) {
-			fmt.Printf("%8d links\r", len(chain))
-			progress = time.Now().Add(500 * time.Millisecond)
+			if Paint && time.Now().After(progress) {
+				fmt.Printf("%8d links\r", len(chain))
+				progress = time.Now().Add(500 * time.Millisecond)
+			}
 		}
 	}
 }
@@ -662,27 +713,23 @@ func (handler *StorageHandler) MarkIndexes(roots []core.Byte128, Paint bool) {
 		chain = chain[:len(chain)-1]
 		if !visited[blockID] {
 			entry, ixFileNumber, ixOffset, err := handler.readIXEntry(blockID)
-			if err != nil {
-				panic(err)
-			}
-			if entry.Flags&entryFlagNoLinks == 0 {
-				metaFileNumber, metaOffset := entry.Location.GetLocation()
+			PanicOn(err)
+			if entry.flags&entryFlagNoLinks == 0 {
+				metaFileNumber, metaOffset := entry.location.Get()
 				metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-				if err != nil {
-					panic(err)
-				}
-				chain = append(chain, metaEntry.Links...)
+				PanicOn(err)
+				chain = append(chain, metaEntry.links...)
 			}
 
-			entry.Flags |= entryFlagMarked // Mark the entry
+			entry.flags |= entryFlagMarked // Mark the entry
 			{
 				var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
 				if ixFile == nil {
 					panic(errors.New(fmt.Sprintf("Error marking index entry in file %x, offset %x, file does not exist", ixFileNumber, ixOffset)))
 				}
 
-				ixFile.WriterSeek(ixOffset, os.SEEK_SET)
-				core.WriteOrPanic(ixFile.Writer, entry.Flags)
+				ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
+				core.WriteOrPanic(ixFile.Writer, entry.flags)
 				ixFile.Writer.Flush()
 			}
 			visited[blockID] = true // Mark that we do not need to check this block again
@@ -697,6 +744,7 @@ func (handler *StorageHandler) MarkIndexes(roots []core.Byte128, Paint bool) {
 func (handler *StorageHandler) SweepIndexes(Paint bool) {
 	var blankEntry storageIXEntry
 	var blanks []int64
+	var sweepedSize int64
 
 	deletedBlocks := 0
 	for ixFileNumber := int32(0); ; ixFileNumber++ {
@@ -712,7 +760,7 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 			fmt.Printf("Sweeping index file #%d (%s)\n", ixFileNumber, core.HumanSize(ixSize))
 		}
 
-		ixFile.ReaderSeek(storageFileHeaderSize, os.SEEK_SET)
+		ixFile.Reader.Seek(storageFileHeaderSize, os.SEEK_SET)
 
 		var lastProgress = -1
 		for offset := int64(storageFileHeaderSize); offset <= ixSize; offset += storageIXEntrySize {
@@ -721,35 +769,35 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 				entry.Unserialize(ixFile.Reader)
 			}
 
-			if entry.Flags&entryFlagExists == entryFlagExists {
-				if entry.Flags&entryFlagMarked == 0 {
+			if entry.flags&entryFlagExists == entryFlagExists {
+				if entry.flags&entryFlagMarked == 0 {
 					// Delete it! Well we need to compact or we will break linear probing
 					deletedBlocks++
-					metaFileNumber, metaOffset := entry.Location.GetLocation()
-					handler.killMetaEntry(entry.BlockID, metaFileNumber, metaOffset)
+					metaFileNumber, metaOffset := entry.location.Get()
+					sweepedSize += handler.killMetaEntry(entry.blockID, metaFileNumber, metaOffset)
 
 					blanks = append(blanks, offset)
-					Debug("Deleted orphan Block %x IX from %x:%x", entry.BlockID[:], ixFileNumber, offset)
+					Debug("Deleted orphan Block %x IX from %x:%x", entry.blockID[:], ixFileNumber, offset)
 				} else {
-					entry.Flags &^= entryFlagMarked
+					entry.flags &^= entryFlagMarked
 
 					// Move it down to a lower idx file?
-					e, f, o, err := handler.readIXEntry(entry.BlockID)
+					e, f, o, err := handler.readIXEntry(entry.blockID)
 					if f < ixFileNumber {
-						Debug("Moving file for Block %x IX from %x:%x to %x:%x", entry.BlockID[:], ixFileNumber, offset, f, o)
+						Debug("Moving file for Block %x IX from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, f, o)
 						if e != nil || err == nil {
 							panic("ASSERT, this makes no sense, the block is in a lower idx already?")
 						}
 						handler.writeIXEntry(f, o, &entry)
 						deletedBlocks++
-						metaFileNumber, metaOffset := entry.Location.GetLocation()
-						handler.killMetaEntry(entry.BlockID, metaFileNumber, metaOffset)
+						metaFileNumber, metaOffset := entry.location.Get()
+						sweepedSize += handler.killMetaEntry(entry.blockID, metaFileNumber, metaOffset)
 
 						blanks = append(blanks, offset)
 					} else {
 						// Move it inside same idx file
 						newOffset := offset
-						blockbase := int64(calculateIXEntryOffset(entry.BlockID))
+						blockbase := int64(calculateIXEntryOffset(entry.blockID))
 
 						for i := range blanks {
 							if blanks[i] >= blockbase {
@@ -763,11 +811,11 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 						if newOffset > lastActiveEntry {
 							lastActiveEntry = newOffset
 						}
-						ixFile.WriterSeek(newOffset, os.SEEK_SET)
+						ixFile.Writer.Seek(newOffset, os.SEEK_SET)
 						if offset == newOffset { // no need to rewrite whole record
-							core.WriteOrPanic(ixFile.Writer, entry.Flags)
+							core.WriteOrPanic(ixFile.Writer, entry.flags)
 						} else {
-							Debug("Moving Block %x IX from %x:%x to %x:%x", entry.BlockID[:], ixFileNumber, offset, ixFileNumber, newOffset)
+							Debug("Moving Block %x IX from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, ixFileNumber, newOffset)
 							entry.Serialize(ixFile.Writer)
 						}
 						ixFile.Writer.Flush()
@@ -778,7 +826,7 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 				// We found a hole, so we have nothing left to move
 				for len(blanks) > 0 {
 					Debug("Clearing %x:%x", ixFileNumber, blanks[0])
-					ixFile.WriterSeek(blanks[0], os.SEEK_SET)
+					ixFile.Writer.Seek(blanks[0], os.SEEK_SET)
 					blankEntry.Serialize(ixFile.Writer)
 					blanks = blanks[1:]
 				}
@@ -801,151 +849,137 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 		}
 		if lastActiveEntry < ixSize {
 			Debug("Truncating file %x at %x", ixFileNumber, lastActiveEntry)
-			ixFile.WriteFile.Truncate(lastActiveEntry)
+			ixFile.Writer.File.Truncate(lastActiveEntry)
 		}
 	}
 	if Paint {
-		fmt.Printf("Removed %d blocks\n", deletedBlocks)
+		fmt.Printf("Removed %d blocks (referencing %s data)\n", deletedBlocks, core.ShortHumanSize(sweepedSize))
 	}
 }
-func (handler *StorageHandler) CompactData(Paint bool) {
-	var dataEntry storageDataEntry
-	defer dataEntry.Release()
 
+func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (compacted int64) {
+	var entry storageEntry
+	switch fileType {
+	case storageFileTypeMeta:
+		metaEntry := new(storageMetaEntry)
+		entry = metaEntry
+	case storageFileTypeData:
+		dataEntry := new(storageDataEntry)
+		defer dataEntry.Release()
+		entry = dataEntry
+	}
+
+	file := handler.getNumberedFile(fileType, fileNumber, false)
+	fileSize := file.Size()
+	serverLog(fmt.Sprintf("Compacting file %s (%s)", file.Path, core.HumanSize(fileSize)))
+
+	// Open a separate reader
+	reader, err := OpenBufferedReader(file.Path, file.BufferSize, file.Flag)
+	PanicOn(err)
+	_, err = reader.Seek(storageFileHeaderSize, os.SEEK_SET)
+	PanicOn(err)
+
+	var lastProgress = -1
+	offset, writeOffset := int64(storageFileHeaderSize), int64(storageFileHeaderSize)
+	for offset < fileSize {
+		// Check if there is a Cgap marker here and in that case, jump ahead of it
+		peek, err := reader.Peek(12)
+		PanicOn(err)
+		if bytes.Equal(peek[:4], []byte("Cgap")) {
+			skip := core.BytesInt64(peek[4:12])
+			Debug("Cgap marker, jumping %d bytes", skip)
+			// Special skip logic since Discard only takes int32 and not int64
+			for skip > 0 {
+				n, _ := reader.Discard(core.LimitInt(skip))
+				offset += int64(n)
+				skip -= int64(n)
+			}
+			continue
+		}
+
+		readOffset := offset
+		entrySize := entry.Unserialize(reader)
+		offset += int64(entrySize)
+		entryBlockID := entry.BlockID()
+
+		Debug("Read %x:%x block %x (%d bytes)", fileNumber, readOffset, entryBlockID[:], entrySize)
+
+		if _, _, _, err = handler.readIXEntry(entryBlockID); err != nil {
+			Debug("Not in index: %s", err.Error())
+		} else if !entry.VerifyLocation(handler, fileNumber, readOffset) {
+			Debug("Not the same as in index (old invalid entry): %s")
+		} else if readOffset != writeOffset {
+			newOffset := writeOffset
+			if readOffset-writeOffset < int64(entrySize)+12 { // 12 bytes for the Cgap marker
+				Debug("No room to move block to %x, %d < %d (+12 bytes)", writeOffset, readOffset-writeOffset, entrySize)
+
+				var newFile *BufferedFile
+				var newOffset int64
+				var newFileNumber int32 = 0
+				for {
+					newFile = handler.getNumberedFile(fileType, newFileNumber, true)
+					newOffset, err = newFile.Writer.Seek(0, os.SEEK_END)
+					PanicOn(err)
+					if newOffset+int64(entrySize)+12 <= storageMaxFileSize {
+						break
+					}
+					newFileNumber++
+				}
+				written := int64(entry.Serialize(newFile.Writer))
+				newFile.Writer.Flush()
+				Debug("Moved block to end of file %s, bytes %x-%x", newFile.Path, newOffset, newOffset+written)
+				if newFileNumber == fileNumber {
+					Debug("File %s, increased in size from %x to %x", newFile.Path, fileSize, fileSize+written)
+					fileSize += written
+				}
+
+				entry.ChangeLocation(handler, newFileNumber, newOffset)
+			} else {
+				file.Writer.Seek(newOffset, os.SEEK_SET)
+				written := int64(entry.Serialize(file.Writer))
+				Debug("Moved block from %x to %x-%x", readOffset, writeOffset, writeOffset+written)
+				writeOffset += written
+
+				Debug("Writing Cgap skip marker to %x (skip %d)", readOffset, readOffset-writeOffset)
+
+				core.WriteOrPanic(file.Writer, []byte("Cgap"))
+				core.WriteOrPanic(file.Writer, readOffset-writeOffset)
+				file.Writer.Flush()
+
+				entry.ChangeLocation(handler, fileNumber, newOffset)
+			}
+		} else {
+			writeOffset += int64(entrySize)
+			Debug("No need to write, moving writeOffset to %x", writeOffset)
+		}
+
+		p := int(offset * 100 / fileSize)
+		if p > lastProgress {
+			fmt.Printf("%d (%d%%)\r", writeOffset-offset, p)
+		}
+	}
+	if writeOffset > offset {
+		panic(" ASSERT !  compact made the file larger?")
+	}
+
+	compacted = (offset - writeOffset)
+	file.Writer.File.Truncate(writeOffset)
+	handler.setDeadSpace(fileType, fileNumber, 0, false)
+
+	serverLog(fmt.Sprintf("Removed %s from file %s", core.HumanSize(compacted), file.Path))
+	return compacted
+}
+func (handler *StorageHandler) CompactAll(fileType int) {
 	var compacted int64
-	for datFileNumber := int32(0); ; datFileNumber++ {
-		var datFile = handler.getNumberedFile(storageFileTypeData, datFileNumber, false)
-		if datFile == nil {
+	for fileNumber := int32(0); ; fileNumber++ {
+		file := handler.getNumberedFile(fileType, fileNumber, false)
+		if file == nil {
 			break // no more data
 		}
 
-		datSize := datFile.Size()
-		if Paint {
-			fmt.Printf("Compacting data file #%d (%s)\n", datFileNumber, core.HumanSize(datSize))
-		}
-
-		datFile.ReaderSeek(storageFileHeaderSize, os.SEEK_SET)
-
-		var lastProgress = -1
-		offset, writeOffset := int64(storageFileHeaderSize), int64(storageFileHeaderSize)
-		for offset < datSize {
-			peek, err := datFile.Reader.Peek(12)
-			if err != nil {
-				panic(err)
-			}
-			if bytes.Equal(peek[:4], []byte("Cgap")) {
-				skip := core.BytesInt64(peek[4:12])
-				Debug("Cgap marker, jumping %d bytes", skip)
-				for skip > 0 {
-					n, _ := datFile.Reader.Discard(core.LimitInt(skip))
-					offset += int64(n)
-					skip -= int64(n)
-				}
-				continue
-			}
-
-			readOffset := offset
-			entrySize := dataEntry.Unserialize(datFile.Reader)
-			offset += int64(entrySize)
-
-			Debug("Read %x:%x block %x (%d bytes)", datFileNumber, readOffset, dataEntry.Block.BlockID[:], entrySize)
-
-			ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(dataEntry.Block.BlockID)
-			if err != nil {
-				Debug("Not in index: %s", err.Error())
-				entrySize = 0 // Block not found, remove it
-			} else {
-				metaFileNumber, metaOffset := ixEntry.Location.GetLocation()
-				metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-				if err != nil {
-					panic(err)
-				}
-				f, o := metaEntry.Location.GetLocation()
-
-				if f != datFileNumber || o != readOffset {
-					Debug("Orphan block, index does not point to %x:%x but %x:%x", datFileNumber, readOffset, f, o)
-					entrySize = 0 // Block found in a different location (most likely an interrupted compact)
-				}
-			}
-
-			if readOffset != writeOffset && entrySize > 0 {
-				metaFileNumber, metaOffset := ixEntry.Location.GetLocation()
-				metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-				if err != nil {
-					panic(err)
-				}
-				if metaEntry.BlockID.Compare(dataEntry.Block.BlockID) != 0 {
-					panic(errors.New(fmt.Sprintf("Error reading block %x, metadata cache is pointing to block %x", metaEntry.BlockID[:], dataEntry.Block.BlockID[:])))
-				}
-
-				newOffset := writeOffset
-				if readOffset-writeOffset < int64(entrySize)+12 { // 12 bytes for the Cgap marker
-					Debug("No room to move block to %x, %d < %d (+12 bytes)", writeOffset, readOffset-writeOffset, entrySize)
-
-					var newDatFile *BufferedFile
-					var newOffset int64
-					var newDatFileNumber int32 = 0
-					for {
-						newDatFile = handler.getNumberedFile(storageFileTypeData, newDatFileNumber, true)
-						newOffset, err = newDatFile.WriterSeek(0, os.SEEK_END)
-						if err != nil {
-							panic(err)
-						}
-						if newOffset+int64(entrySize)+12 <= storageDataFileSize {
-							break
-						}
-						newDatFileNumber++
-					}
-					written := int64(dataEntry.Serialize(newDatFile.Writer))
-					newDatFile.Writer.Flush()
-					Debug("Moved block to end of file %d, bytes %x:%x", newDatFileNumber, newOffset, newOffset+written)
-					if newDatFileNumber == datFileNumber {
-						Debug("File %d, increased in size from %x to %x", datFileNumber, datSize, datSize+written)
-						datSize += written
-					}
-
-					metaEntry.Location.SetLocation(newDatFileNumber, newOffset)
-				} else {
-					datFile.WriterSeek(newOffset, os.SEEK_SET)
-					written := int64(dataEntry.Serialize(datFile.Writer))
-					Debug("Moved block from %x to %x:%x", readOffset, writeOffset, writeOffset+written)
-					writeOffset += written
-
-					Debug("Writing Cgap skip marker to %x (skip %d)", readOffset, readOffset-writeOffset)
-
-					core.WriteOrPanic(datFile.Writer, []byte("Cgap"))
-					core.WriteOrPanic(datFile.Writer, readOffset-writeOffset)
-					datFile.Writer.Flush()
-
-					metaEntry.Location.SetLocation(datFileNumber, newOffset)
-				}
-				{
-					saveFileNumber, saveOffset := metaEntry.Location.GetLocation()
-					Debug("Rewriting metadata cache for block %x to point to %x:%x", metaEntry.BlockID[:], saveFileNumber, saveOffset)
-					ixEntry.Location.SetLocation(saveFileNumber, saveOffset)
-					handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
-				}
-			} else {
-				writeOffset += int64(entrySize)
-				Debug("No need to write, moving writeOffset to %x", writeOffset)
-			}
-
-			p := int(offset * 100 / datSize)
-			if Paint && p > lastProgress {
-				//lastProgress =
-				fmt.Printf("%d (%d%%)\r", writeOffset-offset, p)
-			}
-		}
-		if writeOffset < offset {
-			compacted += (offset - writeOffset)
-			datFile.WriteFile.Truncate(writeOffset)
-		} else if writeOffset > offset {
-			panic(errors.New("WTF, you just broke the data file"))
-		}
+		compacted += handler.CompactFile(fileType, fileNumber)
 	}
-	if Paint {
-		fmt.Printf("Removed %s          \n", core.HumanSize(compacted))
-	}
+	serverLog(fmt.Sprintf("All %s files compacted, %s released", storageFileTypeInfo[fileType].Extension, compacted))
 }
 
 func (handler *StorageHandler) CheckMeta(doRepair bool) (repaired int, critical int) {
@@ -959,7 +993,7 @@ func (handler *StorageHandler) CheckMeta(doRepair bool) (repaired int, critical 
 		}
 
 		metaSize := metaFile.Size()
-		metaFile.ReaderSeek(storageFileHeaderSize, os.SEEK_SET)
+		metaFile.Reader.Seek(storageFileHeaderSize, os.SEEK_SET)
 		fmt.Printf("Checking metadata cache file #%d (%s)\n", metaFileNumber, core.HumanSize(metaSize))
 
 		var entry storageMetaEntry
@@ -969,17 +1003,17 @@ func (handler *StorageHandler) CheckMeta(doRepair bool) (repaired int, critical 
 			metaOffset := offset
 			offset += int64(entry.Unserialize(metaFile.Reader))
 
-			dataFileNumber, dataOffset := entry.Location.GetLocation()
+			dataFileNumber, dataOffset := entry.location.Get()
 			dataFile := handler.getNumberedFile(storageFileTypeData, dataFileNumber, false)
 			if dataFile == nil {
-				panic(errors.New(fmt.Sprintf("Error reading block %x, metadata cache is pointing to data file %x which cannot be opened", entry.BlockID[:], dataFileNumber)))
+				panic(errors.New(fmt.Sprintf("Error reading block %x, metadata cache is pointing to data file %x which cannot be opened", entry.blockID[:], dataFileNumber)))
 			}
-			dataFile.ReaderSeek(dataOffset+4, os.SEEK_SET) // 4 bytes to skip the datamarker
+			dataFile.Reader.Seek(dataOffset+4, os.SEEK_SET) // 4 bytes to skip the datamarker
 			var dataBlockID core.Byte128
 			dataBlockID.Unserialize(dataFile.Reader)
 
-			if entry.BlockID.Compare(dataBlockID) != 0 { // Double check, this is already repaired by CheckData
-				panic(errors.New(fmt.Sprintf("Error reading block %x, metadata cache is pointing to block %x", entry.BlockID[:], dataBlockID[:])))
+			if entry.blockID.Compare(dataBlockID) != 0 { // Double check, this is already repaired by CheckData
+				panic(errors.New(fmt.Sprintf("Error reading block %x, metadata cache is pointing to block %x", entry.blockID[:], dataBlockID[:])))
 			}
 
 			var rewriteMeta bool
@@ -991,44 +1025,39 @@ func (handler *StorageHandler) CheckMeta(doRepair bool) (repaired int, critical 
 				}
 				dataFile.Reader.Discard(1) // 1 byte for datatype
 				core.ReadOrPanic(dataFile.Reader, &n)
-				if n != entry.DataSize {
-					fmt.Printf("Incorrect metadata for block %x, DataSize %d (should be %d)\n", entry.BlockID[:], entry.DataSize, n)
-					entry.DataSize = n
+				if n != entry.dataSize {
+					fmt.Printf("Incorrect metadata for block %x, DataSize %d (should be %d)\n", entry.blockID[:], entry.dataSize, n)
+					entry.dataSize = n
 					rewriteMeta = true
 				}
 			}
 			/*
-				{ // Do a full branch check
-					var links []core.Byte128
-					var n int64
-					links = append(links, entry.Links...)
-					for links := entry.Links; len(links) > 0; {
-						var l core.Byte128
-						l, links = links[len(links)-1], links[:len(links)-1]
+								{ // Do a full branch check
+									var links []core.Byte128
+									var n int64
+									links = append(links, entry.Links...)
+									for links := entry.Links; len(links) > 0; {
+										var l core.Byte128
+										l, links = links[len(links)-1], links[:len(links)-1]
 
-						ixEntry, _, _, err := handler.readIXEntry(l)
-						if err != nil {
-							panic(err)
-						}
-						mf, mo := ixEntry.Location.GetLocation()
-						metaEntry, err := handler.readMetaEntry(mf, mo)
-						if err != nil {
-							panic(err)
-						}
-						n += int64(metaEntry.DataSize)
-						links = append(links, metaEntry.Links...)
-					}
-					if n != entry.BranchSize {
-						fmt.Printf("Incorrect metadata for block %x, BranchSize %d (should be %d)\n", entry.BlockID[:], entry.BranchSize, n)
-						entry.BranchSize = n
-						rewriteMeta = true
-					}
-				}*/
+										ixEntry, _, _, err := handler.readIXEntry(l)
+				PanicOn(err)
+										mf, mo := ixEntry.location.Get()
+										metaEntry, err := handler.readMetaEntry(mf, mo)
+				PanicOn(err)
+										n += int64(metaEntry.dataSize)
+										links = append(links, metaEntry.links...)
+									}
+									if n != entry.BranchSize {
+										fmt.Printf("Incorrect metadata for block %x, BranchSize %d (should be %d)\n", entry.blockID[:], entry.BranchSize, n)
+										entry.BranchSize = n
+										rewriteMeta = true
+									}
+								}*/
 			if rewriteMeta && doRepair {
-				fmt.Printf("REPAIRING metadata for block %x at %x:%x\n", entry.BlockID[:], metaFileNumber, metaOffset)
-				if _, err := metaFile.WriterSeek(metaOffset, os.SEEK_SET); err != nil {
-					panic(err)
-				}
+				fmt.Printf("REPAIRING metadata for block %x at %x:%x\n", entry.blockID[:], metaFileNumber, metaOffset)
+				_, err := metaFile.Writer.Seek(metaOffset, os.SEEK_SET)
+				PanicOn(err)
 				entry.Serialize(metaFile.Writer)
 				metaFile.Writer.Flush()
 				repaired++
@@ -1058,30 +1087,30 @@ func (handler *StorageHandler) CheckIndexes() {
 			panic(errors.New(fmt.Sprintf("Index file %x size is not evenly divisable by the index entry size, file must be damaged", ixFileNumber)))
 		}
 
-		ixFile.ReaderSeek(storageFileHeaderSize, os.SEEK_SET)
+		ixFile.Reader.Seek(storageFileHeaderSize, os.SEEK_SET)
 
 		var entry storageIXEntry
 
 		var lastProgress = -1
 		for offset := int64(storageFileHeaderSize); offset < ixSize; {
 			offset += int64(entry.Unserialize(ixFile.Reader))
-			if entry.Flags&entryFlagExists == entryFlagExists { // In use
-				o := int64(calculateIXEntryOffset(entry.BlockID))
+			if entry.flags&entryFlagExists == entryFlagExists { // In use
+				o := int64(calculateIXEntryOffset(entry.blockID))
 				if offset < o {
-					panic(errors.New(fmt.Sprintf("Block %x found on an invalid offset %d, it should be >= %d", entry.BlockID[:], offset, o)))
+					panic(errors.New(fmt.Sprintf("Block %x found on an invalid offset %d, it should be >= %d", entry.blockID[:], offset, o)))
 				}
 
-				metaFileNumber, metaOffset := entry.Location.GetLocation()
+				metaFileNumber, metaOffset := entry.location.Get()
 				metaFile := handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
 				if metaFile == nil {
-					panic(errors.New(fmt.Sprintf("Error reading block %x, index is pointing to metadata cache file %x which cannot be opened", entry.BlockID[:], metaFileNumber)))
+					panic(errors.New(fmt.Sprintf("Error reading block %x, index is pointing to metadata cache file %x which cannot be opened", entry.blockID[:], metaFileNumber)))
 				}
-				metaFile.ReaderSeek(metaOffset, os.SEEK_SET)
+				metaFile.Reader.Seek(metaOffset, os.SEEK_SET)
 
 				var metaEntry storageMetaEntry
 				metaEntry.Unserialize(metaFile.Reader)
-				if metaEntry.BlockID.Compare(entry.BlockID) != 0 {
-					panic(errors.New(fmt.Sprintf("Error reading block %x, index is pointing to metadata cache for block %x", entry.BlockID[:], metaEntry.BlockID[:])))
+				if metaEntry.blockID.Compare(entry.blockID) != 0 {
+					panic(errors.New(fmt.Sprintf("Error reading block %x, index is pointing to metadata cache for block %x", entry.blockID[:], metaEntry.blockID[:])))
 				}
 			}
 
@@ -1118,9 +1147,7 @@ func (handler *StorageHandler) CheckFiles(doRepair bool) (repaired int, critical
 				rewriteHeader = true
 			} else {
 				err := binary.Read(f.Reader, binary.BigEndian, &header.version)
-				if err != nil {
-					panic(err)
-				}
+				PanicOn(err)
 				if header.version != storageVersion {
 					panic(errors.New(fmt.Sprintf("Cannot verify or repair storage version %d", header.version)))
 				}
@@ -1132,9 +1159,7 @@ func (handler *StorageHandler) CheckFiles(doRepair bool) (repaired int, critical
 				os.Rename(filename, filename+".repair")
 
 				write, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-				if err != nil {
-					panic(err)
-				}
+				PanicOn(err)
 				writer := bufio.NewWriter(write)
 
 				header.version = storageVersion
@@ -1142,9 +1167,7 @@ func (handler *StorageHandler) CheckFiles(doRepair bool) (repaired int, critical
 				header.Serialize(writer)
 
 				read, err := os.OpenFile(filename+".repair", os.O_RDONLY, 0666)
-				if err != nil {
-					panic(err)
-				}
+				PanicOn(err)
 				reader := bufio.NewReader(read)
 
 				io.Copy(writer, reader)
@@ -1172,65 +1195,65 @@ func (handler *StorageHandler) CheckData(doRepair bool) (repaired int, critical 
 
 		datSize := datFile.Size()
 		fmt.Printf("Checking data file #%d (%s)\n", datFileNumber, core.HumanSize(datSize))
-		datFile.ReaderSeek(storageFileHeaderSize, os.SEEK_SET)
+		datFile.Reader.Seek(storageFileHeaderSize, os.SEEK_SET)
 
 		var lastProgress = -1
 		var lastRepair = 0
 		for offset := int64(storageFileHeaderSize); offset < datSize; {
 			blockOffset := offset
 			offset += int64(dataEntry.Unserialize(datFile.Reader))
-			if !dataEntry.Block.VerifyBlock() {
+			if !dataEntry.block.VerifyBlock() {
 				critical++
 				// TODO... something!
-				panic(errors.New(fmt.Sprintf("Unable to verify block %x in datafile at %x:%x", dataEntry.Block.BlockID, datFileNumber, blockOffset)))
+				panic(errors.New(fmt.Sprintf("Unable to verify block %x in datafile at %x:%x", dataEntry.block.BlockID, datFileNumber, blockOffset)))
 			}
 
 			rewriteIX := false
-			ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(dataEntry.Block.BlockID)
+			ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(dataEntry.block.BlockID)
 			if err != nil {
 				fmt.Printf("Orphan block at %x:%x (%s)\n", datFileNumber, blockOffset, err.Error())
-				ixEntry = &storageIXEntry{Flags: entryFlagExists, BlockID: dataEntry.Block.BlockID}
-				ixEntry.Location.SetLocation(datFileNumber, blockOffset)
+				ixEntry = &storageIXEntry{flags: entryFlagExists, blockID: dataEntry.block.BlockID}
+				ixEntry.location.Set(datFileNumber, blockOffset)
 				rewriteIX = true
 			} else {
-				metaFileNumber, metaOffset := ixEntry.Location.GetLocation()
+				metaFileNumber, metaOffset := ixEntry.location.Get()
 				metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
 				if err != nil {
-					fmt.Printf("Metadata cache error for block %x (%s)\n", dataEntry.Block.BlockID[:], err.Error())
+					fmt.Printf("Metadata cache error for block %x (%s)\n", dataEntry.block.BlockID[:], err.Error())
 					rewriteIX = true
 					critical++
 				} else {
-					f, o := metaEntry.Location.GetLocation()
+					f, o := metaEntry.location.Get()
 					if f != datFileNumber || o != blockOffset {
-						fmt.Printf("Metadata cache error for block %x (%d:%d != %d:%d)\n", dataEntry.Block.BlockID[:], f, o, datFileNumber, blockOffset)
+						fmt.Printf("Metadata cache error for block %x (%d:%d != %d:%d)\n", dataEntry.block.BlockID[:], f, o, datFileNumber, blockOffset)
 						rewriteIX = true
 						critical++
 					}
 				}
 			}
-			if ixEntry.Flags&entryFlagNoLinks == entryFlagNoLinks && len(dataEntry.Block.Links) > 0 {
+			if ixEntry.flags&entryFlagNoLinks == entryFlagNoLinks && len(dataEntry.block.Links) > 0 {
 				if !rewriteIX {
-					fmt.Printf("Block %x has %d links but the index NoLinks flag is set\n", dataEntry.Block.BlockID[:], len(dataEntry.Block.Links))
+					fmt.Printf("Block %x has %d links but the index NoLinks flag is set\n", dataEntry.block.BlockID[:], len(dataEntry.block.Links))
 				}
-				ixEntry.Flags &^= entryFlagNoLinks
+				ixEntry.flags &^= entryFlagNoLinks
 				rewriteIX = true
 				critical++
-			} else if ixEntry.Flags&entryFlagNoLinks == 0 && len(dataEntry.Block.Links) == 0 {
+			} else if ixEntry.flags&entryFlagNoLinks == 0 && len(dataEntry.block.Links) == 0 {
 				if !rewriteIX {
-					fmt.Printf("Block %x has no links but the index NoLinks flag is not set\n", dataEntry.Block.BlockID[:])
+					fmt.Printf("Block %x has no links but the index NoLinks flag is not set\n", dataEntry.block.BlockID[:])
 				}
-				ixEntry.Flags |= entryFlagNoLinks
+				ixEntry.flags |= entryFlagNoLinks
 				rewriteIX = true
 			}
 
 			if doRepair && rewriteIX {
-				fmt.Printf("REPAIRING meta for block %x\n", dataEntry.Block.BlockID[:])
-				metaEntry := storageMetaEntry{BlockID: dataEntry.Block.BlockID, DataSize: uint32(dataEntry.Block.Data.Len()), Links: dataEntry.Block.Links}
-				metaEntry.Location.SetLocation(datFileNumber, blockOffset)
+				fmt.Printf("REPAIRING meta for block %x\n", dataEntry.block.BlockID[:])
+				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: uint32(dataEntry.block.Data.Len()), links: dataEntry.block.Links}
+				metaEntry.location.Set(datFileNumber, blockOffset)
 				metaFileNumber, metaOffset := handler.writeMetaEntry(&metaEntry)
 
-				fmt.Printf("REPAIRING index for block %x\n", dataEntry.Block.BlockID[:])
-				ixEntry.Location.SetLocation(metaFileNumber, metaOffset)
+				fmt.Printf("REPAIRING index for block %x\n", dataEntry.block.BlockID[:])
+				ixEntry.location.Set(metaFileNumber, metaOffset)
 				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
 				repaired++
 			}
@@ -1245,67 +1268,9 @@ func (handler *StorageHandler) CheckData(doRepair bool) (repaired int, critical 
 				}
 			}
 		}
+		if doRepair { // reset the amount of dead space as everything has been added back when repairing
+			handler.setDeadSpace(storageFileTypeData, datFileNumber, 0, false)
+		}
 	}
 	return repaired, critical
-}
-
-//********************************************************************************//
-//                                  BufferedFile                                  //
-//********************************************************************************//
-
-type BufferedFile struct {
-	ReadFile  *os.File
-	Reader    *bufio.Reader
-	WriteFile *os.File
-	Writer    *bufio.Writer
-}
-
-func OpenBufferedFile(name string, buffersize int, flag int, perm os.FileMode) (*BufferedFile, error) {
-	b := new(BufferedFile)
-	var err error
-	if b.WriteFile, err = os.OpenFile(name, flag|os.O_WRONLY, perm); err != nil {
-		return nil, err
-	}
-	if b.ReadFile, err = os.OpenFile(name, flag|os.O_RDONLY, perm); err != nil {
-		return nil, err
-	}
-	b.Reader = bufio.NewReaderSize(b.ReadFile, buffersize)
-	b.Writer = bufio.NewWriterSize(b.WriteFile, buffersize)
-	return b, nil
-}
-func (b *BufferedFile) ReaderSeek(offset int64, whence int) (ret int64, err error) {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
-	ret, err = b.ReadFile.Seek(offset, whence)
-	if err == nil {
-		b.Reader.Reset(b.ReadFile)
-	}
-	return ret, err
-}
-func (b *BufferedFile) WriterSeek(offset int64, whence int) (ret int64, err error) {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
-	ret, err = b.WriteFile.Seek(offset, whence)
-	if err == nil {
-		b.Writer.Reset(b.WriteFile)
-	}
-	return ret, err
-}
-func (b *BufferedFile) Size() int64 {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
-	was, _ := b.ReadFile.Seek(0, os.SEEK_CUR)
-	size, err := b.ReadFile.Seek(0, os.SEEK_END)
-	if err != nil {
-		panic(err)
-	}
-	b.ReadFile.Seek(was, os.SEEK_SET)
-	return size
-}
-func (b *BufferedFile) Close() (err error) {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
-	if e := b.ReadFile.Close(); e != nil {
-		err = e
-	}
-	if e := b.WriteFile.Close(); e != nil {
-		err = e
-	}
-	return err
 }

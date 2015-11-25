@@ -282,9 +282,7 @@ func (c *dbStateCollection) Unserialize(r io.Reader) {
 
 func appendDatasetTx(accountNameH core.Byte128, datasetName core.String, tx dbTx) error {
 	file, err := os.OpenFile(datasetFilename(accountNameH, string(datasetName))+dbFileExtensionTransaction, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
-	if err != nil {
-		panic(err)
-	}
+	PanicOn(err)
 	defer file.Close()
 
 	pos, err := file.Seek(0, 2)
@@ -298,9 +296,7 @@ func appendDatasetTx(accountNameH core.Byte128, datasetName core.String, tx dbTx
 func generateDBFile(accountNameH core.Byte128, datasetName core.String) {
 	filename := datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
 	file, err := os.OpenFile(filename, os.O_RDONLY, 0666)
-	if err != nil {
-		panic(err)
-	}
+	PanicOn(err)
 	defer file.Close()
 	var header dbFileHeader
 	header.Unserialize(file)
@@ -366,9 +362,7 @@ func generateDBFile(accountNameH core.Byte128, datasetName core.String) {
 
 func writeDBFile(accountNameH core.Byte128, datasetName core.String, c dbStateCollection) {
 	file, err := os.OpenFile(datasetFilename(accountNameH, string(datasetName))+dbFileExtensionDatabase, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
-	if err != nil {
-		panic(err)
-	}
+	PanicOn(err)
 	defer file.Close()
 
 	header := dbFileHeader{filetype: dbFileTypeDatabase, version: dbVersion, datasetName: datasetName}
@@ -393,9 +387,7 @@ func readDBFile(accountNameH core.Byte128, datasetName core.String) *dbStateColl
 }
 func writeInfoFile(accountNameH core.Byte128, a AccountInfo) {
 	file, err := os.OpenFile(accountFilename(accountNameH)+".info", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
-	if err != nil {
-		panic(err)
-	}
+	PanicOn(err)
 	defer file.Close()
 
 	a.AccountName.Serialize(file)
@@ -432,14 +424,10 @@ func (handler *AccountHandler) CollectAllRootBlocks() []core.Byte128 {
 
 	// Open each dataset and check the chains
 	dir, err := os.Open(filepath.Join(datDirectory, "account"))
-	if err != nil {
-		panic(err)
-	}
+	PanicOn(err)
 	defer dir.Close()
 	dirlist, err := dir.Readdir(-1)
-	if err != nil {
-		panic(err)
-	}
+	PanicOn(err)
 	for _, info := range dirlist {
 		name := info.Name()
 
@@ -449,17 +437,13 @@ func (handler *AccountHandler) CollectAllRootBlocks() []core.Byte128 {
 			var accountHash core.Byte128
 			{
 				a, err := base64.RawURLEncoding.DecodeString(name[0:22])
-				if err != nil {
-					panic(err)
-				}
+				PanicOn(err)
 				accountHash.Set(a)
 			}
 
 			// Open the file, read and check the file headers
 			fil, err := os.Open(filepath.Join(datDirectory, "account", name))
-			if err != nil {
-				panic(err)
-			}
+			PanicOn(err)
 			var header dbFileHeader
 			header.Unserialize(fil)
 			if header.filetype != dbFileTypeTransaction {
@@ -472,9 +456,7 @@ func (handler *AccountHandler) CollectAllRootBlocks() []core.Byte128 {
 			var datasetHashA core.Byte128
 			{
 				d, err := base64.RawURLEncoding.DecodeString(name[23:45])
-				if err != nil {
-					panic(err)
-				}
+				PanicOn(err)
 				datasetHashA.Set(d)
 			}
 			datasetHashB := core.Hash([]byte(datasetName))
