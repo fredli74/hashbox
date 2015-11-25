@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"flag"
 	"fmt"
 	"math/rand"
 	"net"
@@ -31,6 +30,7 @@ import (
 const DEFAULT_SERVER_IP_PORT int = 7411
 
 var datDirectory string
+var idxDirectory string
 var accountHandler *AccountHandler
 var storageHandler *StorageHandler
 
@@ -253,15 +253,19 @@ func main() {
 
 	exeRoot, _ := osext.ExecutableFolder()
 
-	datDirectory = *flag.String("db", filepath.Join(exeRoot, "data"), "Full path to database files")
-
 	var serverPort int64 = int64(DEFAULT_SERVER_IP_PORT)
 	datDirectory = filepath.Join(exeRoot, "data")
+	idxDirectory = datDirectory
 
-	cmd.Title = "Hashbox Server 0.2.5-go"
+	cmd.Title = "Hashbox Server 0.2.6-go"
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
-	cmd.StringOption("db", "", "<path>", "Full path to database files", &datDirectory, cmd.Standard)
-
+	cmd.StringOption("data", "", "<path>", "Full path to data files", &datDirectory, cmd.Standard).OnChange(func() {
+		idxDirectory = datDirectory
+	})
+	idxSpecial := ""
+	cmd.StringOption("idx", "", "<path>", "Full path to idx files (default same as data path)", &idxSpecial, cmd.Standard).OnChange(func() {
+		idxDirectory = idxSpecial
+	})
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
 
 	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers
@@ -364,7 +368,11 @@ func main() {
 	})
 
 	var doRepair bool
+	var skipData, skipMeta, skipIndex bool
 	cmd.BoolOption("repair", "check-storage", "Try to repair non-fatal errors", &doRepair, cmd.Standard)
+	cmd.BoolOption("skipdata", "check-storage", "Skip checking data files", &skipData, cmd.Standard)
+	cmd.BoolOption("skipmeta", "check-storage", "Skip checking meta files", &skipMeta, cmd.Standard)
+	cmd.BoolOption("skipindex", "check-storage", "Skip checking index files", &skipIndex, cmd.Standard)
 	cmd.Command("check-storage", "", func() {
 		if doRepair {
 			if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
@@ -375,12 +383,24 @@ func main() {
 		}
 
 		start := time.Now()
-		fmt.Println("Checking data files")
-		repaired, critical := storageHandler.CheckData(doRepair)
-		if repaired == 0 {
+
+		fmt.Println("Checking all storage files")
+		repaired, critical := storageHandler.CheckFiles(doRepair)
+		if !skipData && repaired == 0 && critical == 0 {
+			fmt.Println("Checking data files")
+			repaired, critical = storageHandler.CheckData(doRepair)
+		}
+		if !skipMeta && repaired == 0 && critical == 0 {
+			fmt.Println("Checking meta files")
+			repaired, critical = storageHandler.CheckMeta(doRepair)
+		}
+
+		if !skipIndex && repaired == 0 && critical == 0 {
 			fmt.Println("Checking index files")
 			storageHandler.CheckIndexes()
+		}
 
+		if repaired == 0 && critical == 0 {
 			fmt.Println("Checking dataset transactions")
 			roots := accountHandler.CollectAllRootBlocks()
 			fmt.Println("Checking block chain integrity")

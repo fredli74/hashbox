@@ -76,11 +76,9 @@ func (b *HashboxBlock) Unserialize(r io.Reader) (size int) {
 	size += b.BlockID.Unserialize(r)
 	var n uint32
 	size += ReadOrPanic(r, &n)
-	if n > 0 {
-		b.Links = make([]Byte128, n)
-		for i := 0; i < int(n); i++ {
-			size += b.Links[i].Unserialize(r)
-		}
+	b.Links = make([]Byte128, n)
+	for i := 0; i < int(n); i++ {
+		size += b.Links[i].Unserialize(r)
 	}
 	size += ReadOrPanic(r, &b.DataType)
 	size += ReadOrPanic(r, &n)

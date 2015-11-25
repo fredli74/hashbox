@@ -347,7 +347,7 @@ func main() {
 
 	session := NewBackupSession()
 
-	cmd.Title = "Hashback 0.2.5-go (Hashbox Backup Client)"
+	cmd.Title = "Hashback 0.2.6-go (Hashbox Backup Client)"
 	cmd.OptionsFile = filepath.Join(preferencesBaseFolder, ".hashback", "options.json")
 
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
@@ -498,8 +498,12 @@ func main() {
 	})
 
 	var pidName string = ""
+	var retainWeeks int64 = 0
+	var retainDays int64 = 0
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &DefaultIgnoreList, cmd.Standard|cmd.Preference)
+	cmd.IntOption("retaindays", "store", "<days>", "Cleanup backups older than 24 hours but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard)
+	cmd.IntOption("retainweeks", "store", "<weeks>", "Cleanup backups older than 24 hours but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard)
 	cmd.Command("store", "<dataset> (<folder> | <file>)...", func() {
 		for _, d := range DefaultIgnoreList {
 			ignore := ignoreEntry{pattern: d, match: core.ExpandEnv(d)} // Expand ignore patterns
@@ -543,6 +547,9 @@ func main() {
 		defer session.Close()
 		session.State = &core.DatasetState{StateID: session.Client.SessionNonce}
 		session.Store(cmd.Args[2], cmd.Args[3:]...)
+		if retainWeeks > 0 || retainDays > 0 {
+			session.Retention(cmd.Args[2], int(retainDays), int(retainWeeks))
+		}
 	})
 	cmd.Command("restore", "<dataset> (<backup id>|.) [\"<path>\"...] <dest-folder>", func() {
 		if len(cmd.Args) < 3 {
@@ -587,6 +594,34 @@ func main() {
 		fmt.Printf("Restoring from %x (%s) to path %s\n", list.States[found].StateID, date.Format(time.RFC3339), restorepath)
 
 		session.Restore(list.States[found].BlockID, restorepath, restorelist...)
+	})
+	cmd.Command("remove", "<dataset> <backup id>", func() {
+		if len(cmd.Args) < 3 {
+			panic(errors.New("Missing dataset argument"))
+		}
+		if len(cmd.Args) < 4 {
+			panic(errors.New("Missing backup id"))
+		}
+
+		session.Connect()
+		defer session.Close()
+
+		list := session.Client.ListDataset(cmd.Args[2])
+
+		var stateid string = cmd.Args[3]
+		var found int = -1
+		for i, s := range list.States {
+			if stateid == fmt.Sprintf("%x", s.StateID) {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
+		}
+
+		fmt.Printf("Removing backup %x from %s\n", list.States[found].StateID, cmd.Args[2])
+		session.Client.RemoveDatasetState(cmd.Args[2], list.States[found].StateID)
 	})
 
 	signalchan := make(chan os.Signal, 1)

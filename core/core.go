@@ -126,15 +126,11 @@ func (a DatasetArray) Serialize(w io.Writer) (size int) {
 func (a *DatasetArray) Unserialize(r io.Reader) (size int) {
 	var n uint32
 	size += ReadOrPanic(r, &n)
-	if n > 0 {
-		A := make([]Dataset, n)
-		for i := 0; i < int(n); i++ {
-			size += A[i].Unserialize(r)
-		}
-		*a = A
-		return
+	A := make([]Dataset, n)
+	for i := 0; i < int(n); i++ {
+		size += A[i].Unserialize(r)
 	}
-	*a = nil
+	*a = A
 	return
 }
 
@@ -173,15 +169,11 @@ func (a DatasetStateArray) Serialize(w io.Writer) (size int) {
 func (a *DatasetStateArray) Unserialize(r io.Reader) (size int) {
 	var n uint32
 	size += ReadOrPanic(r, &n)
-	if n > 0 {
-		A := make([]DatasetState, n)
-		for i := 0; i < int(n); i++ {
-			size += A[i].Unserialize(r)
-		}
-		*a = A
-		return
+	A := make([]DatasetState, n)
+	for i := 0; i < int(n); i++ {
+		size += A[i].Unserialize(r)
 	}
-	*a = nil
+	*a = A
 	return
 }
 func (a DatasetStateArray) Len() int      { return len(a) }

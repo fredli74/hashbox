@@ -14,6 +14,7 @@ import (
 	"bytes"
 	_ "crypto/aes"
 	_ "crypto/cipher"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -396,6 +397,68 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 
 	fmt.Println()
 	session.PrintStoreProgress()
+}
+
+func truncateSecondsToDay(t int64) int64 {
+	return (t / (24 * 60 * 60)) * 24 * 60 * 60
+}
+func (session *BackupSession) Retention(datasetName string, retainDays int, retainWeeks int) {
+	_ = "breakpoint"
+
+	var timenow int64 = time.Now().Unix()
+	var today = truncateSecondsToDay(timenow) // 00:00:00 today
+	var dailyLimit int64
+	if retainDays > 0 {
+		dailyLimit = today - (int64(retainDays) * 24 * 60 * 60)
+	}
+	var weeklyLimit int64
+	if retainWeeks > 0 {
+		weeklyLimit = today - (int64(retainWeeks) * 7 * 24 * 60 * 60)
+	}
+
+	var lastbackup int64 = 0
+
+	list := session.Client.ListDataset(datasetName)
+	for i, s := range list.States {
+		if i >= len(list.States)-2 { // Always keep the last two
+			break
+		}
+
+		// Extract the backup date from the stateID
+		timestamp := int64(binary.BigEndian.Uint64(s.StateID[:]) / 1e9) // nano timestamp in seconds
+
+		age := (timenow - timestamp)
+		interval := (timestamp - truncateSecondsToDay(lastbackup)) // interval from last backup
+
+		var throw bool
+		var reason string
+
+		if interval < (24*60*60) && age > 24*60*60 {
+			throw = true
+			reason = "keep one daily"
+		}
+		if interval < (7*24*60*60) && timestamp < dailyLimit {
+			throw = true
+			reason = "keep one weekly"
+		}
+		if weeklyLimit < dailyLimit && timestamp < weeklyLimit {
+			throw = true
+			reason = fmt.Sprintf("older than %d weeks", retainWeeks)
+		}
+		if weeklyLimit >= dailyLimit && timestamp < dailyLimit {
+			throw = true
+			reason = fmt.Sprintf("older than %d days", retainDays)
+		}
+
+		if throw {
+			date := time.Unix(int64(timestamp), 0)
+			fmt.Printf("Removing backup %s (%s)\n", date.Format(time.RFC3339), reason)
+		} else {
+			date := time.Unix(int64(timestamp), 0)
+			fmt.Printf("Keeping backup %s\n", date.Format(time.RFC3339))
+			lastbackup = timestamp
+		}
+	}
 }
 
 //***********************************************************************//
