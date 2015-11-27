@@ -215,27 +215,7 @@ Move Link to start of blocks for faster GC reference checking
 
 GarbageCollect
 --------------
-This uses a constant mark phase where the sweep cycles cannot be closer than the amount of time we would allow a backup to be paused and resumed
-
-Every time a new block is created it checks that LinkIDs are valid, it also marks the entire block-tree (stopping at any branch that is already marked). When the tree has been marked it saves the new block index (also marked)
-
-Mark	
-	When a GC is started it goes through all DataSetVersion.BlockID  marking their trees
-Sweep
-	During the sweep phase, any block not marked are considered gone, even before they are sweeped, reading or referencing such block is not possible.
-	All .idx files are sweeped, removing the blocks not marked
-Compact
-	All .dat files are compacted, looking up each block if it exists in the .idx files
-
-**** work in progress
-Compact 
-	Each .dat file is compacted by checking if the blocks 
-Sweep phase is started
-
-		This will end up with every block that is used in ANY active dataset is marked
-Mark2.	All .dat files are scanned for blocks 
-
-
+Current implementation is an offline only mark and sweep GC
 
 
 
@@ -266,54 +246,3 @@ The client can utilize block caching since the data in a block can never change
 When syncing two servers the transaction chains are compared and merged together with correct time order.
 Syncing the *data* between servers is as simple as rolling through the hblock dat files and sending all the blocks. Incremental sync can be done by remembering what file and position that was last sent.
 
-
-
-
-
-
-/*
-
-
-
-
-
-
-crap leftovers
---------------
-DatasetTransactionID = {
-	UnixTime uint64		// Server time
-	Random   uint64		// Random to avoid DatasetTransactionID collisions on UnixTime
-}
-
-/*** replaces this with transaction chain querying for Server replication only ***/
--> "?dtr" AccountNameH DataGroup ChainHeight ChainHash
--> "*dts" ReadDatasetTransactionLog
-+ Account		
-		ReadDatasetTransactionLog = {
-			TransactionHeight		DatasetTransactionID	// Highest (latest) DatasetTransactionID the client already has
-			TransactionChainHash	[16]byte 				// Described in section Server Mirroring
-		}
-		DatasetTransactionID = {
-			UnixTime uint64				// Server time
-			Random   uint64				// Random to avoid DatasetTransactionID collisions on UnixTime
-		}
-		// Server only sends a filtered list of transactions that belongs to the account
-		// Server compares the TransactionChainHash and sends only new transactions if the ChainHash is correct
-		// Server starts from 0 if ChainHash is incorrect
-		<- "ECMD" ( "*dts" DatasetTransactionLog )
-			DatasetTransactionLog = {
-				TransactionCount   uint8						// Number of transactions returned (Response is limited to 255 transactions)
-				[TransactionCount]{
-					TransactionID  DatasetTransactionID
-					Transaction    DatasetTransaction
-				}
-			}
-
-
-example reference client implementation
-simple client that lets you save a block of data with a name-tag
-	store the block
-	add a dataset "BLOB_TEST" with versionID = md5( name-tag )
-
-
-*/

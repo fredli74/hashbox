@@ -62,7 +62,8 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) error {
 	defer fileData.Release()
 
 	for offset := int64(0); offset < int64(entry.FileSize); {
-		// TODO: add progress on storePath as well because incremental backups do not reach down here that often
+		Debug("storeFile(%s) offset %d", path, offset)
+
 		if session.ShowProgress && time.Now().After(session.Progress) {
 			session.PrintStoreProgress()
 			session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
@@ -189,6 +190,12 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) error {
 }
 
 func (session *BackupSession) storePath(path string, toplevel bool) (*FileEntry, error) {
+	if session.ShowProgress && time.Now().After(session.Progress) {
+		session.PrintStoreProgress()
+		session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
+	}
+
+	Debug("storePath %s", path)
 	// Get file info from disk
 	var info os.FileInfo
 	{

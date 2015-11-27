@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const DEFAULT_MAX_QUEUE_MEMORY int = 32 * 1024 * 1024 // 32 MiB max memory
+const DEFAULT_QUEUE_SIZE int64 = 32 * 1024 * 1024 // 32 MiB max memory
 
 type messageDispatch struct {
 	msg           *ProtocolMessage
@@ -33,7 +33,7 @@ type Client struct {
 	wg    sync.WaitGroup
 	Paint bool
 
-	QueueMax int // max size of the outgoing block queue (in bytes) (limited to 32bit = 4GB)
+	QueueMax int64 // max size of the outgoing block queue (in bytes)
 
 	sendMutex sync.Mutex // protects from two threads sending at the same time
 
@@ -42,7 +42,7 @@ type Client struct {
 	msgNum            uint32 // 32-bit because there are no 16-bit atomic functions
 	closing           bool
 	blockbuffer       map[Byte128]*HashboxBlock
-	blockqueuesize    int // queue size in bytes
+	blockqueuesize    int64 // queue size in bytes
 	transmittedBlocks int32
 	skippedBlocks     int32
 
@@ -68,7 +68,7 @@ func NewClient(conn io.ReadWriteCloser, account string, accesskey Byte128) *Clie
 		},
 		blockbuffer: make(map[Byte128]*HashboxBlock),
 
-		QueueMax: DEFAULT_MAX_QUEUE_MEMORY,
+		QueueMax: DEFAULT_QUEUE_SIZE,
 
 		dispatchChannel: make(chan *messageDispatch, 80000),
 		storeChannel:    make(chan *messageDispatch, 1),
@@ -130,8 +130,8 @@ func (c *Client) sendQueue(what Byte128) {
 					c.dispatchMutex.Lock()
 					if len(c.sendqueue) > 0 {
 						if c.sendqueue[0].state == 2 { // compressed
-							c.blockqueuesize -= bytearray.ChunkQuantize(c.sendqueue[0].block.UncompressedSize)
-							c.blockqueuesize += bytearray.ChunkQuantize(c.sendqueue[0].block.CompressedSize)
+							c.blockqueuesize -= bytearray.ChunkQuantize(int64(c.sendqueue[0].block.UncompressedSize))
+							c.blockqueuesize += bytearray.ChunkQuantize(int64(c.sendqueue[0].block.CompressedSize))
 							workItem = c.sendqueue[0] // send it
 						} else if c.sendqueue[0].state == 4 { // sent
 							c.sendqueue = c.sendqueue[1:] // remove it
@@ -211,9 +211,9 @@ func (c *Client) singleExchange(outgoing *messageDispatch) *ProtocolMessage {
 		if block != nil {
 			if block.CompressedSize < 0 { // no encoded data = never sent
 				skipped = true
-				c.blockqueuesize -= bytearray.ChunkQuantize(block.UncompressedSize)
+				c.blockqueuesize -= bytearray.ChunkQuantize(int64(block.UncompressedSize))
 			} else {
-				c.blockqueuesize -= bytearray.ChunkQuantize(block.CompressedSize)
+				c.blockqueuesize -= bytearray.ChunkQuantize(int64(block.CompressedSize))
 			}
 			block.Release()
 			delete(c.blockbuffer, d.BlockID)
@@ -350,10 +350,10 @@ func (c *Client) StoreBlock(dataType byte, data bytearray.ByteArray, links []Byt
 	for full := true; full; { //
 		if c.closing {
 			panic(errors.New("Connection closed"))
-		} else if c.blockqueuesize+bytearray.ChunkQuantize(block.UncompressedSize)*2 < c.QueueMax {
+		} else if c.blockqueuesize+bytearray.ChunkQuantize(int64(block.UncompressedSize))*2 < c.QueueMax {
 			if c.blockbuffer[block.BlockID] == nil {
 				c.blockbuffer[block.BlockID] = block
-				c.blockqueuesize += bytearray.ChunkQuantize(block.UncompressedSize)
+				c.blockqueuesize += bytearray.ChunkQuantize(int64(block.UncompressedSize))
 			} else {
 				block.Release()
 				return block.BlockID
@@ -392,8 +392,8 @@ const hashPadding_accesskey = "*ACCESS*KEY*PAD*" // TODO: move to client source
 // binary.BigEndian.Get and binary.BigEndian.Put  much faster than
 // binary.Read and binary.Write
 
-func (c *Client) GetStats() (tranismitted int32, skipped int32, queued int32, queuesize int32) {
+func (c *Client) GetStats() (tranismitted int32, skipped int32, queued int32, queuesize int64) {
 	c.dispatchMutex.Lock()
 	defer c.dispatchMutex.Unlock()
-	return c.transmittedBlocks, c.skippedBlocks, int32(len(c.blockbuffer)), int32(c.blockqueuesize)
+	return c.transmittedBlocks, c.skippedBlocks, int32(len(c.blockbuffer)), c.blockqueuesize
 }

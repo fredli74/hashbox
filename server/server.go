@@ -437,7 +437,7 @@ func main() {
 		roots := accountHandler.CollectAllRootBlocks()
 		storageHandler.MarkIndexes(roots, true)
 		storageHandler.SweepIndexes(true)
-		fmt.Printf("Stop the world duration %.1f minutes\n", time.Since(start).Minutes())
+		fmt.Printf("Mark and sweep duration %.1f minutes\n", time.Since(start).Minutes())
 		if !indexOnly {
 			storageHandler.CompactAll(storageFileTypeData)
 			storageHandler.CompactAll(storageFileTypeMeta)

@@ -36,7 +36,7 @@ const PROGRESS_INTERVAL_SECS = 10 * time.Second
 const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MiB max blocksize
 const MIN_BLOCK_SIZE int = 64 * 1024       // 64kb minimum blocksize (before splitting it)
 
-const QUEUE_MAX_BYTES int = 48 * 1024 * 1024 // 48 MiB max memory (will use up to CPU*MAX_BLOCK_SIZE more when compressing)
+var SendingQueueSize int64 = 48 * 1024 * 1024 // 48 MiB max memory (will use up to CPU*MAX_BLOCK_SIZE more when compressing)
 
 var DefaultIgnoreList []string // Default ignore list, populated by init() function from each platform
 
@@ -265,7 +265,7 @@ func (session *BackupSession) Connect() *core.Client {
 	}
 
 	client := core.NewClient(conn, session.User, *session.AccessKey)
-	client.QueueMax = QUEUE_MAX_BYTES
+	client.QueueMax = SendingQueueSize
 	client.Paint = session.Paint
 	session.Client = client
 	return session.Client
@@ -351,6 +351,11 @@ func main() {
 	cmd.OptionsFile = filepath.Join(preferencesBaseFolder, ".hashback", "options.json")
 
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
+
+	var queueSizeMB int64
+	cmd.IntOption("queuesize", "", "<MiB", "Change sending queue size", &queueSizeMB, cmd.Hidden).OnChange(func() {
+		SendingQueueSize = queueSizeMB * 1024 * 1024
+	})
 
 	cmd.StringOption("user", "", "<username>", "Username", &session.User, cmd.Preference|cmd.Required)
 	var accesskey []byte

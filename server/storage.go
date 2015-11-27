@@ -392,14 +392,15 @@ func (e *storageDataEntry) Unserialize(r io.Reader) (size int) {
 	return
 }
 func (e *storageDataEntry) ChangeLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) {
-	metaEntry := storageMetaEntry{blockID: e.block.BlockID, dataSize: uint32(e.block.Data.Len()), links: e.block.Links}
-	metaEntry.location.Set(fileNumber, fileOffset)
-
-	metaFileNumber, metaOffset := handler.writeMetaEntry(&metaEntry)
-	ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(e.block.BlockID)
+	ixEntry, _, _, err := handler.readIXEntry(e.block.BlockID)
 	PanicOn(err)
-	ixEntry.location.Set(metaFileNumber, metaOffset)
-	handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
+
+	metaFileNumber, metaOffset := ixEntry.location.Get()
+	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+	PanicOn(err)
+
+	metaEntry.location.Set(fileNumber, fileOffset)
+	handler.writeMetaEntry(metaFileNumber, metaOffset, metaEntry)
 }
 func (e *storageDataEntry) VerifyLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) bool {
 	ixEntry, _, _, err := handler.readIXEntry(e.block.BlockID)
@@ -555,24 +556,30 @@ func (handler *StorageHandler) killMetaEntry(blockID core.Byte128, metaFileNumbe
 	}
 	return size
 }
-func (handler *StorageHandler) writeMetaEntry(entry *storageMetaEntry) (metaFileNumber int32, metaOffset int64) {
+func (handler *StorageHandler) writeMetaEntry(metaFileNumber int32, metaOffset int64, entry *storageMetaEntry) (int32, int64) {
 	var data = new(bytes.Buffer)
 	entry.Serialize(data)
 
 	var metaFile *BufferedFile
-	for {
-		metaFile = handler.getNumberedFile(storageFileTypeMeta, handler.topMetaFileNumber, true)
-		metaOffset, _ = metaFile.Writer.Seek(0, os.SEEK_END)
-		Debug("writeMetaEntry %x:%x", handler.topMetaFileNumber, metaOffset)
-		if metaOffset+int64(data.Len()) <= storageMaxFileSize {
-			break
+	if metaOffset == 0 { // Offset 0 does not exist as it is in the header
+		for {
+			metaFile = handler.getNumberedFile(storageFileTypeMeta, handler.topMetaFileNumber, true)
+			metaOffset, _ = metaFile.Writer.Seek(0, os.SEEK_END)
+			Debug("writeMetaEntry %x:%x", handler.topMetaFileNumber, metaOffset)
+			if metaOffset+int64(data.Len()) <= storageMaxFileSize {
+				break
+			}
+			handler.topMetaFileNumber++
 		}
-		handler.topMetaFileNumber++
+		metaFileNumber = handler.topMetaFileNumber
+	} else {
+		metaFile = handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
+		metaFile.Writer.Seek(metaOffset, os.SEEK_SET)
 	}
 	data.WriteTo(metaFile.Writer)
 	metaFile.Writer.Flush()
 
-	return handler.topMetaFileNumber, metaOffset
+	return metaFileNumber, metaOffset
 }
 func (handler *StorageHandler) readMetaEntry(metaFileNumber int32, metaOffset int64) (metaEntry *storageMetaEntry, err error) {
 	defer func() {
@@ -632,7 +639,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 
 	metaEntry := storageMetaEntry{blockID: block.BlockID, dataSize: uint32(block.Data.Len()), links: block.Links} // , BranchSize: handler.sumBranch(block.Links)}
 	metaEntry.location.Set(handler.topDatFileNumber, datOffset)
-	metaFileNumber, metaOffset := handler.writeMetaEntry(&metaEntry)
+	metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
 
 	ixEntry := storageIXEntry{flags: entryFlagExists, blockID: block.BlockID}
 	if len(block.Links) == 0 {
@@ -870,8 +877,17 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 	}
 
 	file := handler.getNumberedFile(fileType, fileNumber, false)
+
+	var deadSpace int64
+	{
+		file.Reader.Seek(0, os.SEEK_SET)
+		var header storageFileHeader
+		header.Unserialize(file.Reader)
+		deadSpace = header.deadspace
+	}
+
 	fileSize := file.Size()
-	serverLog(fmt.Sprintf("Compacting file %s (%s)", file.Path, core.HumanSize(fileSize)))
+	serverLog(fmt.Sprintf("Compacting file %s, %s (est. dead data %s)", file.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace)))
 
 	// Open a separate reader
 	reader, err := OpenBufferedReader(file.Path, file.BufferSize, file.Flag)
@@ -907,7 +923,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 		if _, _, _, err = handler.readIXEntry(entryBlockID); err != nil {
 			Debug("Not in index: %s", err.Error())
 		} else if !entry.VerifyLocation(handler, fileNumber, readOffset) {
-			Debug("Not the same as in index (old invalid entry): %s")
+			Debug("Not the same as in index (old invalid entry)")
 		} else if readOffset != writeOffset {
 			newOffset := writeOffset
 			if readOffset-writeOffset < int64(entrySize)+12 { // 12 bytes for the Cgap marker
@@ -979,7 +995,7 @@ func (handler *StorageHandler) CompactAll(fileType int) {
 
 		compacted += handler.CompactFile(fileType, fileNumber)
 	}
-	serverLog(fmt.Sprintf("All %s files compacted, %s released", storageFileTypeInfo[fileType].Extension, compacted))
+	serverLog(fmt.Sprintf("All %s files compacted, %s released", storageFileTypeInfo[fileType].Extension, core.HumanSize(compacted)))
 }
 
 func (handler *StorageHandler) CheckMeta(doRepair bool) (repaired int, critical int) {
@@ -1250,7 +1266,7 @@ func (handler *StorageHandler) CheckData(doRepair bool) (repaired int, critical 
 				fmt.Printf("REPAIRING meta for block %x\n", dataEntry.block.BlockID[:])
 				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: uint32(dataEntry.block.Data.Len()), links: dataEntry.block.Links}
 				metaEntry.location.Set(datFileNumber, blockOffset)
-				metaFileNumber, metaOffset := handler.writeMetaEntry(&metaEntry)
+				metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
 
 				fmt.Printf("REPAIRING index for block %x\n", dataEntry.block.BlockID[:])
 				ixEntry.location.Set(metaFileNumber, metaOffset)
