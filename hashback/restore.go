@@ -337,9 +337,9 @@ func (backup *BackupSession) diffEntry(e *FileEntry, path string) (same bool, er
 				blockData.Release()
 
 				for i := range chain.ChainBlocks {
-					blocksame := backup.diffFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i])
-					if !blocksame {
-						same = blocksame
+					same = backup.diffFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i])
+					if !same {
+						break
 					}
 				}
 			case ContentTypeFileData:
