@@ -45,6 +45,12 @@ var DefaultIgnoreList []string // Default ignore list, populated by init() funct
 
 var DEBUG bool = false
 
+func PanicOn(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
 func Debug(format string, a ...interface{}) {
 	if DEBUG {
 		fmt.Print("DEBUG: ")
@@ -242,6 +248,8 @@ type BackupSession struct {
 	Directories    int
 	Files          int
 	UnchangedFiles int
+
+	DifferentFiles int
 
 	ignoreList []ignoreEntry
 	reference  *referenceEngine
@@ -599,6 +607,53 @@ func main() {
 		fmt.Printf("Restoring from %x (%s) to path %s\n", list.States[found].StateID, date.Format(time.RFC3339), restorepath)
 
 		session.Restore(list.States[found].BlockID, restorepath, restorelist...)
+	})
+	cmd.Command("diff", "<dataset> (<backup id>|.) [\"<path>\"...] <local-folder>", func() {
+		if len(cmd.Args) < 3 {
+			panic(errors.New("Missing dataset argument"))
+		}
+		if len(cmd.Args) < 4 {
+			panic(errors.New("Missing backup id (or \".\")"))
+		}
+		if len(cmd.Args) < 5 {
+			panic(errors.New("Missing destination folder argument"))
+		}
+
+		session.Connect()
+		defer session.Close()
+
+		list := session.Client.ListDataset(cmd.Args[2])
+
+		var stateid string = cmd.Args[3]
+		var restorepath string = cmd.Args[len(cmd.Args)-1]
+		var restorelist []string = cmd.Args[4 : len(cmd.Args)-1]
+
+		var found int = -1
+		if stateid == "." {
+			found = len(list.States) - 1
+		} else {
+			for i, s := range list.States {
+				if stateid == fmt.Sprintf("%x", s.StateID) {
+					found = i
+					break
+				}
+			}
+			if found < 0 {
+				panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
+			}
+		}
+		if found < 0 {
+			panic(errors.New("No backup found under dataset " + cmd.Args[2]))
+		}
+
+		timestamp := binary.BigEndian.Uint64(list.States[found].StateID[:])
+		date := time.Unix(0, int64(timestamp))
+		fmt.Printf("Comparing %x (%s) to path %s\n", list.States[found].StateID, date.Format(time.RFC3339), restorepath)
+
+		session.DiffRestore(list.States[found].BlockID, restorepath, restorelist...)
+		if session.DifferentFiles > 0 {
+			os.Exit(2)
+		}
 	})
 	cmd.Command("remove", "<dataset> <backup id>", func() {
 		if len(cmd.Args) < 3 {
