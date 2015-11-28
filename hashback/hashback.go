@@ -361,7 +361,7 @@ func main() {
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
 
 	var queueSizeMB int64
-	cmd.IntOption("queuesize", "", "<MiB", "Change sending queue size", &queueSizeMB, cmd.Hidden).OnChange(func() {
+	cmd.IntOption("queuesize", "", "<MiB", "Change sending queue size", &queueSizeMB, cmd.Hidden|cmd.Preference).OnChange(func() {
 		SendingQueueSize = queueSizeMB * 1024 * 1024
 	})
 
@@ -515,8 +515,8 @@ func main() {
 	var retainDays int64 = 0
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &DefaultIgnoreList, cmd.Standard|cmd.Preference)
-	cmd.IntOption("retaindays", "store", "<days>", "Cleanup backups older than 24 hours but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard)
-	cmd.IntOption("retainweeks", "store", "<weeks>", "Cleanup backups older than 24 hours but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard)
+	cmd.IntOption("retaindays", "store", "<days>", "Cleanup backups older than 24 hours but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard|cmd.Preference)
+	cmd.IntOption("retainweeks", "store", "<weeks>", "Cleanup backups older than 24 hours but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard|cmd.Preference)
 	cmd.Command("store", "<dataset> (<folder> | <file>)...", func() {
 		for _, d := range DefaultIgnoreList {
 			ignore := ignoreEntry{pattern: d, match: core.ExpandEnv(d)} // Expand ignore patterns
