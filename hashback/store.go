@@ -34,7 +34,7 @@ func (session *BackupSession) PrintStoreProgress() {
 	if session.Paint {
 		fmt.Println()
 	}
-	fmt.Printf("*** %.1f min, read: %s, write: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s\n",
+	fmt.Printf(">>> %.1f min, read: %s, write: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s\n",
 		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(session.Client.WriteDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
 		sent, skipped+sent, core.HumanSize(int64(queuedsize)))
 
