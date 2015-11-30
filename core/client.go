@@ -339,11 +339,14 @@ func (c *Client) RemoveDatasetState(datasetName string, stateID Byte128) {
 	c.dispatchAndWait(MsgTypeRemoveDatasetState, &MsgClientRemoveDatasetState{AccountNameH: c.AccountNameH, DatasetName: String(datasetName), StateID: stateID})
 }
 
-// StoreBlock is blocking if the blockbuffer is full
-func (c *Client) StoreBlock(dataType byte, data bytearray.ByteArray, links []Byte128) Byte128 {
-	// Calculate the BlockID
+func (c *Client) StoreData(dataType byte, data bytearray.ByteArray, links []Byte128) Byte128 {
+	// Create a block
 	block := NewHashboxBlock(dataType, data, links)
+	return c.StoreBlock(block)
+}
 
+// StoreBlock is blocking if the blockbuffer is full
+func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 	c.dispatchMutex.Lock()
 	defer c.dispatchMutex.Unlock()
 	// Add the block to the io queue
@@ -378,13 +381,16 @@ func (c *Client) ReadBlock(blockID Byte128) *HashboxBlock {
 	return b.Block
 }
 func (c *Client) Commit() {
-	for empty := false; !empty; time.Sleep(100 * time.Millisecond) {
+	for done := false; !done; time.Sleep(100 * time.Millisecond) {
 		func() {
-			c.dispatchMutex.Lock()
-			empty = c.closing || len(c.blockbuffer) == 0
-			c.dispatchMutex.Unlock()
+			done = c.Done()
 		}()
 	}
+}
+func (c *Client) Done() bool {
+	c.dispatchMutex.Lock()
+	defer c.dispatchMutex.Unlock()
+	return c.closing || len(c.blockbuffer) == 0
 }
 
 const hashPadding_accesskey = "*ACCESS*KEY*PAD*" // TODO: move to client source

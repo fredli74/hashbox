@@ -263,7 +263,7 @@ func main() {
 	datDirectory = filepath.Join(exeRoot, "data")
 	idxDirectory = datDirectory
 
-	cmd.Title = "Hashbox Server 0.3-go"
+	cmd.Title = "Hashbox Server 0.4-go"
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
 	cmd.StringOption("data", "", "<path>", "Full path to data files", &datDirectory, cmd.Standard).OnChange(func() {
 		idxDirectory = datDirectory

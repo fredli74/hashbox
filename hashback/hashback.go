@@ -321,6 +321,8 @@ func (backup *BackupSession) findPathMatch(rootBlockID core.Byte128, path string
 	}
 }
 
+var LocalStoragePath string
+
 func main() {
 	bytearray.EnableAutoGC(60, 74)
 
@@ -343,20 +345,24 @@ func main() {
 	}()*/
 
 	// Figure out where to load/save options
-	var preferencesBaseFolder = "./"
-	usr, err := user.Current()
-	if err == nil {
-		f := usr.HomeDir
-		s, err := os.Stat(f)
-		if err == nil && s.IsDir() {
-			preferencesBaseFolder = f
+	{
+		LocalStoragePath = filepath.Join(".", ".hashback")
+		usr, err := user.Current()
+		if err == nil {
+			f := usr.HomeDir
+			s, err := os.Stat(f)
+			if err == nil && s.IsDir() {
+				LocalStoragePath = filepath.Join(f, ".hashback")
+			}
 		}
+		err = os.MkdirAll(filepath.Dir(LocalStoragePath), 0700)
+		PanicOn(err)
 	}
 
 	session := NewBackupSession()
 
-	cmd.Title = "Hashback 0.3-go (Hashbox Backup Client)"
-	cmd.OptionsFile = filepath.Join(preferencesBaseFolder, ".hashback", "options.json")
+	cmd.Title = "Hashback 0.4-go (Hashbox Backup Client)"
+	cmd.OptionsFile = filepath.Join(LocalStoragePath, "options.json")
 
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
 
@@ -479,6 +485,7 @@ func main() {
 				if len(cmd.Args) > 4 {
 					listpath = cmd.Args[4]
 				}
+				var err error
 				filelist, err = session.findPathMatch(state.BlockID, listpath)
 				if err != nil {
 					panic(err)

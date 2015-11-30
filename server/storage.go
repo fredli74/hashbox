@@ -184,9 +184,9 @@ const (
 )
 
 var storageFileTypeInfo []_storageFileTypeInfo = []_storageFileTypeInfo{
-	_storageFileTypeInfo{0x48534958, ".idx", 2024},  // "HSIX" Hashbox Storage Index
-	_storageFileTypeInfo{0x48534D44, ".meta", 2024}, // "HSMD" Hashbox Storage Index
-	_storageFileTypeInfo{0x48534442, ".dat", 4096},  // "HSDB" Hashbox Storage Index
+	_storageFileTypeInfo{0x48534958, ".idx", 2048},  // "HSIX" Hashbox Storage Index
+	_storageFileTypeInfo{0x48534D44, ".meta", 2048}, // "HSMD" Hashbox Storage Index
+	_storageFileTypeInfo{0x48534442, ".dat", 3072},  // "HSDB" Hashbox Storage Index
 }
 
 const (
