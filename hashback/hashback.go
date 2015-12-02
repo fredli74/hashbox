@@ -32,6 +32,8 @@ import (
 	"time"
 )
 
+var Version = "(dev-build)"
+
 const PROGRESS_INTERVAL_SECS = 10 * time.Second
 const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MiB max blocksize
 const MIN_BLOCK_SIZE int = 64 * 1024       // 64kb minimum blocksize (before splitting it)
@@ -361,7 +363,8 @@ func main() {
 
 	session := NewBackupSession()
 
-	cmd.Title = "Hashback 0.5-go (Hashbox Backup Client)"
+	cmd.Title = fmt.Sprintf("Hashback %s (Hashbox Backup Client)", Version)
+
 	cmd.OptionsFile = filepath.Join(LocalStoragePath, "options.json")
 
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)

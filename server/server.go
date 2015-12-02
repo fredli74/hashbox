@@ -27,6 +27,8 @@ import (
 	"time"
 )
 
+var Version = "(dev-build)"
+
 const DEFAULT_SERVER_IP_PORT int = 7411
 
 var datDirectory string
@@ -263,7 +265,7 @@ func main() {
 	datDirectory = filepath.Join(exeRoot, "data")
 	idxDirectory = datDirectory
 
-	cmd.Title = "Hashbox Server 0.5-go"
+	cmd.Title = fmt.Sprintf("Hashbox Server %s", Version)
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
 	cmd.StringOption("data", "", "<path>", "Full path to data files", &datDirectory, cmd.Standard).OnChange(func() {
 		idxDirectory = datDirectory
