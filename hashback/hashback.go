@@ -361,7 +361,7 @@ func main() {
 
 	session := NewBackupSession()
 
-	cmd.Title = "Hashback 0.4-go (Hashbox Backup Client)"
+	cmd.Title = "Hashback 0.5-go (Hashbox Backup Client)"
 	cmd.OptionsFile = filepath.Join(LocalStoragePath, "options.json")
 
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
@@ -697,6 +697,9 @@ func main() {
 	signal.Notify(signalchan, os.Kill)
 	go func() {
 		for range signalchan {
+			if session.reference != nil {
+				session.reference.Close()
+			}
 			if lockFile != nil {
 				lockFile.Unlock()
 			}

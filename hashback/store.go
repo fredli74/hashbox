@@ -19,11 +19,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -338,11 +338,8 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	var err error
 
 	// Setup the reference backup engine
-	session.reference = &referenceEngine{client: session.Client, datasetNameH: core.Hash([]byte(datasetName))}
-	{
-		session.reference.cacheCurrent, err = os.OpenFile(session.reference.cacheName(nil), os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0700)
-		PanicOn(err)
-	}
+	session.reference = NewReferenceEngine(session.Client, core.Hash([]byte(datasetName)))
+	defer session.reference.Close()
 
 	// Convert relative paths to absolute paths
 	for i := 0; i < len(path); i++ {
@@ -411,7 +408,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	session.Client.AddDatasetState(datasetName, *session.State)
 
 	// Close and rename the current reference cache file for future use
-	session.reference.Commit(&session.State.BlockID)
+	session.reference.Commit(session.State.BlockID)
 
 	fmt.Println()
 	session.PrintStoreProgress(0)
@@ -451,11 +448,11 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 
 		if interval < (24*60*60) && age > 24*60*60 {
 			throw = true
-			reason = "only one daily"
+			reason = "keeping only one daily"
 		}
 		if interval < (7*24*60*60) && timestamp < dailyLimit {
 			throw = true
-			reason = "only one weekly"
+			reason = "keeping only one weekly"
 		}
 		if weeklyLimit < dailyLimit && timestamp < weeklyLimit {
 			throw = true
@@ -501,7 +498,7 @@ var entryEOD = &FileEntry{} // end of dir marker
 // Download worker is a separate goprocess to let it download the last backup structure in the background
 func (r *referenceEngine) load(rootBlockID core.Byte128) {
 	// Check if we have last backup cached on disk
-	cacheLast, _ := os.OpenFile(r.cacheName(&rootBlockID), os.O_RDONLY, 0)
+	cacheLast, _ := os.OpenFile(r.cacheName(rootBlockID), os.O_RDONLY, 0)
 	if cacheLast != nil {
 		defer cacheLast.Close()
 		info, err := cacheLast.Stat()
@@ -643,27 +640,8 @@ func (r *referenceEngine) findAndReuseReference(path string, entry *FileEntry) b
 	return false
 }
 
-func (r *referenceEngine) Commit(rootID *core.Byte128) {
-	cleanup := base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]) + "."
-	filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
-		if strings.HasPrefix(info.Name(), cleanup) && strings.HasSuffix(info.Name(), ".cache") {
-			os.Remove(path)
-		}
-		return nil
-	})
-
-	r.cacheCurrent.Close()
-	os.Rename(r.cacheName(nil), r.cacheName(rootID))
-}
-
-func (r *referenceEngine) cacheName(rootID *core.Byte128) string {
-	filename := base64.RawURLEncoding.EncodeToString(r.datasetNameH[:])
-	if rootID != nil {
-		filename += "." + base64.RawURLEncoding.EncodeToString(rootID[:]) + ".cache"
-	} else {
-		filename = "." + filename
-	}
-
+func (r *referenceEngine) cacheName(rootID core.Byte128) string {
+	filename := fmt.Sprintf("%s.%s.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]), base64.RawURLEncoding.EncodeToString(rootID[:]))
 	return filepath.Join(LocalStoragePath, filename)
 }
 
@@ -684,4 +662,35 @@ func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
 
 	r.cacheCurrent.Seek(0, os.SEEK_END)
 	entryEOD.Serialize(r.cacheCurrent)
+}
+
+func (r *referenceEngine) Commit(rootID core.Byte128) {
+	cleanup := fmt.Sprintf("%s.*.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
+	filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+		if match, _ := filepath.Match(cleanup, info.Name()); match {
+			os.Remove(path)
+		}
+		return nil
+	})
+
+	r.cacheCurrent.Close()
+	os.Rename(r.cacheCurrent.Name(), r.cacheName(rootID))
+	r.cacheCurrent = nil
+}
+func (r *referenceEngine) Close() {
+	if r.cacheCurrent != nil {
+		r.cacheCurrent.Close()
+		os.Remove(r.cacheCurrent.Name())
+	}
+}
+func NewReferenceEngine(client *core.Client, datasetNameH core.Byte128) *referenceEngine {
+	tempfile, err := ioutil.TempFile("", "hbcache")
+	PanicOn(err)
+
+	r := &referenceEngine{
+		client:       client,
+		datasetNameH: datasetNameH,
+		cacheCurrent: tempfile,
+	}
+	return r
 }
