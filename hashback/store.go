@@ -79,8 +79,6 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 
 	for offset := int64(0); offset < int64(entry.FileSize); {
 		Debug("storeFile(%s) offset %d", path, offset)
-		file.Close()
-		_ = "breakpoint"
 
 		session.PrintStoreProgress(PROGRESS_INTERVAL_SECS)
 
