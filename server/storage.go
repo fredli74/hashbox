@@ -986,8 +986,8 @@ func (handler *StorageHandler) CompactAll(fileType int) {
 func (handler *StorageHandler) CheckMeta(doRepair bool) (repaired int, critical int) {
 
 	for metaFileNumber := int32(0); ; metaFileNumber++ {
-		metaFile, err := handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
-		if err != nil {
+		metaFile := handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
+		if metaFile == nil {
 			break // no more meta files
 		}
 
