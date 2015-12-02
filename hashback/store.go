@@ -25,6 +25,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -50,13 +51,13 @@ func (session *BackupSession) PrintStoreProgress(interval time.Duration) {
 func (session *BackupSession) storeFile(path string, entry *FileEntry) (err error) {
 	defer func() {
 		// Panic error handling
-		// we need this because some obscure files on OSX does open but then generates "bad file descriptor" on read
 		if r := recover(); r != nil {
-			if e, ok := r.(error); ok && e.Error() == "bad file descriptor" {
-				err = e
-				return // This is a "normal" error
+			// we need this because some obscure files on OSX does open but then generates "bad file descriptor" on read
+			if e, ok := r.(*os.PathError); ok && e.Err == syscall.EBADF {
+				err = e.Err
+			} else {
+				panic(r) // Any other error is not normal and should panic
 			}
-			panic(r) // Any other error is not normal and should panic
 		}
 	}()
 
@@ -78,6 +79,8 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 
 	for offset := int64(0); offset < int64(entry.FileSize); {
 		Debug("storeFile(%s) offset %d", path, offset)
+		file.Close()
+		_ = "breakpoint"
 
 		session.PrintStoreProgress(PROGRESS_INTERVAL_SECS)
 

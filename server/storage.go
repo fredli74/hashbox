@@ -305,8 +305,7 @@ type storageMetaEntry struct {
 	blockID    core.Byte128    // 16 bytes
 	location   sixByteLocation // 6 bytes
 	dataSize   uint32          // Size of hashboxBlock Data
-	// BranchSize int64          // Size of all hashboxBlock Data linked to
-	links []core.Byte128 // Array of BlockIDs
+	links      []core.Byte128  // Array of BlockIDs
 }
 
 func (e *storageMetaEntry) BlockID() core.Byte128 {
@@ -318,7 +317,6 @@ func (e *storageMetaEntry) Serialize(w io.Writer) (size int) {
 	size += e.blockID.Serialize(w)
 	size += e.location.Serialize(w)
 	size += core.WriteOrPanic(w, e.dataSize)
-	// size += core.WriteOrPanic(w, e.BranchSize)
 	size += core.WriteOrPanic(w, uint32(len(e.links)))
 	for i := range e.links {
 		size += e.links[i].Serialize(w)
@@ -333,7 +331,6 @@ func (e *storageMetaEntry) Unserialize(r io.Reader) (size int) {
 	size += e.blockID.Unserialize(r)
 	size += e.location.Unserialize(r)
 	size += core.ReadOrPanic(r, &e.dataSize)
-	// size += core.ReadOrPanic(r, &e.BranchSize)
 	var n uint32
 	size += core.ReadOrPanic(r, &n)
 	e.links = make([]core.Byte128, n)
@@ -600,18 +597,6 @@ func (handler *StorageHandler) readMetaEntry(metaFileNumber int32, metaOffset in
 	return
 }
 
-/*
-func (handler *StorageHandler) sumBranch(links []core.Byte128) (size int64) {
-	for _, l := range links {
-		entry, _, _, err := handler.readIXEntry(l)
-PanicOn(err)
-		f, o := entry.location.Get()
-		meta, err := handler.readMetaEntry(f, o)
-PanicOn(err)
-		size += meta.BranchSize + int64(meta.DataSize)
-	}
-	return size
-}*/
 func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	_, ixFileNumber, ixOffset, err := handler.readIXEntry(block.BlockID)
 	if err == nil {
@@ -637,7 +622,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	data.WriteTo(datFile.Writer)
 	datFile.Writer.Flush()
 
-	metaEntry := storageMetaEntry{blockID: block.BlockID, dataSize: uint32(block.Data.Len()), links: block.Links} // , BranchSize: handler.sumBranch(block.Links)}
+	metaEntry := storageMetaEntry{blockID: block.BlockID, dataSize: uint32(block.Data.Len()), links: block.Links}
 	metaEntry.location.Set(handler.topDatFileNumber, datOffset)
 	metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
 
@@ -1001,9 +986,7 @@ func (handler *StorageHandler) CompactAll(fileType int) {
 func (handler *StorageHandler) CheckMeta(doRepair bool) (repaired int, critical int) {
 
 	for metaFileNumber := int32(0); ; metaFileNumber++ {
-		// Because BranchSize checking moves the normal reader, we open a new file handler
-		filename := handler.getNumberedFileName(storageFileTypeMeta, metaFileNumber)
-		metaFile, err := OpenBufferedFile(filename, 1024*1024, os.O_RDONLY, 0)
+		metaFile, err := handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
 		if err != nil {
 			break // no more meta files
 		}
@@ -1047,29 +1030,7 @@ func (handler *StorageHandler) CheckMeta(doRepair bool) (repaired int, critical 
 					rewriteMeta = true
 				}
 			}
-			/*
-								{ // Do a full branch check
-									var links []core.Byte128
-									var n int64
-									links = append(links, entry.Links...)
-									for links := entry.Links; len(links) > 0; {
-										var l core.Byte128
-										l, links = links[len(links)-1], links[:len(links)-1]
 
-										ixEntry, _, _, err := handler.readIXEntry(l)
-				PanicOn(err)
-										mf, mo := ixEntry.location.Get()
-										metaEntry, err := handler.readMetaEntry(mf, mo)
-				PanicOn(err)
-										n += int64(metaEntry.dataSize)
-										links = append(links, metaEntry.links...)
-									}
-									if n != entry.BranchSize {
-										fmt.Printf("Incorrect metadata for block %x, BranchSize %d (should be %d)\n", entry.blockID[:], entry.BranchSize, n)
-										entry.BranchSize = n
-										rewriteMeta = true
-									}
-								}*/
 			if rewriteMeta && doRepair {
 				fmt.Printf("REPAIRING metadata for block %x at %x:%x\n", entry.blockID[:], metaFileNumber, metaOffset)
 				_, err := metaFile.Writer.Seek(metaOffset, os.SEEK_SET)
