@@ -47,19 +47,28 @@ func (session *BackupSession) PrintStoreProgress(interval time.Duration) {
 	}
 }
 
-func (session *BackupSession) storeFile(path string, entry *FileEntry) error {
+func (session *BackupSession) storeFile(path string, entry *FileEntry) (err error) {
+	defer func() {
+		// Panic error handling
+		// we need this because some obscure files on OSX does open but then generates "bad file descriptor" on read
+		if r := recover(); r != nil {
+			if e, ok := r.(error); ok && e.Error() == "bad file descriptor" {
+				err = e
+				return // This is a "normal" error
+			}
+			panic(r) // Any other error is not normal and should panic
+		}
+	}()
+
 	var links []core.Byte128
 
 	chain := FileChainBlock{}
 
-	fil, err := os.Open(path) // Open = read-only
-	if err != nil {
+	var file *os.File
+	if file, err = os.Open(path); err != nil {
 		return err
 	}
-	if fil == nil {
-		panic("ASSERT! err == nil and fil == nil")
-	}
-	defer fil.Close()
+	defer file.Close()
 
 	var maxSum rollsum.Rollsum
 	maxSum.Init()
@@ -81,12 +90,8 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) error {
 		var blockData bytearray.ByteArray
 
 		// Fill the fileData buffer
-		if fil == nil {
-			panic("ASSERT! fil == nil inside storeFile inner loop")
-		}
-
-		core.CopyNOrPanic(&fileData, fil, maxBlockSize-fileData.Len())
-		fileData.ReadSeek(0, os.SEEK_CUR)
+		core.CopyNOrPanic(&fileData, file, maxBlockSize-fileData.Len())
+		fileData.ReadSeek(0, os.SEEK_CUR) // TODO: figure out why this line is here because I do not remember
 
 		var splitPosition int = fileData.Len()
 		if fileData.Len() > MIN_BLOCK_SIZE*2 { // Candidate for rolling sum split
@@ -162,19 +167,19 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) (id core.B
 
 	dir := DirectoryBlock{}
 
-	fil, err := os.Open(path)
-	if err != nil {
+	var file *os.File
+	if file, err = os.Open(path); err != nil {
 		return
 	}
-	defer fil.Close()
+	defer file.Close()
 
-	fl, err := fil.Readdir(-1)
-	if err != nil {
+	var filelist []os.FileInfo
+	if filelist, err = file.Readdir(-1); err != nil {
 		return
 	}
 
-	sort.Sort(FileInfoSlice(fl))
-	for _, info := range fl {
+	sort.Sort(FileInfoSlice(filelist))
+	for _, info := range filelist {
 		e, err := session.storePath(filepath.Join(path, info.Name()), false)
 		if err != nil {
 			session.Important(fmt.Sprintf("Skipping (ERROR) %v", err))
@@ -266,6 +271,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 	} else if entry.FileMode&uint32(os.ModeDir) > 0 {
 		entry.ContentType = ContentTypeDirectory
 		reservation := session.reference.reserveReference(entry) // We do this because directories needs to be written before files, but we also need contentblockID to be correct
+		defer session.reference.storeReferenceDir(entry, reservation)
 
 		refEntry := session.reference.findReference(path)
 
@@ -276,14 +282,12 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			entry.ReferenceID = refEntry.ReferenceID
 		}
 		session.Directories++
-
-		session.reference.storeReferenceDir(entry, reservation)
 	} else {
 		same := session.reference.findAndReuseReference(path, entry)
 		if !same {
 			if entry.FileSize > 0 {
-				session.Log(fmt.Sprintf("%s" /*os.FileMode(entry.FileMode),*/, path))
-				if err := session.storeFile(path, entry); err != nil {
+				session.Log(fmt.Sprintf("%s", path))
+				if err = session.storeFile(path, entry); err != nil {
 					return nil, err
 				}
 				// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server
@@ -498,7 +502,7 @@ var entryEOD = &FileEntry{} // end of dir marker
 // Download worker is a separate goprocess to let it download the last backup structure in the background
 func (r *referenceEngine) load(rootBlockID core.Byte128) {
 	// Check if we have last backup cached on disk
-	cacheLast, _ := os.OpenFile(r.cacheName(rootBlockID), os.O_RDONLY, 0)
+	cacheLast, _ := os.Open(r.cacheName(rootBlockID))
 	if cacheLast != nil {
 		defer cacheLast.Close()
 		info, err := cacheLast.Stat()
