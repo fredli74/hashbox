@@ -407,7 +407,7 @@ func main() {
 
 	cmd.StringOption("server", "", "<ip>:<port>", "Hashbox server address", &session.ServerString, cmd.Preference|cmd.Required)
 	cmd.BoolOption("full", "", "Force a non-incremental store", &session.FullBackup, cmd.Preference)
-	cmd.BoolOption("v", "", "Show verbose output", &session.Verbose, cmd.Preference)
+	cmd.BoolOption("verbose", "", "Show verbose output", &session.Verbose, cmd.Preference)
 	cmd.BoolOption("progress", "", "Show progress during store", &session.ShowProgress, cmd.Preference)
 	cmd.BoolOption("paint", "", "Paint!", &session.Paint, cmd.Preference).OnChange(func() {
 		if session.Paint {

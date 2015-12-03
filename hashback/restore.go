@@ -28,7 +28,7 @@ func (session *BackupSession) PrintRestoreProgress() {
 	fmt.Printf(">>> %.1f min, read: %s (%.0f%% compr), write: %s, %d folders, %d files\n",
 		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
 
-	fmt.Println(core.MemoryStats())
+	//fmt.Println(core.MemoryStats())
 }
 
 func (session *BackupSession) PrintDiffProgress() {
@@ -39,7 +39,7 @@ func (session *BackupSession) PrintDiffProgress() {
 	fmt.Printf(">>> %.1f min, read: %s (%.0f%% compr), compared: %s, %d folders, %d files\n",
 		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
 
-	fmt.Println(core.MemoryStats())
+	//fmt.Println(core.MemoryStats())
 }
 
 func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, DecryptKey core.Byte128) error {

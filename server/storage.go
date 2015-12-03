@@ -1143,7 +1143,7 @@ func (handler *StorageHandler) CheckFiles(doRepair bool) (repaired int, critical
 				header.filetype = storageFileTypeInfo[fileType].Type
 				header.Serialize(writer)
 
-				read, err := os.OpenFile(filename+".repair", os.O_RDONLY, 0666)
+				read, err := os.Open(filename + ".repair")
 				PanicOn(err)
 				reader := bufio.NewReader(read)
 

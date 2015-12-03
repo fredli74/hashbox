@@ -136,10 +136,11 @@ func (a *DatasetArray) Unserialize(r io.Reader) (size int) {
 
 // DatasetState stores a specific state (snapshot) of a Dataset.
 type DatasetState struct {
-	StateID    Byte128 // Unique ID of the state
-	BlockID    Byte128 // ID of the Block this Dataset is referring to
-	Size       int64   // Size of all data referenced by this dataset state
-	UniqueSize int64   // Size of unique data (added blocks)
+	StateID Byte128 // Unique ID of the state
+	BlockID Byte128 // ID of the Block this Dataset is referring to
+	// TODO: figure out how to calculate size and uniquesize for real, going through metadata tree when saving takes too long
+	Size       int64 // Size of all data referenced by this dataset state
+	UniqueSize int64 // Size of unique data (added blocks)
 }
 
 func (d DatasetState) Serialize(w io.Writer) (size int) {

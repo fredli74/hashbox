@@ -295,7 +295,7 @@ func appendDatasetTx(accountNameH core.Byte128, datasetName core.String, tx dbTx
 }
 func generateDBFile(accountNameH core.Byte128, datasetName core.String) {
 	filename := datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
-	file, err := os.OpenFile(filename, os.O_RDONLY, 0666)
+	file, err := os.Open(filename)
 	PanicOn(err)
 	defer file.Close()
 	var header dbFileHeader
@@ -332,10 +332,15 @@ func generateDBFile(accountNameH core.Byte128, datasetName core.String) {
 	}()
 
 	var collection dbStateCollection
+	var maxSize int64
 	for _, s := range stateMap {
+		if s.Size > maxSize {
+			maxSize = s.Size
+		}
 		collection.Size += s.UniqueSize // TODO: this calculation is wrong the moment you start deleting stuff, it needs to be reworked
 		collection.States = append(collection.States, s)
 	}
+	collection.Size += maxSize
 	sort.Sort(collection.States)
 
 	hash := md5.New()
@@ -347,16 +352,26 @@ func generateDBFile(accountNameH core.Byte128, datasetName core.String) {
 
 	// Now also update account info
 	info := readInfoFile(accountNameH)
-	for i := 0; i <= len(info.Datasets); i++ {
-		if i >= len(info.Datasets) {
-			info.Datasets = append(info.Datasets, core.Dataset{Name: datasetName})
+	if len(collection.States) > 0 { // Add the dataset state
+		for i := 0; i <= len(info.Datasets); i++ {
+			if i >= len(info.Datasets) {
+				info.Datasets = append(info.Datasets, core.Dataset{Name: datasetName})
+			}
+			if info.Datasets[i].Name == datasetName {
+				info.Datasets[i].ListH = collection.ListH
+				info.Datasets[i].Size = collection.Size
+				break
+			}
 		}
-		if info.Datasets[i].Name == datasetName {
-			info.Datasets[i].ListH = collection.ListH
-			info.Datasets[i].Size = collection.Size
-			break
+	} else { // remove the dataset from the info list
+		for i := 0; i < len(info.Datasets); i++ {
+			if info.Datasets[i].Name == datasetName {
+				info.Datasets = append(info.Datasets[:i], info.Datasets[i+1:]...)
+				break
+			}
 		}
 	}
+
 	writeInfoFile(accountNameH, *info)
 }
 
@@ -371,7 +386,7 @@ func writeDBFile(accountNameH core.Byte128, datasetName core.String, c dbStateCo
 }
 func readDBFile(accountNameH core.Byte128, datasetName core.String) *dbStateCollection {
 	filename := datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionDatabase
-	file, err := os.OpenFile(filename, os.O_RDONLY, 0666)
+	file, err := os.Open(filename)
 	if err != nil {
 		return nil
 	}
@@ -395,7 +410,7 @@ func writeInfoFile(accountNameH core.Byte128, a AccountInfo) {
 	a.Datasets.Serialize(file)
 }
 func readInfoFile(accountNameH core.Byte128) *AccountInfo {
-	file, err := os.OpenFile(accountFilename(accountNameH)+".info", os.O_RDONLY, 0666)
+	file, err := os.Open(accountFilename(accountNameH) + ".info")
 	if err != nil {
 		return nil
 	}
@@ -428,17 +443,35 @@ func (handler *AccountHandler) CollectAllRootBlocks() []core.Byte128 {
 	defer dir.Close()
 	dirlist, err := dir.Readdir(-1)
 	PanicOn(err)
+
+	for _, info := range dirlist { // Clear all cached dataset information from the info files
+		name := info.Name()
+		if m, _ := filepath.Match("??????????????????????.info", name); m {
+			// Read the accountNameH from the filename
+			var accountNameH core.Byte128
+			{
+				decoded, err := base64.RawURLEncoding.DecodeString(name[:22])
+				PanicOn(err)
+				accountNameH.Set(decoded)
+			}
+
+			info := readInfoFile(accountNameH)
+			if info != nil {
+				info.Datasets = nil
+				writeInfoFile(accountNameH, *info)
+			}
+		}
+	}
+
 	for _, info := range dirlist {
 		name := info.Name()
-
-		//QD1vW7edNkcC2V9fbfUvPQ.ceQB36m3wPa0zw4F3ZE6ow.trn
-		if len(name) == 49 && name[45:49] == ".trn" {
-			// Read the accountHash from the filename
-			var accountHash core.Byte128
+		if m, _ := filepath.Match("??????????????????????.??????????????????????.trn", name); m {
+			// Read the accountNameH from the filename
+			var accountNameH core.Byte128
 			{
-				a, err := base64.RawURLEncoding.DecodeString(name[0:22])
+				decoded, err := base64.RawURLEncoding.DecodeString(name[:22])
 				PanicOn(err)
-				accountHash.Set(a)
+				accountNameH.Set(decoded)
 			}
 
 			// Open the file, read and check the file headers
@@ -466,10 +499,10 @@ func (handler *AccountHandler) CollectAllRootBlocks() []core.Byte128 {
 			fil.Close()
 
 			// Generate the DB file from transactions
-			generateDBFile(accountHash, datasetName)
+			generateDBFile(accountNameH, datasetName)
 
 			// Open and check the hash for the dataset state collection
-			collection := readDBFile(accountHash, datasetName)
+			collection := readDBFile(accountNameH, datasetName)
 			{
 				hash := md5.New()
 				for _, s := range collection.States {

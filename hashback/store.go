@@ -43,7 +43,7 @@ func (session *BackupSession) PrintStoreProgress(interval time.Duration) {
 			time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(session.Client.WriteDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
 			sent, skipped+sent, core.HumanSize(int64(queuedsize)))
 
-		fmt.Println(core.MemoryStats())
+		//fmt.Println(core.MemoryStats())
 		session.Progress = time.Now().Add(interval)
 	}
 }
@@ -291,8 +291,10 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 				if err = session.storeFile(path, entry); err != nil {
 					return nil, err
 				}
-				// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server
-				session.State.UniqueSize += entry.FileSize
+				if session.reference.loaded { // We are using unique as a diff-size, so first backup (with no reference) has no diff-size
+					// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server?
+					session.State.UniqueSize += entry.FileSize
+				}
 			}
 		} else {
 			if session.Client.Paint && !session.Verbose && !session.ShowProgress {
@@ -448,32 +450,32 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 		age := (timenow - timestamp)
 		interval := (timestamp - truncateSecondsToDay(lastbackup)) // interval from last backup
 
-		var throw bool
+		var throwAway bool
 		var reason string
 
 		if interval < (24*60*60) && age > 24*60*60 {
-			throw = true
+			throwAway = true
 			reason = "keeping only one daily"
 		}
 		if interval < (7*24*60*60) && timestamp < dailyLimit {
-			throw = true
+			throwAway = true
 			reason = "keeping only one weekly"
 		}
 		if weeklyLimit < dailyLimit && timestamp < weeklyLimit {
-			throw = true
+			throwAway = true
 			reason = fmt.Sprintf("older than %d weeks", retainWeeks)
 		}
 		if weeklyLimit >= dailyLimit && timestamp < dailyLimit {
-			throw = true
+			throwAway = true
 			reason = fmt.Sprintf("older than %d days", retainDays)
 		}
 
-		if throw {
-			date := time.Unix(int64(timestamp), 0)
+		date := time.Unix(int64(timestamp), 0)
+		if throwAway {
 			fmt.Printf("Removing backup %s (%s)\n", date.Format(time.RFC3339), reason)
+			// session.Client.RemoveDatasetState(datasetName, s.StateID)
 		} else {
-			date := time.Unix(int64(timestamp), 0)
-			fmt.Printf("Keeping backup %s\n", date.Format(time.RFC3339))
+			Debug("Keeping backup %s\n", date.Format(time.RFC3339))
 			lastbackup = timestamp
 		}
 	}
@@ -490,6 +492,7 @@ type referenceEngine struct {
 	path   []string     // path hierarchy, used for traversing up and down subdirectories without having to save full path for each queue entry
 	queue  []*FileEntry // last backup structure, sorted
 
+	loaded    bool       // indicates that a reference backup was loaded (or started to load)
 	loadpoint int        // current point in the queue where to load in new information, we do this so we do not have to sort the list after each insert
 	lock      sync.Mutex // used because downloading of the structure is a concurrent goprocess
 
@@ -538,6 +541,7 @@ func (r *referenceEngine) load(rootBlockID core.Byte128) {
 			}
 		}()
 	}
+	r.loaded = true
 }
 
 // downloadReference adds a subdir structure at the current loadpoint
