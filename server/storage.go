@@ -1251,3 +1251,23 @@ func (handler *StorageHandler) CheckData(doRepair bool) (repaired int, critical 
 	}
 	return repaired, critical
 }
+
+func (handler *StorageHandler) ShowStorageDeadSpace() {
+	for datFileNumber := int32(0); ; datFileNumber++ {
+		var datFile = handler.getNumberedFile(storageFileTypeData, datFileNumber, false)
+		if datFile == nil {
+			break // no more data
+		}
+
+		var deadSpace int64
+		{
+			datFile.Reader.Seek(0, os.SEEK_SET)
+			var header storageFileHeader
+			header.Unserialize(datFile.Reader)
+			deadSpace = header.deadspace
+		}
+
+		fileSize := datFile.Size()
+		serverLog(fmt.Sprintf("File %s, %s (est. dead data %s)", datFile.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace)))
+	}
+}

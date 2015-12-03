@@ -440,6 +440,7 @@ func main() {
 		storageHandler.MarkIndexes(roots, true)
 		storageHandler.SweepIndexes(true)
 		fmt.Printf("Mark and sweep duration %.1f minutes\n", time.Since(start).Minutes())
+		storageHandler.ShowStorageDeadSpace()
 		if !indexOnly {
 			storageHandler.CompactAll(storageFileTypeData)
 			storageHandler.CompactAll(storageFileTypeMeta)
