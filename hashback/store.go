@@ -184,7 +184,8 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) (id core.B
 		e, err := session.storePath(filepath.Join(path, info.Name()), false)
 		if err != nil {
 			session.Important(fmt.Sprintf("Skipping (ERROR) %v", err))
-		} else if e != nil {
+		}
+		if e != nil {
 			dir.File = append(dir.File, e)
 			if e.HasContentBlockID() {
 				links = append(links, e.ContentBlockID)
@@ -257,7 +258,6 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		}
 		entry.FileLink = core.String(sym)
 
-		_ = "breakpoint"
 		same := session.reference.findAndReuseReference(path, entry)
 		if !same {
 			session.Log("SYMLINK", path, "->", sym)
@@ -284,11 +284,22 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		}
 		session.Directories++
 	} else {
-		same := session.reference.findAndReuseReference(path, entry)
-		if !same {
+		refEntry := session.reference.findReference(path)
+		if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize && refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime {
+			// It's the same!
+			entry = refEntry
+
+			if session.Client.Paint && !session.Verbose && !session.ShowProgress {
+				fmt.Print(" ")
+			}
+			session.UnchangedFiles++
+		} else {
 			if entry.FileSize > 0 {
 				session.Log(fmt.Sprintf("%s", path))
 				if err = session.storeFile(path, entry); err != nil {
+					if e, ok := err.(*os.PathError); ok && runtime.GOOS == "windows" && e.Err == syscall.Errno(0x20) { // Windows ERROR_SHARING_VIOLATION
+						return refEntry, err // Returning refEntry here in case this file existed and could be opened in a previous backup
+					}
 					return nil, err
 				}
 				if session.reference.loaded { // We are using unique as a diff-size, so first backup (with no reference) has no diff-size
@@ -296,11 +307,6 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 					session.State.UniqueSize += entry.FileSize
 				}
 			}
-		} else {
-			if session.Client.Paint && !session.Verbose && !session.ShowProgress {
-				fmt.Print(" ")
-			}
-			session.UnchangedFiles++
 		}
 		session.Files++
 		session.State.Size += entry.FileSize
@@ -655,22 +661,30 @@ func (r *referenceEngine) cacheName(rootID core.Byte128) string {
 }
 
 func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
-	l, err := r.cacheCurrent.Seek(0, os.SEEK_CUR)
-	PanicOn(err)
-	entry.Serialize(r.cacheCurrent)
-	return l
+	if r.cacheCurrent != nil {
+		l, err := r.cacheCurrent.Seek(0, os.SEEK_CUR)
+		PanicOn(err)
+		entry.Serialize(r.cacheCurrent)
+		return l
+	} else {
+		return
+	}
 }
 
 func (r *referenceEngine) storeReference(entry *FileEntry) {
-	entry.Serialize(r.cacheCurrent)
+	if r.cacheCurrent != nil {
+		entry.Serialize(r.cacheCurrent)
+	}
 }
 
 func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
-	r.cacheCurrent.Seek(location, os.SEEK_SET)
-	entry.Serialize(r.cacheCurrent)
+	if r.cacheCurrent != nil {
+		r.cacheCurrent.Seek(location, os.SEEK_SET)
+		entry.Serialize(r.cacheCurrent)
 
-	r.cacheCurrent.Seek(0, os.SEEK_END)
-	entryEOD.Serialize(r.cacheCurrent)
+		r.cacheCurrent.Seek(0, os.SEEK_END)
+		entryEOD.Serialize(r.cacheCurrent)
+	}
 }
 
 func (r *referenceEngine) Commit(rootID core.Byte128) {
@@ -682,14 +696,17 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 		return nil
 	})
 
-	r.cacheCurrent.Close()
-	os.Rename(r.cacheCurrent.Name(), r.cacheName(rootID))
-	r.cacheCurrent = nil
+	if r.cacheCurrent != nil {
+		r.cacheCurrent.Close()
+		os.Rename(r.cacheCurrent.Name(), r.cacheName(rootID))
+		r.cacheCurrent = nil
+	}
 }
 func (r *referenceEngine) Close() {
 	if r.cacheCurrent != nil {
 		r.cacheCurrent.Close()
 		os.Remove(r.cacheCurrent.Name())
+		r.cacheCurrent = nil
 	}
 }
 func NewReferenceEngine(client *core.Client, datasetNameH core.Byte128) *referenceEngine {
