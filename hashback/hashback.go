@@ -608,6 +608,8 @@ func main() {
 					fmt.Printf("Next backup scheduled for %s\n", date.Format(time.RFC3339))
 					// fmt.Println(time.Since(date))
 					time.Sleep(-time.Since(date))
+				} else {
+					latestBackup = 1 // trigger a new backup already
 				}
 			}
 		}
