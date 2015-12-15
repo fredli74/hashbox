@@ -461,11 +461,11 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 
 		if interval < (24*60*60) && age > 24*60*60 {
 			throwAway = true
-			reason = "keeping only one daily"
+			reason = fmt.Sprintf("keeping only one daily %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
 		}
 		if interval < (7*24*60*60) && timestamp < dailyLimit {
 			throwAway = true
-			reason = "keeping only one weekly"
+			reason = fmt.Sprintf("keeping only one weekly %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
 		}
 		if weeklyLimit < dailyLimit && timestamp < weeklyLimit {
 			throwAway = true

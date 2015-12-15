@@ -104,7 +104,7 @@ type FileEntry struct {
 	ContentBlockID core.Byte128 // only written for type 1,2 and 3
 	DecryptKey     core.Byte128 // only written for type 2
 	FileLink       core.String  // only written for type 4
-	// TODO: Add Platform specific data  hidden files, file permissions etc.
+	// TODO: Add Platform specific data, hidden files, ACL file permissions etc.
 }
 
 const (
@@ -258,17 +258,28 @@ type BackupSession struct {
 }
 
 func NewBackupSession() *BackupSession {
-	return &BackupSession{Start: time.Now()}
+	return &BackupSession{}
 }
 
 func (session *BackupSession) Connect() *core.Client {
 	if session.AccessKey == nil || session.BackupKey == nil {
 		panic(errors.New("Missing -password option"))
 	}
+
+	// Resetting statistics
+	session.Start = time.Now()
+	session.Progress = time.Now()
+	session.ReadData = 0
+	session.WriteData = 0
+	session.Directories = 0
+	session.Files = 0
+	session.UnchangedFiles = 0
+	session.DifferentFiles = 0
+
 	// fmt.Printf("%x\n", *session.AccessKey)
 	// fmt.Printf("%x\n", *session.BackupKey)
 
-	fmt.Println("Connecting to", session.ServerString)
+	Debug("Connecting to", session.ServerString)
 	conn, err := net.Dial("tcp", session.ServerString)
 	if err != nil {
 		panic(err)
@@ -282,6 +293,7 @@ func (session *BackupSession) Connect() *core.Client {
 }
 func (session *BackupSession) Close() {
 	session.Client.Close()
+	Debug("Disconnected from", session.ServerString)
 }
 
 func (session *BackupSession) Log(v ...interface{}) {
@@ -432,7 +444,7 @@ func main() {
 			}
 		}
 
-		fmt.Println("* TODO: Add quota and total size info")
+		// fmt.Println("* TODO: Add quota and total size info")
 		if hashbackEnabled {
 			fmt.Println("Account is setup for Hashback")
 		} else {
@@ -523,8 +535,10 @@ func main() {
 	var pidName string = ""
 	var retainWeeks int64 = 0
 	var retainDays int64 = 0
+	var intervalBackup int64 = 0
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &DefaultIgnoreList, cmd.Standard|cmd.Preference)
+	cmd.IntOption("interval", "store", "<minutes>", "Keep running backups every <minutes> until interrupted", &intervalBackup, cmd.Standard)
 	cmd.IntOption("retaindays", "store", "<days>", "Cleanup backups older than 24 hours but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard|cmd.Preference)
 	cmd.IntOption("retainweeks", "store", "<weeks>", "Cleanup backups older than 24 hours but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard|cmd.Preference)
 	cmd.Command("store", "<dataset> (<folder> | <file>)...", func() {
@@ -566,14 +580,39 @@ func main() {
 			}
 		}
 
-		session.Connect()
-		defer session.Close()
-		session.State = &core.DatasetState{StateID: session.Client.SessionNonce}
-		session.Store(cmd.Args[2], cmd.Args[3:]...)
-		if retainWeeks > 0 || retainDays > 0 {
-			session.Retention(cmd.Args[2], int(retainDays), int(retainWeeks))
+		var latestBackup uint64
+		for latestBackup == 0 || intervalBackup > 0 { // Keep looping if interval backupping
+
+			func() {
+				session.Connect()
+				defer session.Close()
+				if latestBackup > 0 || intervalBackup == 0 {
+					session.State = &core.DatasetState{StateID: session.Client.SessionNonce}
+					session.Store(cmd.Args[2], cmd.Args[3:]...)
+					if retainWeeks > 0 || retainDays > 0 {
+						session.Retention(cmd.Args[2], int(retainDays), int(retainWeeks))
+					}
+					latestBackup = binary.BigEndian.Uint64(session.State.StateID[:])
+					date := time.Unix(0, int64(latestBackup))
+					fmt.Printf("Backup %s %x (%s) completed\n", cmd.Args[2], session.State.StateID[:], date.Format(time.RFC3339))
+				} else {
+					list := session.Client.ListDataset(cmd.Args[2])
+					if len(list.States) > 0 {
+						latestBackup = binary.BigEndian.Uint64(list.States[len(list.States)-1].StateID[:])
+					}
+				}
+			}()
+			if intervalBackup > 0 {
+				date := time.Unix(0, int64(latestBackup)).Add(time.Duration(intervalBackup) * time.Minute)
+				if date.After(time.Now()) {
+					fmt.Printf("Next backup scheduled for %s\n", date.Format(time.RFC3339))
+					// fmt.Println(time.Since(date))
+					time.Sleep(-time.Since(date))
+				}
+			}
 		}
 	})
+
 	cmd.Command("restore", "<dataset> (<backup id>|.) [\"<path>\"...] <dest-folder>", func() {
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))

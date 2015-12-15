@@ -1181,7 +1181,7 @@ func (handler *StorageHandler) CheckData(doRepair bool) (repaired int, critical 
 			offset += int64(dataEntry.Unserialize(datFile.Reader))
 			if !dataEntry.block.VerifyBlock() {
 				critical++
-				// TODO... something!
+				// TODO: add recover argument to scan for and recover data that can be rescued?
 				panic(errors.New(fmt.Sprintf("Unable to verify block %x in datafile at %x:%x", dataEntry.block.BlockID, datFileNumber, blockOffset)))
 			}
 
