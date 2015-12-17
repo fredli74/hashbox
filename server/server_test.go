@@ -6,17 +6,18 @@
 package main
 
 import (
+	"bitbucket.org/fredli74/bytearray"
 	"bitbucket.org/fredli74/hashbox/core"
 
 	"bytes"
 	"crypto/md5"
 	_ "encoding/hex"
-	_ "encoding/json"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
 	"net"
-	_ "os"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -35,6 +36,9 @@ func (c FauxServer) Write(data []byte) (n int, err error) { return c.ServerWrite
 
 func TestCreatingTestServer(t *testing.T) {
 	datDirectory = "./test" // YES! It is a global, and it is ugly, but so are yoU!
+	idxDirectory = "./test"
+	os.Mkdir("./test", 0777)
+	os.Mkdir("./test/account", 0777)
 	accountHandler = NewAccountHandler()
 	storageHandler = NewStorageHandler()
 	/*
@@ -61,15 +65,19 @@ func TestServerTestAccount(t *testing.T) {
 	A := AccountInfo{
 		AccountName: "test account",
 		AccessKey:   core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))),
+		Datasets:    core.DatasetArray{},
 	}
 	accountHandler.SetInfo(A)
+	JA, _ := json.Marshal(A)
 
 	B := accountHandler.GetInfo(core.Hash([]byte(A.AccountName)))
+	JB, _ := json.Marshal(*B)
+
 	if B == nil {
 		t.Error("Account not found")
-	} else if !reflect.DeepEqual(A, *B) {
-		fmt.Println(A)
-		fmt.Println(*B)
+	} else if string(JA) != string(JB) {
+		fmt.Println(string(JA))
+		fmt.Println(string(JB))
 		t.Error("Accounts not equal")
 	}
 
@@ -111,22 +119,30 @@ func TestClientServerDataset(t *testing.T) {
 	client := core.NewClient(conn, "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
 	defer client.Close()
 
+	// First make sure there is some data to reference
+	var data bytearray.ByteArray
+	block := core.NewHashboxBlock(core.BlockDataTypeZlib, data, nil)
+	var blockID core.Byte128
+	blockID = client.StoreBlock(block)
+	client.Commit()
+
 	var array core.DatasetStateArray
 	var stateID core.Byte128 // randomByte128()
 
 	copy(stateID[:], []byte("testC"))
-	keepstate := core.DatasetState{StateID: stateID, BlockID: randomByte128(), Size: 5, UniqueSize: 42}
+	keepstate := core.DatasetState{StateID: stateID, BlockID: blockID, Size: 5, UniqueSize: 42}
+
 	client.AddDatasetState("testset", keepstate)
 	array = append(array, keepstate)
 	copy(stateID[:], []byte("testD"))
-	keepstate = core.DatasetState{StateID: stateID, BlockID: randomByte128(), Size: 125, UniqueSize: 33342}
+	keepstate = core.DatasetState{StateID: stateID, BlockID: blockID, Size: 125, UniqueSize: 33342}
 	client.AddDatasetState("testset", keepstate)
 	array = append(array, keepstate)
 
 	copy(stateID[:], []byte("testA"))
-	client.AddDatasetState("testset", core.DatasetState{StateID: stateID, BlockID: randomByte128(), Size: 5, UniqueSize: 42})
+	client.AddDatasetState("testset", core.DatasetState{StateID: stateID, BlockID: blockID, Size: 5, UniqueSize: 42})
 	copy(stateID[:], []byte("testB"))
-	client.AddDatasetState("testset", core.DatasetState{StateID: stateID, BlockID: randomByte128(), Size: 5, UniqueSize: 42})
+	client.AddDatasetState("testset", core.DatasetState{StateID: stateID, BlockID: blockID, Size: 5, UniqueSize: 42})
 	copy(stateID[:], []byte("testB"))
 	client.RemoveDatasetState("testset", stateID)
 	copy(stateID[:], []byte("testA"))
@@ -153,8 +169,8 @@ func TestClientServerDataset(t *testing.T) {
 			t.Error(fmt.Sprintf("%x != %x", info.DatasetList[0].ListH, localHash))
 			t.Error("List hash could not be verified")
 		}
-		if info.DatasetList[0].Size != 33384 {
-			t.Error("Wrong total size for the dataset")
+		if info.DatasetList[0].Size != 33509 {
+			t.Error(fmt.Sprintf("Wrong total size for the dataset %d != %d", info.DatasetList[0].Size, 33509))
 		}
 	}
 
@@ -180,24 +196,35 @@ func TestClientServerHashboxBlocks(t *testing.T) {
 	client := core.NewClient(conn, "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
 	defer client.Close()
 
-	blockID := client.StoreBlock([]byte("HELLO!"), nil)
-	client.Commit()
-	block := client.ReadBlock(blockID)
-	if !reflect.DeepEqual(blockID, block.BlockID) {
-		t.Error("Received block has wrong ID")
-	}
-	if !bytes.Equal(block.Data[:], []byte("HELLO!")) {
-		t.Error("Block contains wrong data, expected \"HELLO!\" received \"" + string(block.Data) + "\"")
+	{
+		var data bytearray.ByteArray
+		data.Write([]byte("HELLO!"))
+		blockID := client.StoreData(core.BlockDataTypeRaw, data, nil)
+		client.Commit()
+		block := client.ReadBlock(blockID)
+		if !reflect.DeepEqual(blockID, block.BlockID) {
+			t.Error("Received block has wrong ID")
+		}
+
+		rdata, _ := block.Data.ReadSlice()
+		if !bytes.Equal(rdata, []byte("HELLO!")) {
+			t.Error("Block contains wrong data, expected \"HELLO!\" received \"" + string(rdata) + "\"")
+		}
 	}
 
-	blockID = client.StoreBlock([]byte("Bet it all on black?"), nil)
-	client.Commit()
-	block = client.ReadBlock(blockID)
-	if !reflect.DeepEqual(blockID, block.BlockID) {
-		t.Error("Received block has wrong ID")
-	}
-	if !bytes.Equal(block.Data[:], []byte("Bet it all on black?")) {
-		t.Error("Block contains wrong data, expected \"Bet it all on black?\" received \"" + string(block.Data) + "\"")
+	{
+		var data bytearray.ByteArray
+		data.Write([]byte("Bet it all on black?"))
+		blockID := client.StoreData(core.BlockDataTypeRaw, data, nil)
+		client.Commit()
+		block := client.ReadBlock(blockID)
+		if !reflect.DeepEqual(blockID, block.BlockID) {
+			t.Error("Received block has wrong ID")
+		}
+		rdata, _ := block.Data.ReadSlice()
+		if !bytes.Equal(rdata, []byte("Bet it all on black?")) {
+			t.Error("Block contains wrong data, expected \"Bet it all on black?\" received \"" + string(rdata) + "\"")
+		}
 	}
 }
 

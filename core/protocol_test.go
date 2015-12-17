@@ -36,9 +36,11 @@ func randomMsgString() String {
 }
 
 func randomHashboxBlock() (b HashboxBlock) {
-	b.BlockID = randomByte128()
+	b.DataType = BlockDataTypeRaw
+	b.Data.Write([]byte(randomMsgString()))
 	b.Links = append(b.Links, randomByte128())
-	b.Data = append(b.Data, []byte(randomMsgString())...)
+	b.UncompressedSize = -1
+	b.BlockID = b.HashData()
 	return b
 }
 func protocolPipeCompare(msgType uint32, msgData interface{}) (isEqual bool, dump string) {
@@ -53,7 +55,15 @@ func protocolPipeCompare(msgType uint32, msgData interface{}) (isEqual bool, dum
 	WriteMessage(buf, msg)
 	dump = hex.Dump(buf.Bytes())
 	R := ReadMessage(buf)
-	isEqual = reflect.TypeOf(msg) == reflect.TypeOf(R) && reflect.DeepEqual(msg, reflect.ValueOf(R).Interface())
+	switch d := R.Data.(type) {
+	case *MsgClientWriteBlock:
+		isEqual = reflect.TypeOf(msg) == reflect.TypeOf(R) && d.Block.VerifyBlock()
+	case *MsgServerWriteBlock:
+		isEqual = reflect.TypeOf(msg) == reflect.TypeOf(R) && d.Block.VerifyBlock()
+	default:
+		isEqual = reflect.TypeOf(msg) == reflect.TypeOf(R) && reflect.DeepEqual(msg, reflect.ValueOf(R).Interface())
+	}
+
 	if !isEqual {
 		J1, _ := json.Marshal(msg)
 		dump += ">" + reflect.TypeOf(msg).String() + ":" + string(J1)
@@ -143,7 +153,6 @@ func TestMessageSerialization(t *testing.T) {
 			t.Logf("MsgServerReadBlock passed:\n%s", dump)
 		}
 	}
-
 	block := randomHashboxBlock()
 	if ok, dump := protocolPipeCompare(MsgTypeWriteBlock, &MsgClientWriteBlock{&block}); !ok {
 		t.Errorf("MsgClientWriteBlock did not pass serialization / deserialization test:\n%s", dump)

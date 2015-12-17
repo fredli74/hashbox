@@ -67,10 +67,10 @@ type BufferedFile struct {
 func OpenBufferedFile(path string, buffersize int, flag int, perm os.FileMode) (*BufferedFile, error) {
 	b := &BufferedFile{Path: path, BufferSize: buffersize, Flag: flag, Perm: perm}
 	var err error
-	if b.Reader, err = OpenBufferedReader(b.Path, b.BufferSize, b.Flag); err != nil {
+	if b.Writer, err = OpenBufferedWriter(b.Path, b.BufferSize, b.Flag, b.Perm); err != nil {
 		return nil, err
 	}
-	if b.Writer, err = OpenBufferedWriter(b.Path, b.BufferSize, b.Flag, b.Perm); err != nil {
+	if b.Reader, err = OpenBufferedReader(b.Path, b.BufferSize, b.Flag); err != nil {
 		return nil, err
 	}
 	return b, nil
