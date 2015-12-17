@@ -13,7 +13,7 @@ import (
 	"bitbucket.org/fredli74/hashbox/core"
 	"bitbucket.org/fredli74/lockfile"
 
-	"bitbucket.org/kardianos/osext"
+	"github.com/kardianos/osext"
 	"bytes"
 	"encoding/binary"
 	"errors"
