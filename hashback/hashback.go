@@ -279,7 +279,7 @@ func (session *BackupSession) Connect() *core.Client {
 	// fmt.Printf("%x\n", *session.AccessKey)
 	// fmt.Printf("%x\n", *session.BackupKey)
 
-	Debug("Connecting to", session.ServerString)
+	Debug("Connecting to %s", session.ServerString)
 	conn, err := net.Dial("tcp", session.ServerString)
 	if err != nil {
 		panic(err)
@@ -293,7 +293,7 @@ func (session *BackupSession) Connect() *core.Client {
 }
 func (session *BackupSession) Close() {
 	session.Client.Close()
-	Debug("Disconnected from", session.ServerString)
+	Debug("Disconnected from %s", session.ServerString)
 }
 
 func (session *BackupSession) Log(v ...interface{}) {
@@ -347,16 +347,18 @@ func main() {
 	//	log.Println(http.ListenAndServe("localhost:6060", nil))
 	//}()
 
-	/*	defer func() {
+	defer func() {
 		// Panic error handling
-		if r := recover(); r != nil {
-			fmt.Println(r)
-			if lockFile != nil {
-				lockFile.Unlock()
+		if !DEBUG {
+			if r := recover(); r != nil {
+				fmt.Println(r)
+				if lockFile != nil {
+					lockFile.Unlock()
+				}
+				os.Exit(1)
 			}
-			os.Exit(1)
 		}
-	}()*/
+	}()
 
 	// Figure out where to load/save options
 	{
@@ -382,7 +384,7 @@ func main() {
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
 
 	var queueSizeMB int64
-	cmd.IntOption("queuesize", "", "<MiB", "Change sending queue size", &queueSizeMB, cmd.Hidden|cmd.Preference).OnChange(func() {
+	cmd.IntOption("queuesize", "", "<MiB>", "Change sending queue size", &queueSizeMB, cmd.Hidden|cmd.Preference).OnChange(func() {
 		SendingQueueSize = queueSizeMB * 1024 * 1024
 	})
 
@@ -539,8 +541,8 @@ func main() {
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &DefaultIgnoreList, cmd.Standard|cmd.Preference)
 	cmd.IntOption("interval", "store", "<minutes>", "Keep running backups every <minutes> until interrupted", &intervalBackup, cmd.Standard)
-	cmd.IntOption("retaindays", "store", "<days>", "Cleanup backups older than 24 hours but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard|cmd.Preference)
-	cmd.IntOption("retainweeks", "store", "<weeks>", "Cleanup backups older than 24 hours but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard|cmd.Preference)
+	cmd.IntOption("retaindays", "store", "<days>", "Remove backups older than 24h but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard|cmd.Preference)
+	cmd.IntOption("retainweeks", "store", "<weeks>", "Remove backups older than 24h but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard|cmd.Preference)
 	cmd.Command("store", "<dataset> (<folder> | <file>)...", func() {
 		for _, d := range DefaultIgnoreList {
 			ignore := ignoreEntry{pattern: d, match: core.ExpandEnv(d)} // Expand ignore patterns

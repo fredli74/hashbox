@@ -63,3 +63,8 @@ func addMacIgnore() {
 func init() {
 	addMacIgnore()
 }
+
+func platformSafeFilename(src string) (dst string) {
+	dst = src
+	return dst
+}

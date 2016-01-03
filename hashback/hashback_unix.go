@@ -33,3 +33,8 @@ func addUnixIgnore() {
 func init() {
 	addUnixIgnore()
 }
+
+func platformSafeFilename(src string) (dst string) {
+	dst = src
+	return dst
+}

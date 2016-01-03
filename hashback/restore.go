@@ -65,26 +65,30 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 }
 
 func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
-	localname := filepath.Join(path, string(e.FileName))
-	backup.Log(localname)
+	localname := platformSafeFilename(string(e.FileName))
+	if localname != string(e.FileName) {
+		backup.Important("Platform restricted characters substituted in filename", string(e.FileName))
+	}
+	localpath := filepath.Join(path, localname)
+	backup.Log(localpath)
 
 	if e.FileMode&uint32(os.ModeSymlink) > 0 {
 		switch e.ContentType {
 		case ContentTypeSymLink:
-			if err := os.Symlink(string(e.FileLink), localname); err != nil {
+			if err := os.Symlink(string(e.FileLink), localpath); err != nil {
 				return err
 			}
 		default:
 			panic(errors.New(fmt.Sprintf("Invalid ContentType for a Symlink (%d)", e.ContentType)))
 		}
 	} else if e.FileMode&uint32(os.ModeDir) > 0 {
-		if err := os.MkdirAll(localname, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
+		if err := os.MkdirAll(localpath, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
 			return err
 		}
 
 		switch e.ContentType {
 		case ContentTypeDirectory:
-			if err := backup.restoreDir(e.ContentBlockID, localname); err != nil {
+			if err := backup.restoreDir(e.ContentBlockID, localpath); err != nil {
 				return err
 			}
 		case ContentTypeEmpty:
@@ -97,7 +101,7 @@ func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
 			panic(errors.New(fmt.Sprintf("Invalid ContentType for a file (%d)", e.ContentType)))
 		}
 		err := func() error {
-			fil, err := os.OpenFile(localname, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(e.FileMode) /*&os.ModePerm*/)
+			fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(e.FileMode) /*&os.ModePerm*/)
 			if err != nil {
 				return err
 			}
@@ -128,7 +132,7 @@ func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.Chtimes(localname, time.Now(), time.Unix(0, e.ModTime)); err != nil {
+		if err := os.Chtimes(localpath, time.Now(), time.Unix(0, e.ModTime)); err != nil {
 			return err
 		}
 		backup.Files++
@@ -267,7 +271,7 @@ func (backup *BackupSession) diffFileData(f *os.File, blockID core.Byte128, Decr
 }
 
 func (backup *BackupSession) diffEntry(e *FileEntry, path string) (same bool, err error) {
-	localname := filepath.Join(path, string(e.FileName))
+	localname := filepath.Join(path, platformSafeFilename(string(e.FileName)))
 	localinfo, err := os.Lstat(localname)
 	if os.IsNotExist(err) {
 		return false, errors.New("local path does not exist")
@@ -355,6 +359,7 @@ func (backup *BackupSession) diffEntry(e *FileEntry, path string) (same bool, er
 	return same, err
 }
 
+// Todo: diffDir does not work with platform filename substitution
 func (backup *BackupSession) diffDir(blockID core.Byte128, path string) {
 	var dir DirectoryBlock
 
