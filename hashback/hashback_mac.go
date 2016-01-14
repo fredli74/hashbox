@@ -7,11 +7,6 @@
 
 package main
 
-// import (
-// 	"bufio"
-// 	"os/exec"
-// )
-
 func addMacIgnore() {
 	platformList := []string{
 		"$TMPDIR",
@@ -62,9 +57,4 @@ func addMacIgnore() {
 
 func init() {
 	addMacIgnore()
-}
-
-func platformSafeFilename(src string) (dst string) {
-	dst = src
-	return dst
 }
