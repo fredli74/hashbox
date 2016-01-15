@@ -308,7 +308,9 @@ func generateDBFile(accountNameH core.Byte128, datasetName core.String) {
 	// Go through transaction history and populate the stateMap
 	func() {
 		defer func() {
-			recover()
+			if r := recover(); r != nil && r != io.EOF {
+				panic(r) // Any other error is not normal and should panic
+			}
 			return
 		}()
 
@@ -317,7 +319,7 @@ func generateDBFile(accountNameH core.Byte128, datasetName core.String) {
 			var tx dbTx
 			tx.Unserialize(file)
 			if tx.timestamp < pointInHistory {
-				panic(errors.New(filename + " is corrupt, timestamp check failed"))
+				panic(errors.New(fmt.Sprintf("%s is corrupt, timestamp check failed (%x < %x)", filename, tx.timestamp, pointInHistory)))
 			}
 			pointInHistory = tx.timestamp
 			switch tx.txType {
