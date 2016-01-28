@@ -70,7 +70,7 @@ func NewClient(conn io.ReadWriteCloser, account string, accesskey Byte128) *Clie
 
 		QueueMax: DEFAULT_QUEUE_SIZE,
 
-		dispatchChannel: make(chan *messageDispatch, 80000),
+		dispatchChannel: make(chan *messageDispatch, 1024),
 		storeChannel:    make(chan *messageDispatch, 1),
 	}
 	client.wg.Add(1)
@@ -347,11 +347,11 @@ func (c *Client) StoreData(dataType byte, data bytearray.ByteArray, links []Byte
 
 // StoreBlock is blocking if the blockbuffer is full
 func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
-	c.dispatchMutex.Lock()
-	defer c.dispatchMutex.Unlock()
 	// Add the block to the io queue
 	for full := true; full; { //
+		c.dispatchMutex.Lock()
 		if c.closing {
+			c.dispatchMutex.Unlock()
 			panic(errors.New("Connection closed"))
 		} else if c.blockqueuesize+bytearray.ChunkQuantize(int64(block.UncompressedSize))*2 < c.QueueMax {
 			if c.blockbuffer[block.BlockID] == nil {
@@ -359,15 +359,15 @@ func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 				c.blockqueuesize += bytearray.ChunkQuantize(int64(block.UncompressedSize))
 			} else {
 				block.Release()
+				c.dispatchMutex.Unlock()
 				return block.BlockID
 			}
 			full = false
 		}
+		c.dispatchMutex.Unlock()
 
 		if full {
-			c.dispatchMutex.Unlock()
 			time.Sleep(25 * time.Millisecond)
-			c.dispatchMutex.Lock()
 		}
 	}
 
