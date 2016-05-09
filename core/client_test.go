@@ -14,6 +14,7 @@ import (
 	"os"
 	"testing"
 	"time"
+	"net"
 )
 
 type FauxServer struct {
@@ -28,6 +29,11 @@ func (c FauxServer) Close() error {
 }
 func (c FauxServer) Read(data []byte) (n int, err error)  { return c.ServerReader.Read(data) }
 func (c FauxServer) Write(data []byte) (n int, err error) { return c.ServerWriter.Write(data) }
+func (c FauxServer) LocalAddr() net.Addr { return nil }
+func (c FauxServer) RemoteAddr() net.Addr { return nil }
+func (c FauxServer) SetDeadline(t time.Time) error { return nil }
+func (c FauxServer) SetReadDeadline(t time.Time) error { return nil }
+func (c FauxServer) SetWriteDeadline(t time.Time) error { return nil }
 
 func TestClientInit(t *testing.T) {
 	hdump := hex.Dumper(os.Stdout)
