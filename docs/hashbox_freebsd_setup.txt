@@ -1,0 +1,53 @@
+sh
+PS1="\H:\w \$ "
+cd
+#
+# Setup on a FreeNAS 9.3 box jail
+# 
+# This guide assumes that you have created a FreeBSD jail where the ZFS Dataset where hashbox
+# data is to be stored has been mounted under /mnt/hashboxData. Index and metafiles will be saved
+# on the local filesystem of the jail which I typically put on fast SSD storage for performance reasons.
+#
+# Remember to add "allow.raw_sockets=true" to Sysctls under the jails advanced mode settings.
+#
+# 1. Create folders
+mkdir /root/hashbox /root/hashbox/index
+ln -sh /mnt/hashboxData/ /root/hashbox/data
+mkdir /root/hashbox/data/account
+
+# 2. Create an upgrade script
+cat >/root/hashbox/update-hashbox.sh <<EOL
+#!/bin/sh
+set -x
+platform=freebsd-amd64
+version=0.6
+url="https://bitbucket.org/fredli74/hashbox/downloads/hashbox-\$platform-\$version.zip"
+echo Updating hashbox-\$platform
+pkill -f "hashbox-\$platform"
+curl -k -Lo temp.zip "\$url"
+unzip -o -d /root/hashbox/ ./temp.zip
+rm ./temp.zip
+chmod +x /root/hashbox/hashbox-\$platform
+/root/hashbox/hashbox-\$platform -version
+echo Please start the hashbox server
+EOL
+chmod +x /root/hashbox/update-hashbox.sh
+/root/hashbox/update-hashbox.sh
+
+# 3. Create start script
+cat >/etc/rc.local <<EOL
+/root/hashbox/hashbox-freebsd-amd64 -port=7411 >/root/hashbox/hashbox.log 2>&1  &
+EOL
+
+# 4. Add users
+#
+# /root/hashbox/hashbox-freebsd-amd64 adduser <username> <password>
+#
+
+# 5. Restart
+#
+shutdown -r now
+
+# 6. Monitor the server
+#
+tail -F /root/hashbox/hashbox.log

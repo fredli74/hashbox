@@ -27,6 +27,14 @@ type messageDispatch struct {
 }
 
 type Client struct {
+	// variables used in atomic operations (declared first to make sure they are 32 / 64 bit aligned)
+	msgNum          	uint32	// protocol message number, 32-bit because there are no 16-bit atomic functions
+	sendworkers 		int32	// number of active send workers
+	transmittedBlocks   int32	// number of transmitted blocks
+	skippedBlocks       int32	// number of skipped blocks
+	WriteData           int64 	// total data written
+	WriteDataCompressed int64 	// total compressed data written
+
 	Session
 	AccessKey Byte128 // = hmac^20000( AccountName "*ACCESS*KEY*PAD*", md5( password ))
 
@@ -40,19 +48,12 @@ type Client struct {
 
 	// mutex protected
 	dispatchMutex     sync.Mutex
-	msgNum            uint32 // 32-bit because there are no 16-bit atomic functions
 	closing           bool
 	blockbuffer       map[Byte128]*HashboxBlock
 	blockqueuesize    int64 // queue size in bytes
-	transmittedBlocks int32
-	skippedBlocks     int32
 
 	sendqueue   []*sendQueueEntry
-	sendworkers int32
-
-	WriteData           int64
-	WriteDataCompressed int64
-
+	
 	handlerSignal chan error
 
 	dispatchChannel chan *messageDispatch
@@ -110,8 +111,8 @@ func (c *Client) Close() {
 }
 
 type sendQueueEntry struct {
+	state int32		// (atomic alignment) 0 - new, 1 - compressing, 2 - compressed, 3 - sending, 4 - sent
 	block *HashboxBlock
-	state int32 // 0 - new, 1 - compressing, 2 - compressed, 3 - sending, 4 - sent
 }
 
 func (c *Client) sendQueue(what Byte128) {
@@ -119,7 +120,7 @@ func (c *Client) sendQueue(what Byte128) {
 	defer c.dispatchMutex.Unlock()
 	block := c.blockbuffer[what]
 	if block != nil {
-		c.sendqueue = append(c.sendqueue, &sendQueueEntry{block, 0})
+		c.sendqueue = append(c.sendqueue, &sendQueueEntry{0, block})
 		//		fmt.Printf("+q=%d;", len(c.sendqueue))
 
 		if c.sendworkers < int32(runtime.NumCPU()) {

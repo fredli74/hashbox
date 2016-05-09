@@ -12,6 +12,7 @@ echo $GOARM
 cd ../hashback
 GOOS=darwin go build -ldflags "-X main.Version=$revision" -o "$GOPATH/bin/hashbox/hashback"
 GOOS=windows go build -ldflags "-X main.Version=$revision" -o "$GOPATH/bin/hashbox/hashback.exe"
+GOOS=windows GOARCH=386 go build -ldflags "-X main.Version=$revision" -o "$GOPATH/bin/hashbox/hashback-x86.exe"
 
 #-ldflags "-s"  for "release" version
 
@@ -23,3 +24,4 @@ zip -D "hashbox-freebsd-amd64-$version.zip" "hashbox-freebsd-amd64"
 zip -D "hashbox-linux-armv7l-$version.zip"  "hashbox-linux-armv7l"
 zip -D "hashback-mac-amd64-$version.zip"    "hashback"
 zip -D "hashback-win-amd64-$version.zip"    "hashback.exe"
+zip -D "hashback-win-x86-$version.zip"      "hashback-x86.exe"
