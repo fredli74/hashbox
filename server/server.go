@@ -263,17 +263,12 @@ func main() {
 
 	var serverPort int64 = int64(DEFAULT_SERVER_IP_PORT)
 	datDirectory = filepath.Join(exeRoot, "data")
-	idxDirectory = datDirectory
+	idxDirectory = filepath.Join(exeRoot, "index")
 
 	cmd.Title = fmt.Sprintf("Hashbox Server %s", Version)
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
-	cmd.StringOption("data", "", "<path>", "Full path to data files", &datDirectory, cmd.Standard).OnChange(func() {
-		idxDirectory = datDirectory
-	})
-	idxSpecial := ""
-	cmd.StringOption("idx", "", "<path>", "Full path to idx files (default same as data path)", &idxSpecial, cmd.Standard).OnChange(func() {
-		idxDirectory = idxSpecial
-	})
+	cmd.StringOption("data", "", "<path>", "Full path to dat files", &datDirectory, cmd.Standard)
+	cmd.StringOption("index", "", "<path>", "Full path to idx and meta files", &idxDirectory, cmd.Standard)
 	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
 
 	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers

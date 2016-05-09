@@ -38,9 +38,9 @@ Hashbox is a cross-platform derivate of a proprietary backup system (called BUP)
 
 **Start the server**
 
-`./hashbox-freebsd-amd64 [-port=<port>] [-data=<path>] [-idx=<path>]`
+`./hashbox-freebsd-amd64 [-port=<port>] [-data=<path>] [-index=<path>]`
 
-Optional arguments data and idx will tell the server where to keep the storage files. Metadata and index will be saved under the idx path (if specified, otherwise data). If possible you should put these files on fast storage such as SSD as they are used for every single access.
+Optional arguments data and index will tell the server where to keep all data and index/metadata files. If possible the index path should be put on fast storage such as SSD as they are used for every single access. These files can also be recreated from the data files by running the -repair command.
 
 
 **Run a garbage collect (GC)**
