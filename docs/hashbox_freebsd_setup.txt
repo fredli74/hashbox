@@ -44,9 +44,8 @@ EOL
 # /root/hashbox/hashbox-freebsd-amd64 adduser <username> <password>
 #
 
-# 5. Restart
+# 5. Restart the jail
 #
-shutdown -r now
 
 # 6. Monitor the server
 #
