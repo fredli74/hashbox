@@ -11,7 +11,7 @@ import (
 
 	"errors"
 	"fmt"
-	"io"
+	"net"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -19,6 +19,7 @@ import (
 )
 
 const DEFAULT_QUEUE_SIZE int64 = 32 * 1024 * 1024 // 32 MiB max memory
+const DEFAULT_CONNECTION_TIMEOUT time.Duration = 5 * time.Minute
 
 type messageDispatch struct {
 	msg           *ProtocolMessage
@@ -29,7 +30,7 @@ type Client struct {
 	Session
 	AccessKey Byte128 // = hmac^20000( AccountName "*ACCESS*KEY*PAD*", md5( password ))
 
-	conn  io.ReadWriteCloser
+	conn  *TimeoutConn
 	wg    sync.WaitGroup
 	Paint bool
 
@@ -58,10 +59,10 @@ type Client struct {
 	storeChannel    chan *messageDispatch
 }
 
-func NewClient(conn io.ReadWriteCloser, account string, accesskey Byte128) *Client {
+func NewClient(conn net.Conn, account string, accesskey Byte128) *Client {
 
 	client := &Client{
-		conn:      conn,
+		conn:      NewTimeoutConn(conn, DEFAULT_CONNECTION_TIMEOUT),
 		AccessKey: accesskey,
 		Session: Session{
 			AccountNameH: Hash([]byte(account)),

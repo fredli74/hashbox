@@ -511,6 +511,7 @@ var entryEOD = &FileEntry{} // end of dir marker
 
 // Download worker is a separate goprocess to let it download the last backup structure in the background
 func (r *referenceEngine) load(rootBlockID core.Byte128) {
+	Debug("Opening local cache %s", r.cacheName(rootBlockID))
 	// Check if we have last backup cached on disk
 	cacheLast, _ := os.Open(r.cacheName(rootBlockID))
 	if cacheLast != nil {
@@ -521,11 +522,13 @@ func (r *referenceEngine) load(rootBlockID core.Byte128) {
 		reader := bufio.NewReader(cacheLast)
 		for offset := int64(0); offset < cacheSize; {
 			var entry FileEntry
+			Debug("Read cache entry at %x", offset)
 			offset += int64(entry.Unserialize(reader))
 			r.queue = append(r.queue, &entry)
 		}
 		r.loadpoint = len(r.queue)
 	} else {
+		Debug("Downloading block %x to local cache", rootBlockID)
 		r.downloadReference(rootBlockID)
 		go func() {
 			for {

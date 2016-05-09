@@ -6,9 +6,10 @@
 package main
 
 import (
-	//"log"
-	//"net/http"
-	//_ "net/http/pprof"
+	"log"
+	"net/http"
+	_ "net/http/pprof"
+	"runtime"
 
 	"bitbucket.org/fredli74/bytearray"
 	cmd "bitbucket.org/fredli74/cmdparser"
@@ -152,6 +153,7 @@ func (e *FileEntry) Unserialize(r io.Reader) (size int) {
 		panic(errors.New("Corrupted FileEntry!"))
 	}
 	size += e.FileName.Unserialize(r)
+	Debug("Reading file entry with filename: %s", e.FileName)
 	size += core.ReadOrPanic(r, &e.FileSize)
 	size += core.ReadOrPanic(r, &e.FileMode)
 	size += core.ReadOrPanic(r, &e.ModTime)
@@ -342,10 +344,10 @@ func main() {
 
 	var lockFile *lockfile.LockFile
 
-	//runtime.SetBlockProfileRate(1000)
-	//go func() {
-	//	log.Println(http.ListenAndServe("localhost:6060", nil))
-	//}()
+	runtime.SetBlockProfileRate(1000)
+	go func() {
+		log.Println(http.ListenAndServe(":6060", nil))
+	}()
 
 	defer func() {
 		// Panic error handling

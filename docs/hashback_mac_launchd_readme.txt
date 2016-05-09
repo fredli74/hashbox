@@ -1,7 +1,7 @@
 # 1. Download the latest hashback and put it in your local bin folder
 #
-curl -LO https://bitbucket.org/fredli74/hashbox/downloads/hashback-mac-amd64-0.5.zip
-sudo unzip -o ./hashback-mac-amd64-0.5 -d /usr/local/bin/
+curl -LO https://bitbucket.org/fredli74/hashbox/downloads/hashback-mac-amd64-0.6.zip
+sudo unzip -o ./hashback-mac-amd64-0.6 -d /usr/local/bin/
 
 # 2. Save local settings in an options file
 #  - Set user, password and server ip:port
