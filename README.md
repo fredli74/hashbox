@@ -45,9 +45,9 @@ Optional arguments data and index will tell the server where to keep all data an
 
 **Run a garbage collect (GC)**
 
-`./hashbox-freebsd-amd64 gc [-index]`
+`./hashbox-freebsd-amd64 gc [-compact]`
 
-Optional argument index will just run the mark and sweep on the index file. After the sweep has completed, a list of how much unused data (dead data) there is in each storage file will be displayed. Running without the index option will do a full compact on all datafiles freeing up unused space.
+Optional argument compact will run the compact phase on data and meta files freeing up unused space. After the sweep has completed, a list of how much unused data (dead data) there is in each storage file will be displayed. Running without the compact option will only do mark and sweep on the index files.
 
 
 **Run a storage file check**
@@ -127,6 +127,7 @@ If the last backup id of a dataset is removed, the dataset will no longer be lis
 
 ### Roadmap (Todo in somewhat prio order) ###
 
+* Client should have a resume option on store by default (use local cache to figure out what has been backed up)
 * Server low storage space threshold, return error on store before hitting 0 free space
 * Client platform specific file information (User/Group on linux, system/hidden on Windows for example). Client should store a root block with platform information
 * Server admin interface (API?) to adduser and change password so it can be done online

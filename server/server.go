@@ -420,8 +420,8 @@ func main() {
 		}
 	})
 
-	var indexOnly bool
-	cmd.BoolOption("index", "gc", "Mark and sweep index only", &indexOnly, cmd.Standard)
+	var doCompact bool
+	cmd.BoolOption("compact", "gc", "Compact data files to free space", &doCompact, cmd.Standard)
 	cmd.Command("gc", "", func() {
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
@@ -436,7 +436,7 @@ func main() {
 		storageHandler.SweepIndexes(true)
 		fmt.Printf("Mark and sweep duration %.1f minutes\n", time.Since(start).Minutes())
 		storageHandler.ShowStorageDeadSpace()
-		if !indexOnly {
+		if doCompact {
 			storageHandler.CompactAll(storageFileTypeData)
 			storageHandler.CompactAll(storageFileTypeMeta)
 		}
