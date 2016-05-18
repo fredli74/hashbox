@@ -7,6 +7,10 @@
 
 package main
 
+import (
+	"os"
+)
+
 func addUnixIgnore() {
 	platformList := []string{
 		//	"/bin/",  	// User Binaries
@@ -37,4 +41,8 @@ func init() {
 func platformSafeFilename(src string) (dst string) {
 	dst = src
 	return dst
+}
+
+func userHomeFolder() string {
+	return os.Getenv("HOME");
 }

@@ -27,7 +27,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -365,12 +364,11 @@ func main() {
 	// Figure out where to load/save options
 	{
 		LocalStoragePath = filepath.Join(".", ".hashback")
-		usr, err := user.Current()
+		home, err := filepath.Abs(userHomeFolder())
 		if err == nil {
-			f := usr.HomeDir
-			s, err := os.Stat(f)
+			s, err := os.Stat(home)
 			if err == nil && s.IsDir() {
-				LocalStoragePath = filepath.Join(f, ".hashback")
+				LocalStoragePath = filepath.Join(home, ".hashback")
 			}
 		}
 		err = os.MkdirAll(filepath.Dir(LocalStoragePath), 0700)
