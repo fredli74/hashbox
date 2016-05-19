@@ -1,6 +1,6 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015
+//	| # | |    Copyright 2015-2016
 //	+---+´
 
 // This is a temporary hack to allow the server exe to create the hashback accounts

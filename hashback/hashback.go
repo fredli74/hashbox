@@ -1,6 +1,6 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015
+//	| # | |    Copyright 2015-2016
 //	+---+´
 
 package main
@@ -11,10 +11,10 @@ import (
 	_ "net/http/pprof"
 	"runtime"
 
-	"bitbucket.org/fredli74/bytearray"
-	cmd "bitbucket.org/fredli74/cmdparser"
-	"bitbucket.org/fredli74/hashbox/core"
-	"bitbucket.org/fredli74/lockfile"
+	"github.com/fredli74/bytearray"
+	cmd "github.com/fredli74/cmdparser"
+	"github.com/fredli74/hashbox/core"
+	"github.com/fredli74/lockfile"
 
 	"bytes"
 	"crypto/aes"
