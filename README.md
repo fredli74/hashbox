@@ -1,19 +1,21 @@
 ```
-	 ,+---+
-	+---+´|    HASHBOX SOURCE
-	| # | |    Copyright 2015-2016
-	+---+´
+	 ,+---+    
+	+---+´|    HASHBOX / HASHBACK
+	| # | |    Copyright 2015-2016 Fredrik Lidström
+	+---+´     
 ```
 
 # Hashbox #
 
 [Download binaries](https://github.com/fredli74/hashbox/releases/latest) *(only binaries for platforms that I personally test and run)*
 
-**DISCLAIMER! This is an early Alpha version and it is still missing some features
-**
+**DISCLAIMER! This is beta version it should no be used for important production**
+
+[![Build Status](https://semaphoreci.com/api/v1/fredli74/hashbox/branches/master/badge.svg)](https://semaphoreci.com/fredli74/hashbox)
 
 Hashbox is a cross-platform derivate of a proprietary backup system (called BUP) that Magnus Lidström invented back around 2001.
 
+## Key concepts ##
 * General purpose data block storage system (Hashbox)
 * Efficient backup system with full data de-duplication (Hashback)
 * Cross-platform GO open source with minimal external dependencies
@@ -125,8 +127,8 @@ If `.` is used as backup id then the last backup will be listed (or restored)
 If the last backup id of a dataset is removed, the dataset will no longer be listed
 
 
-### Roadmap (Todo in somewhat prio order) ###
-
+### Roadmap ###
+Things that should be implemented or considered
 * Client should have a resume option on store by default (use local cache to figure out what has been backed up)
 * Server low storage space threshold, return error on store before hitting 0 free space
 * Client platform specific file information (User/Group on linux, system/hidden on Windows for example). Client should store a root block with platform information
@@ -136,5 +138,5 @@ If the last backup id of a dataset is removed, the dataset will no longer be lis
 * Server GC compact phase online through the storage engine
 * Server mirroring
 * Client GUI
-* Client data encryption
+* Client data encryption (system design allows it)
 * Server quota calculations and restrictions (combine it with GC index mark phase?)
