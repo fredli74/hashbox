@@ -15,12 +15,12 @@
 
 Hashbox is a cross-platform derivate of a proprietary backup system (called BUP) that Magnus Lidström invented back around 2001.
 
-## Key concepts ##
+### Design Goals
 * General purpose data block storage system (Hashbox)
 * Efficient backup system with full data de-duplication (Hashback)
-* Cross-platform GO open source with minimal external dependencies
+* Cross-platform GO open source with few dependencies on external libraries
 * Single binaries with no runtime dependencies
-* Permissive MIT License (see LICENSE file)
+* Permissive MIT License
 
 ## Hashbox Server ##
 * Hashbox blocks are variable in length
