@@ -20,6 +20,7 @@ Hashbox is a cross-platform derivate of a proprietary backup system (called BUP)
 * Efficient backup system with full data de-duplication (Hashback)
 * Cross-platform GO open source with minimal external dependencies
 * Single binaries with no runtime dependencies
+* Permissive MIT License (see LICENSE file)
 
 ## Hashbox Server ##
 * Hashbox blocks are variable in length
