@@ -1,18 +1,36 @@
-# 1. Download the latest hashback and put it in your local bin folder
-#
-curl -LO https://bitbucket.org/fredli74/hashbox/downloads/hashback-mac-amd64-0.6.zip
-sudo unzip -o ./hashback-mac-amd64-0.6 -d /usr/local/bin/
+platform=mac-amd64
 
-# 2. Save local settings in an options file
+# 1. Create upgrade script
+mkdir -p ~/.hashback
+cat >~/.hashback/update-hashback.sh <<EOL
+#!/bin/sh
+set -x
+base=https://github.com/fredli74/hashbox/releases
+latest=\$(curl -Ls -o /dev/null -w %{url_effective} \$base/latest)
+version=\${latest##*/}
+url=\$base/download/\$version/hashback-$platform-\$version.zip
+echo Updating hashback-$platform to $version
+curl -k -sS -f -L -o temp.zip "\$url" || { echo ERROR downloading latest hashback version 1>&2 ; exit 1 ; }
+sudo unzip -o -d  /usr/local/bin/ ./temp.zip
+rm ./temp.zip
+chmod +x /usr/local/bin/hashback
+/usr/local/bin/hashback -version
+EOL
+chmod +x ~/.hashback/update-hashback.sh
+
+# 2. Download client
+~/.hashback/update-hashback.sh
+
+# 3. Save local settings in an options file
 #  - Set user, password and server ip:port
 # hashback -user=user -password=password -server=ip:port -ignore=".dropbox.cache/" -saveoptions
 
-# 3. Remove old plist schedule (if upgrading)
+# 4. Remove old plist schedule (if upgrading)
 launchctl stop se.elysian.hashback.plist
 launchctl unload ~/Library/LaunchAgents/se.elysian.hashback.plist
 launchctl remove se.elysian.hashback.plist
 
-# 4. Create a plist schedule
+# 5. Create a plist schedule
 #  - Set RunAtLoad to true if you do not care what time of day the backup is started
 #  - Set StartCalendarInterval to an hour or minute per day the backup should run
 #  - Set or remove -interval, default is once every 24 hours
@@ -70,16 +88,16 @@ cat >~/Library/LaunchAgents/se.elysian.hashback.plist <<EOL
 EOL
 
 
-# 5. Load the schedule (or reboot)
+# 6. Load the schedule (or reboot)
 #
 launchctl load ~/Library/LaunchAgents/se.elysian.hashback.plist
 
 
-# 6. Manual start
+# 7. Manual start
 #
 launchctl start se.elysian.hashback.plist
 
 
-# 7. Monitor the backup
+# 8. Monitor the backup
 #
 tail -F ~/Library/Logs/hashback.log
