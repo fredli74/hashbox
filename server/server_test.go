@@ -6,8 +6,8 @@
 package main
 
 import (
-	"bitbucket.org/fredli74/bytearray"
-	"bitbucket.org/fredli74/hashbox/core"
+	"github.com/fredli74/bytearray"
+	"github.com/fredli74/hashbox/core"
 
 	"bytes"
 	"crypto/md5"

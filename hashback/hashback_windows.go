@@ -8,8 +8,8 @@
 package main
 
 import (
-	"strings"
 	"os"
+	"strings"
 )
 
 func addWindowsIgnore() {
@@ -56,8 +56,8 @@ func platformSafeFilename(src string) (dst string) {
 }
 
 func userHomeFolder() string {
-	drive := os.Getenv("HOMEDRIVE");
-	path := os.Getenv("HOMEPATH");
+	drive := os.Getenv("HOMEDRIVE")
+	path := os.Getenv("HOMEPATH")
 	if drive == "" || path == "" {
 		return os.Getenv("USERPROFILE")
 	} else {

@@ -7,7 +7,7 @@
 
 # Hashbox #
 
-[Download binaries](https://bitbucket.org/fredli74/hashbox/downloads) *(only binaries for platforms that I personally test and run)*
+[Download binaries](https://github.com/fredli74/hashbox/releases/latest) *(only binaries for platforms that I personally test and run)*
 
 **DISCLAIMER! This is an early Alpha version and it is still missing some features
 **

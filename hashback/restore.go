@@ -6,7 +6,7 @@
 package main
 
 import (
-	"bitbucket.org/fredli74/hashbox/core"
+	"github.com/fredli74/hashbox/core"
 
 	"bytes"
 	_ "crypto/aes"

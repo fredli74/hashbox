@@ -44,5 +44,5 @@ func platformSafeFilename(src string) (dst string) {
 }
 
 func userHomeFolder() string {
-	return os.Getenv("HOME");
+	return os.Getenv("HOME")
 }

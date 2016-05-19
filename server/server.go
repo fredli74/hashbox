@@ -8,16 +8,16 @@ package main
 import (
 	//"github.com/davecheney/profile"
 
-	"bitbucket.org/fredli74/bytearray"
-	cmd "bitbucket.org/fredli74/cmdparser"
-	"bitbucket.org/fredli74/hashbox/core"
-	"bitbucket.org/fredli74/lockfile"
+	"github.com/fredli74/bytearray"
+	cmd "github.com/fredli74/cmdparser"
+	"github.com/fredli74/hashbox/core"
+	"github.com/fredli74/lockfile"
 
-	"github.com/kardianos/osext"
 	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/kardianos/osext"
 	"math/rand"
 	"net"
 	"os"

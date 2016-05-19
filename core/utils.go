@@ -7,7 +7,7 @@
 package core
 
 import (
-	"bitbucket.org/fredli74/bytearray"
+	"github.com/fredli74/bytearray"
 
 	"encoding/binary"
 	"fmt"

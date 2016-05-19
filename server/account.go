@@ -6,11 +6,11 @@
 package main
 
 import (
-	"bitbucket.org/fredli74/hashbox/core"
 	"crypto/md5"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/fredli74/hashbox/core"
 	"io"
 	"os"
 	"path/filepath"
