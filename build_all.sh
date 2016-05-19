@@ -1,7 +1,7 @@
 #!/bin/sh
 set -x
-version=`git describe HEAD --always --abbrev=0`
-revision=`git describe HEAD --always`
+version=`git describe HEAD --tags --always --abbrev=0`
+revision=`git describe HEAD --tags --always`
 
 rm "$GOPATH/bin/hashbox/"*.zip
 rm "$GOPATH/bin/hashbox/"*
