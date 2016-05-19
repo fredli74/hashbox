@@ -10,6 +10,9 @@ cd
 #
 # Remember to add "allow.raw_sockets=true" to Sysctls under the jails advanced mode settings.
 #
+
+platform=freebsd-amd64
+
 # 1. Create folders
 mkdir /root/hashbox /root/hashbox/index
 ln -sh /mnt/hashboxData/ /root/hashbox/data
@@ -19,16 +22,17 @@ mkdir /root/hashbox/data/account
 cat >/root/hashbox/update-hashbox.sh <<EOL
 #!/bin/sh
 set -x
-platform=freebsd-amd64
-version=0.6
-url="https://bitbucket.org/fredli74/hashbox/downloads/hashbox-\$platform-\$version.zip"
-echo Updating hashbox-\$platform
-pkill -f "hashbox-\$platform"
-curl -k -Lo temp.zip "\$url"
+base=https://github.com/fredli74/hashbox/releases
+latest=\$(curl -Ls -o /dev/null -w %{url_effective} \$base/latest)
+version=\${latest##*/}
+url=\$base/download/\$version/hashbox-$platform-\$version.zip
+echo Updating hashbox-$platform to \$version
+pkill -f "hashbox-$platform"
+curl -k -sS -f -L -o temp.zip "\$url" || { echo ERROR downloading latest hashbox version 1>&2 ; exit 1 ; }
 unzip -o -d /root/hashbox/ ./temp.zip
 rm ./temp.zip
-chmod +x /root/hashbox/hashbox-\$platform
-/root/hashbox/hashbox-\$platform -version
+chmod +x /root/hashbox/hashbox-$platform
+/root/hashbox/hashbox-$platform -version
 echo Please start the hashbox server
 EOL
 chmod +x /root/hashbox/update-hashbox.sh
@@ -36,12 +40,12 @@ chmod +x /root/hashbox/update-hashbox.sh
 
 # 3. Create start script
 cat >/etc/rc.local <<EOL
-/root/hashbox/hashbox-freebsd-amd64 -port=7411 >/root/hashbox/hashbox.log 2>&1  &
+/root/hashbox/hashbox-$platform -port=7411 >/root/hashbox/hashbox.log 2>&1  &
 EOL
 
 # 4. Add users
 #
-# /root/hashbox/hashbox-freebsd-amd64 adduser <username> <password>
+# /root/hashbox/hashbox-$platform adduser <username> <password>
 #
 
 # 5. Restart the jail
