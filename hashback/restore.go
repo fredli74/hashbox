@@ -25,7 +25,7 @@ func (session *BackupSession) PrintRestoreProgress() {
 	if session.WriteData > 0 {
 		compression = 100.0 * (float64(session.WriteData) - float64(session.ReadData)) / float64(session.WriteData)
 	}
-	fmt.Printf(">>> %.1f min, read: %s (%.0f%% compr), write: %s, %d folders, %d files\n",
+	fmt.Printf(">>> %.1f min, read: %s (%.0f%% compr), written: %s, %d folders, %d files\n",
 		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
 
 	//fmt.Println(core.MemoryStats())
