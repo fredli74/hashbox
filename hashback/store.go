@@ -249,6 +249,8 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeSymlink) > 0 {
 		entry.ContentType = ContentTypeSymLink
+		entry.FileSize = 0
+
 		sym, err := os.Readlink(path)
 		if err != nil {
 			return nil, err
@@ -268,6 +270,8 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 
 	} else if entry.FileMode&uint32(os.ModeDir) > 0 {
 		entry.ContentType = ContentTypeDirectory
+		entry.FileSize = 0
+
 		reservation := session.reference.reserveReference(entry) // We do this because directories needs to be written before files, but we also need contentblockID to be correct
 		defer session.reference.storeReferenceDir(entry, reservation)
 
@@ -288,6 +292,11 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 
 			session.Client.Paint(" ")
 			session.UnchangedFiles++
+
+			if !session.reference.loaded { // We are using unique as a diff-size, so first backup (with no reference) has full diff-size
+				// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server?
+				session.State.UniqueSize += entry.FileSize
+			}
 		} else {
 			if entry.FileSize > 0 {
 				session.LogVerbose(fmt.Sprintf("%s", path))
@@ -297,10 +306,8 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 					}
 					return nil, err
 				}
-				if session.reference.loaded { // We are using unique as a diff-size, so first backup (with no reference) has no diff-size
-					// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server?
-					session.State.UniqueSize += entry.FileSize
-				}
+				// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server?
+				session.State.UniqueSize += entry.FileSize
 			}
 		}
 		session.Files++
