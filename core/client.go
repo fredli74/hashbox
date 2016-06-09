@@ -28,32 +28,32 @@ type messageDispatch struct {
 
 type Client struct {
 	// variables used in atomic operations (declared first to make sure they are 32 / 64 bit aligned)
-	msgNum          	uint32	// protocol message number, 32-bit because there are no 16-bit atomic functions
-	sendworkers 		int32	// number of active send workers
-	transmittedBlocks   int32	// number of transmitted blocks
-	skippedBlocks       int32	// number of skipped blocks
-	WriteData           int64 	// total data written
-	WriteDataCompressed int64 	// total compressed data written
+	msgNum              uint32 // protocol message number, 32-bit because there are no 16-bit atomic functions
+	sendworkers         int32  // number of active send workers
+	transmittedBlocks   int32  // number of transmitted blocks
+	skippedBlocks       int32  // number of skipped blocks
+	WriteData           int64  // total data written
+	WriteDataCompressed int64  // total compressed data written
 
 	Session
 	AccessKey Byte128 // = hmac^20000( AccountName "*ACCESS*KEY*PAD*", md5( password ))
 
-	conn  *TimeoutConn
-	wg    sync.WaitGroup
-	Paint bool
+	conn    *TimeoutConn
+	wg      sync.WaitGroup
+	DoPaint bool
 
 	QueueMax int64 // max size of the outgoing block queue (in bytes)
 
 	sendMutex sync.Mutex // protects from two threads sending at the same time
 
 	// mutex protected
-	dispatchMutex     sync.Mutex
-	closing           bool
-	blockbuffer       map[Byte128]*HashboxBlock
-	blockqueuesize    int64 // queue size in bytes
+	dispatchMutex  sync.Mutex
+	closing        bool
+	blockbuffer    map[Byte128]*HashboxBlock
+	blockqueuesize int64 // queue size in bytes
 
-	sendqueue   []*sendQueueEntry
-	
+	sendqueue []*sendQueueEntry
+
 	handlerSignal chan error
 
 	dispatchChannel chan *messageDispatch
@@ -95,6 +95,15 @@ func NewClient(conn net.Conn, account string, accesskey Byte128) *Client {
 	return client
 }
 
+var lastPaint string
+
+func (c *Client) Paint(what string) {
+	if c.DoPaint && (what != "\n" || what != lastPaint) {
+		fmt.Print(what)
+		lastPaint = what
+	}
+}
+
 func (c *Client) Close() {
 	c.dispatchAndWait(MsgTypeGoodbye, nil)
 
@@ -111,7 +120,7 @@ func (c *Client) Close() {
 }
 
 type sendQueueEntry struct {
-	state int32		// (atomic alignment) 0 - new, 1 - compressing, 2 - compressed, 3 - sending, 4 - sent
+	state int32 // (atomic alignment) 0 - new, 1 - compressing, 2 - compressed, 3 - sending, 4 - sent
 	block *HashboxBlock
 }
 
@@ -169,9 +178,7 @@ func (c *Client) sendQueue(what Byte128) {
 							atomic.AddInt64(&c.WriteData, int64(workItem.block.UncompressedSize))
 							atomic.AddInt64(&c.WriteDataCompressed, int64(workItem.block.CompressedSize))
 							atomic.AddInt32(&c.transmittedBlocks, 1) //	c.transmittedBlocks++
-							if c.Paint {
-								fmt.Print("*")
-							}
+							c.Paint("*")
 							msg := &ProtocolMessage{Num: uint16(atomic.AddUint32(&c.msgNum, 1) - 1), Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: workItem.block}}
 							c.storeChannel <- &messageDispatch{msg: msg}
 							atomic.AddInt32(&workItem.state, 1)
@@ -224,9 +231,7 @@ func (c *Client) singleExchange(outgoing *messageDispatch) *ProtocolMessage {
 
 		if skipped {
 			atomic.AddInt32(&c.skippedBlocks, 1) //c.skippedBlocks++
-			if c.Paint {
-				fmt.Print("-")
-			}
+			c.Paint("-")
 		}
 	case *MsgServerReadBlock:
 		c.sendQueue(d.BlockID)

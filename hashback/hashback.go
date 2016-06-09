@@ -288,7 +288,7 @@ func (session *BackupSession) Connect() *core.Client {
 
 	client := core.NewClient(conn, session.User, *session.AccessKey)
 	client.QueueMax = SendingQueueSize
-	client.Paint = session.Paint
+	client.DoPaint = session.Paint
 	session.Client = client
 	return session.Client
 }
@@ -298,18 +298,14 @@ func (session *BackupSession) Close() {
 }
 
 func (session *BackupSession) Log(v ...interface{}) {
+	session.Client.Paint("\n")
+	fmt.Println(v...)
+}
+func (session *BackupSession) LogVerbose(v ...interface{}) {
 	if session.Verbose {
-		if session.Paint {
-			fmt.Println()
-		}
+		session.Client.Paint("\n")
 		fmt.Println(v...)
 	}
-}
-func (session *BackupSession) Important(v ...interface{}) {
-	if session.Paint {
-		fmt.Println()
-	}
-	fmt.Println(v...)
 }
 
 func (backup *BackupSession) findPathMatch(rootBlockID core.Byte128, path string) ([]*FileEntry, error) {
@@ -477,7 +473,7 @@ func main() {
 
 			if len(cmd.Args) < 4 {
 
-				fmt.Println("Backup id                           Backup date                  Total size     Diff prev")
+				fmt.Println("Backup id                           Backup start                 Total size     Diff prev")
 				fmt.Println("--------------------------------    -------------------------    ----------    ----------")
 
 				for _, s := range list.States {

@@ -36,12 +36,9 @@ func (session *BackupSession) PrintStoreProgress(interval time.Duration) {
 			compression = 100.0 * (float64(session.Client.WriteData) - float64(session.Client.WriteDataCompressed)) / float64(session.Client.WriteData)
 		}
 		sent, skipped, _, queuedsize := session.Client.GetStats()
-		if session.Paint {
-			fmt.Println()
-		}
-		fmt.Printf(">>> %.1f min, read: %s, written: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s\n",
+		session.Log(fmt.Sprintf(">>> %.1f min, read: %s, written: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s\n",
 			time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(session.Client.WriteDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
-			sent, skipped+sent, core.HumanSize(int64(queuedsize)))
+			sent, skipped+sent, core.HumanSize(int64(queuedsize))))
 
 		//fmt.Println(core.MemoryStats())
 		session.Progress = time.Now().Add(interval)
@@ -183,7 +180,7 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) (id core.B
 	for _, info := range filelist {
 		e, err := session.storePath(filepath.Join(path, info.Name()), false)
 		if err != nil {
-			session.Important(fmt.Sprintf("Skipping (ERROR) %v", err))
+			session.Log(fmt.Sprintf("Skipping (ERROR) %v", err))
 		}
 		if e != nil {
 			dir.File = append(dir.File, e)
@@ -222,7 +219,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			isDir = info.IsDir() // Check ignore even if we cannot open the file (to avoid output errors on files we already ignore)
 		}
 		if match, pattern := session.ignoreMatch(path, isDir); match {
-			session.Log(fmt.Sprintf("Skipping (ignore %s) %s", pattern, path))
+			session.LogVerbose(fmt.Sprintf("Skipping (ignore %s) %s", pattern, path))
 			return nil, nil
 		}
 		if err != nil {
@@ -239,16 +236,16 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 	}
 
 	if entry.FileMode&uint32(os.ModeTemporary) > 0 {
-		session.Log("Skipping (temporary file)", path)
+		session.LogVerbose("Skipping (temporary file)", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeDevice) > 0 {
-		session.Log("Skipping (device file)", path)
+		session.LogVerbose("Skipping (device file)", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeNamedPipe) > 0 {
-		session.Log("Skipping (named pipe file)", path)
+		session.LogVerbose("Skipping (named pipe file)", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeSocket) > 0 {
-		session.Log("Skipping (socket file)", path)
+		session.LogVerbose("Skipping (socket file)", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeSymlink) > 0 {
 		entry.ContentType = ContentTypeSymLink
@@ -260,7 +257,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 
 		same := session.reference.findAndReuseReference(path, entry)
 		if !same {
-			session.Log("SYMLINK", path, "->", sym)
+			session.LogVerbose("SYMLINK", path, "->", sym)
 		} else {
 			session.UnchangedFiles++
 		}
@@ -289,13 +286,11 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			// It's the same!
 			entry = refEntry
 
-			if session.Client.Paint && !session.Verbose && !session.ShowProgress {
-				fmt.Print(" ")
-			}
+			session.Client.Paint(" ")
 			session.UnchangedFiles++
 		} else {
 			if entry.FileSize > 0 {
-				session.Log(fmt.Sprintf("%s", path))
+				session.LogVerbose(fmt.Sprintf("%s", path))
 				if err = session.storeFile(path, entry); err != nil {
 					if e, ok := err.(*os.PathError); ok && runtime.GOOS == "windows" && e.Err == syscall.Errno(0x20) { // Windows ERROR_SHARING_VIOLATION
 						return refEntry, err // Returning refEntry here in case this file existed and could be opened in a previous backup
@@ -478,7 +473,7 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 
 		date := time.Unix(int64(timestamp), 0)
 		if throwAway {
-			fmt.Printf("Removing backup %s (%s)\n", date.Format(time.RFC3339), reason)
+			session.Log("Removing backup %s (%s)\n", date.Format(time.RFC3339), reason)
 			session.Client.RemoveDatasetState(datasetName, s.StateID)
 		} else {
 			Debug("Keeping backup %s\n", date.Format(time.RFC3339))
