@@ -134,7 +134,6 @@ If the last remaining backup id of a dataset is removed, the dataset will no lon
 
 ### Roadmap ###
 Things that should be implemented or considered
-* Client should have a resume option on store by default (use local cache to figure out what has been backed up).
 * Server low storage space threshold, return error on store before hitting 0 free space.
 * Client platform specific file information (User/Group on linux, system/hidden on Windows for example). Client should store a root block with platform information.
 * Server admin interface (API?) to adduser and change password so it can be done online.
