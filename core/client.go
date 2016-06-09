@@ -346,6 +346,19 @@ func (c *Client) RemoveDatasetState(datasetName string, stateID Byte128) {
 	c.dispatchAndWait(MsgTypeRemoveDatasetState, &MsgClientRemoveDatasetState{AccountNameH: c.AccountNameH, DatasetName: String(datasetName), StateID: stateID})
 }
 
+func (c *Client) VerifyBlock(blockID Byte128) bool {
+	r := c.dispatchAndWait(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: blockID})
+	switch r.(type) {
+	case *MsgServerAcknowledgeBlock:
+		return true
+	case *MsgServerReadBlock:
+		return false
+	default:
+		panic(errors.New("Unknown response from server"))
+	}
+	return false
+}
+
 func (c *Client) StoreData(dataType byte, data bytearray.ByteArray, links []Byte128) Byte128 {
 	// Create a block
 	block := NewHashboxBlock(dataType, data, links)

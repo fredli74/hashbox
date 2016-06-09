@@ -257,15 +257,16 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		}
 		entry.FileLink = core.String(sym)
 
-		same := session.reference.findAndReuseReference(path, entry)
-		if !same {
-			session.LogVerbose("SYMLINK", path, "->", sym)
-		} else {
+		refEntry := session.reference.findReference(path)
+		if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime && refEntry.FileLink == entry.FileLink {
+			// It's the same!
+			entry = refEntry
 			session.UnchangedFiles++
+		} else {
+			session.LogVerbose("SYMLINK", path, "->", sym)
 		}
-		session.Files++
-		session.State.Size += entry.FileSize
 
+		session.Files++
 		session.reference.storeReference(entry)
 
 	} else if entry.FileMode&uint32(os.ModeDir) > 0 {
@@ -353,7 +354,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	var err error
 
 	// Setup the reference backup engine
-	session.reference = NewReferenceEngine(session.Client, core.Hash([]byte(datasetName)))
+	session.reference = NewReferenceEngine(session, core.Hash([]byte(datasetName)))
 	defer session.reference.Close()
 
 	// Convert relative paths to absolute paths
@@ -387,7 +388,9 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	if !session.FullBackup {
 		list := session.Client.ListDataset(datasetName)
 		if len(list.States) > 0 {
-			session.reference.load(list.States[len(list.States)-1].BlockID)
+			session.reference.start(&list.States[len(list.States)-1].BlockID)
+		} else {
+			session.reference.start(nil)
 		}
 	}
 
@@ -496,13 +499,14 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 // referenceEngine is used to compare this backup with the previous backup and only go through files that have changed.
 // It does this by downloading the last backup structure into a sorted queue and poppin away line by line while finding matches.
 type referenceEngine struct {
-	client *core.Client
-	path   []string     // path hierarchy, used for traversing up and down subdirectories without having to save full path for each queue entry
-	queue  []*FileEntry // last backup structure, sorted
+	session *BackupSession
+
+	path  []string     // path hierarchy, used for traversing up and down subdirectories without having to save full path for each queue entry
+	queue []*FileEntry // last backup structure, sorted
 
 	loaded    bool       // indicates that a reference backup was loaded (or started to load)
 	loadpoint int        // current point in the queue where to load in new information, we do this so we do not have to sort the list after each insert
-	lock      sync.Mutex // used because downloading of the structure is a concurrent goprocess
+	lock      sync.Mutex // used to lockdown loadpoint, because downloading and verifying are concurrent goprocesses
 
 	virtualRoot  map[string]string
 	datasetNameH core.Byte128
@@ -511,13 +515,90 @@ type referenceEngine struct {
 
 var entryEOD = &FileEntry{} // end of dir marker
 
+func (r *referenceEngine) cacheName(state string) string {
+	return fmt.Sprintf("%s.%s.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]), state)
+}
+
+func (r *referenceEngine) cacheFilePathName(rootID core.Byte128) string {
+	return filepath.Join(LocalStoragePath, r.cacheName(base64.RawURLEncoding.EncodeToString(rootID[:])))
+}
+
+// Start reference loader and resume if possible
+func (r *referenceEngine) start(rootBlockID *core.Byte128) {
+	treedepth := 0
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				Debug("Non-fatal error encountered while resuming backup %v", r)
+			}
+		}()
+		cacheRecover, _ := os.Open(filepath.Join(LocalStoragePath, r.cacheName("partial")))
+		if cacheRecover != nil {
+			defer cacheRecover.Close()
+			Debug("Opened resume cache %s", cacheRecover.Name())
+			r.session.Log("Resuming last backup attempt")
+
+			info, err := cacheRecover.Stat()
+			PanicOn(err)
+			cacheSize := info.Size()
+			reader := bufio.NewReader(cacheRecover)
+
+			skipcheck := 0
+			for offset := int64(0); offset < cacheSize; {
+				var entry FileEntry
+				Debug("Read cache entry at %x", offset)
+				offset += int64(entry.Unserialize(reader))
+
+				if entry.FileName == "" { // EOD
+					treedepth--
+					if skipcheck > 0 {
+						skipcheck--
+					}
+				} else {
+					if entry.ContentType == ContentTypeDirectory {
+						treedepth++
+						if skipcheck > 0 {
+							skipcheck++
+						} else if r.session.Client.VerifyBlock(entry.ContentBlockID) {
+							Debug("Cache entry for %s verified against server", entry.FileName)
+							skipcheck = 1
+						}
+					} else if skipcheck > 0 {
+						Debug("Skipping cache verification for %s as parent is already verified", entry.FileName)
+					} else if r.session.Client.VerifyBlock(entry.ContentBlockID) {
+						Debug("Cache entry for %s verified against server", entry.FileName)
+					} else {
+						Debug("Unable to verify %s against server", entry.FileName)
+						continue
+					}
+					entry.ReferenceID = r.session.State.StateID // self reference
+				}
+				r.queue = append(r.queue, &entry)
+			}
+		}
+	}()
+
+	// Insert any missing EOD marker into queue
+	for ; treedepth > 0; treedepth-- {
+		r.queue = append(r.queue, entryEOD)
+	}
+
+	r.loadpoint = len(r.queue)
+
+	if rootBlockID != nil {
+		r.load(*rootBlockID)
+	}
+}
+
 // Download worker is a separate goprocess to let it download the last backup structure in the background
 func (r *referenceEngine) load(rootBlockID core.Byte128) {
-	Debug("Opening local cache %s", r.cacheName(rootBlockID))
 	// Check if we have last backup cached on disk
-	cacheLast, _ := os.Open(r.cacheName(rootBlockID))
+	cacheLast, _ := os.Open(r.cacheFilePathName(rootBlockID))
 	if cacheLast != nil {
 		defer cacheLast.Close()
+		Debug("Opened local cache %s", cacheLast.Name())
+
 		info, err := cacheLast.Stat()
 		PanicOn(err)
 		cacheSize := info.Size()
@@ -535,7 +616,7 @@ func (r *referenceEngine) load(rootBlockID core.Byte128) {
 		go func() {
 			for {
 				r.lock.Lock()
-				if r.loadpoint >= len(r.queue) {
+				if r.loadpoint >= len(r.queue) { // We are done
 					r.lock.Unlock()
 					break
 				} else {
@@ -559,7 +640,7 @@ func (r *referenceEngine) load(rootBlockID core.Byte128) {
 func (r *referenceEngine) downloadReference(referenceBlockID core.Byte128) {
 	var refdir DirectoryBlock
 
-	blockData := r.client.ReadBlock(referenceBlockID).Data
+	blockData := r.session.Client.ReadBlock(referenceBlockID).Data
 	refdir.Unserialize(&blockData)
 	blockData.Release()
 
@@ -619,7 +700,7 @@ func (r *referenceEngine) peekPath() (path string) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	for len(r.queue) > 0 && r.loadpoint < 1 {
+	for len(r.queue) > 0 && r.loadpoint < 1 { // wait for loadpoint if needed
 		r.lock.Unlock()
 		time.Sleep(10 * time.Millisecond)
 		r.lock.Lock()
@@ -649,22 +730,6 @@ func (r *referenceEngine) findReference(path string) *FileEntry {
 	return nil
 }
 
-// findAndResuseReference finds and reuses the FileEntry for the last backup structure
-func (r *referenceEngine) findAndReuseReference(path string, entry *FileEntry) bool {
-	refEntry := r.findReference(path)
-	if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize && refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime && refEntry.FileLink == entry.FileLink {
-		// It's the same!
-		*entry = *refEntry
-		return true
-	}
-	return false
-}
-
-func (r *referenceEngine) cacheName(rootID core.Byte128) string {
-	filename := fmt.Sprintf("%s.%s.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]), base64.RawURLEncoding.EncodeToString(rootID[:]))
-	return filepath.Join(LocalStoragePath, filename)
-}
-
 func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
 	if r.cacheCurrent != nil {
 		l, err := r.cacheCurrent.Seek(0, os.SEEK_CUR)
@@ -672,6 +737,7 @@ func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
 		entry.Serialize(r.cacheCurrent)
 		return l
 	} else {
+		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
 		return
 	}
 }
@@ -679,6 +745,8 @@ func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
 func (r *referenceEngine) storeReference(entry *FileEntry) {
 	if r.cacheCurrent != nil {
 		entry.Serialize(r.cacheCurrent)
+	} else {
+		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
 	}
 }
 
@@ -689,6 +757,8 @@ func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
 
 		r.cacheCurrent.Seek(0, os.SEEK_END)
 		entryEOD.Serialize(r.cacheCurrent)
+	} else {
+		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
 	}
 }
 
@@ -703,23 +773,37 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 
 	if r.cacheCurrent != nil {
 		r.cacheCurrent.Close()
-		os.Rename(r.cacheCurrent.Name(), r.cacheName(rootID))
+		os.Rename(r.cacheCurrent.Name(), r.cacheFilePathName(rootID))
 		r.cacheCurrent = nil
+	} else {
+		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
 	}
 }
 func (r *referenceEngine) Close() {
+	// If not commited, we need to close and save the current cache
 	if r.cacheCurrent != nil {
+		currentName := r.cacheCurrent.Name()
+		currentInfo, _ := r.cacheCurrent.Stat()
 		r.cacheCurrent.Close()
-		os.Remove(r.cacheCurrent.Name())
 		r.cacheCurrent = nil
+
+		partialName := filepath.Join(LocalStoragePath, r.cacheName("partial"))
+		partialInfo, _ := os.Stat(partialName)
+		if currentInfo != nil && currentInfo.Size() > 0 && (partialInfo == nil || partialInfo.Size() < currentInfo.Size()) {
+			Debug("Saving %s as recovery cache %s", currentName, partialName)
+			os.Rename(currentName, partialName)
+		} else {
+			Debug("Erasing temporary cache %s", currentName)
+			os.Remove(currentName)
+		}
 	}
 }
-func NewReferenceEngine(client *core.Client, datasetNameH core.Byte128) *referenceEngine {
+func NewReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *referenceEngine {
 	tempfile, err := ioutil.TempFile("", "hbcache")
 	PanicOn(err)
 
 	r := &referenceEngine{
-		client:       client,
+		session:      session,
 		datasetNameH: datasetNameH,
 		cacheCurrent: tempfile,
 	}
