@@ -54,7 +54,7 @@ type Client struct {
 
 	sendqueue []*sendQueueEntry
 
-	handlerSignal chan error
+	handlerErrorSignal chan error
 
 	dispatchChannel chan *messageDispatch
 	storeChannel    chan *messageDispatch
@@ -75,8 +75,8 @@ func NewClient(conn net.Conn, account string, accesskey Byte128) *Client {
 		dispatchChannel: make(chan *messageDispatch, 1024),
 		storeChannel:    make(chan *messageDispatch, 1),
 	}
+	client.handlerErrorSignal = make(chan error, 1)
 	client.wg.Add(1)
-	client.handlerSignal = make(chan error, 1)
 	go client.ioHandler()
 
 	{ // Say hello
@@ -104,8 +104,10 @@ func (c *Client) Paint(what string) {
 	}
 }
 
-func (c *Client) Close() {
-	c.dispatchAndWait(MsgTypeGoodbye, nil)
+func (c *Client) Close(polite bool) {
+	if (polite) {
+		c.dispatchAndWait(MsgTypeGoodbye, nil)
+	}
 
 	c.dispatchMutex.Lock()
 	if !c.closing {
@@ -135,6 +137,17 @@ func (c *Client) sendQueue(what Byte128) {
 		if c.sendworkers < int32(runtime.NumCPU()) {
 			atomic.AddInt32(&c.sendworkers, 1)
 			go func() {
+				defer func() {	// a panic was raised inside the goroutine (most likely the channel was closed)
+					if r := recover(); !c.closing && r != nil {
+						err, _ := <-c.handlerErrorSignal
+						if err != nil {
+							panic(err)
+						} else {
+							panic(r)
+						}
+					}
+				}()
+
 				for done := false; !done; {
 					var workItem *sendQueueEntry
 
@@ -243,9 +256,9 @@ func (c *Client) singleExchange(outgoing *messageDispatch) *ProtocolMessage {
 func (c *Client) ioHandler() {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised inside the goroutine
-			fmt.Println("ioHandler", r)
-			c.handlerSignal <- r.(error)
-			close(c.handlerSignal)
+//			fmt.Println("ioHandler error:", r)
+			c.handlerErrorSignal <- r.(error)
+			close(c.handlerErrorSignal)
 		}
 
 		c.dispatchMutex.Lock()
@@ -283,8 +296,8 @@ func (c *Client) ioHandler() {
 // dispatchMessage returns a result channel if a returnChannel was specified, otherwise it just returns nil
 func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChannel chan interface{}) {
 	defer func() {
-		if r := recover(); !c.closing && r != nil { // a panic was raised inside the goroutine
-			err, _ := <-c.handlerSignal
+		if r := recover(); !c.closing && r != nil { // a panic was raised (most likely the channel was closed)
+			err, _ := <-c.handlerErrorSignal
 			if err != nil {
 				panic(err)
 			} else {
@@ -321,8 +334,7 @@ func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{
 				return t.Data
 			}
 		}
-		fmt.Println("här", R)
-	case err := <-c.handlerSignal:
+	case err := <-c.handlerErrorSignal:
 		if err != nil {
 			panic(err)
 		}

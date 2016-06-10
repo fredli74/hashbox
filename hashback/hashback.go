@@ -292,8 +292,14 @@ func (session *BackupSession) Connect() *core.Client {
 	session.Client = client
 	return session.Client
 }
-func (session *BackupSession) Close() {
-	session.Client.Close()
+func (session *BackupSession) Close(polite bool) {
+	if session.reference != nil {
+		session.reference.Close()
+	}
+	if session.Client != nil {
+		session.Client.Close(polite)
+	}
+
 	Debug("Disconnected from %s", session.ServerString)
 }
 
@@ -341,7 +347,7 @@ func main() {
 
 	runtime.SetBlockProfileRate(1000)
 	go func() {
-		log.Println(http.ListenAndServe(":6060", nil))
+		log.Println(http.ListenAndServe("127.0.0.1:6060", nil))
 	}()
 
 	defer func() {
@@ -428,7 +434,7 @@ func main() {
 
 	cmd.Command("info", "", func() {
 		session.Connect()
-		defer session.Close()
+		defer session.Close(true)
 
 		info := session.Client.GetAccountInfo()
 		var hashbackEnabled bool = false
@@ -466,7 +472,7 @@ func main() {
 		}
 
 		session.Connect()
-		defer session.Close()
+		defer session.Close(true)
 
 		list := session.Client.ListDataset(cmd.Args[2])
 		if len(list.States) > 0 {
@@ -583,7 +589,7 @@ func main() {
 
 			func() {
 				session.Connect()
-				defer session.Close()
+				defer session.Close(true)
 				if latestBackup > 0 || intervalBackup == 0 {
 					session.State = &core.DatasetState{StateID: session.Client.SessionNonce}
 					session.Store(cmd.Args[2], cmd.Args[3:]...)
@@ -625,7 +631,7 @@ func main() {
 		}
 
 		session.Connect()
-		defer session.Close()
+		defer session.Close(true)
 
 		list := session.Client.ListDataset(cmd.Args[2])
 
@@ -669,7 +675,7 @@ func main() {
 		}
 
 		session.Connect()
-		defer session.Close()
+		defer session.Close(true)
 
 		list := session.Client.ListDataset(cmd.Args[2])
 
@@ -713,7 +719,7 @@ func main() {
 		}
 
 		session.Connect()
-		defer session.Close()
+		defer session.Close(true)
 
 		list := session.Client.ListDataset(cmd.Args[2])
 
@@ -739,8 +745,8 @@ func main() {
 	signal.Notify(signalchan, os.Kill)
 	go func() {
 		for range signalchan {
-			if session.reference != nil {
-				session.reference.Close()
+			if session != nil {
+				session.Close(false)
 			}
 			if lockFile != nil {
 				lockFile.Unlock()
