@@ -97,7 +97,7 @@ func TestClientServerAuthentication(t *testing.T) {
 
 	conn.SetDeadline(time.Now().Add(15 * time.Second))
 	client := core.NewClient(conn, "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
-	defer client.Close()
+	defer client.Close(true)
 }
 
 func randomByte128() (b core.Byte128) {
@@ -117,7 +117,7 @@ func TestClientServerDataset(t *testing.T) {
 
 	conn.SetDeadline(time.Now().Add(10 * time.Minute))
 	client := core.NewClient(conn, "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
-	defer client.Close()
+	defer client.Close(true)
 
 	// First make sure there is some data to reference
 	var data bytearray.ByteArray
@@ -194,7 +194,7 @@ func TestClientServerHashboxBlocks(t *testing.T) {
 
 	conn.SetDeadline(time.Now().Add(10 * time.Minute))
 	client := core.NewClient(conn, "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
-	defer client.Close()
+	defer client.Close(true)
 
 	{
 		var data bytearray.ByteArray

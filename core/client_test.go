@@ -51,7 +51,7 @@ func TestClientInit(t *testing.T) {
 	c := FauxServer{hdump, pr}
 	client := NewClient(c, "account name", Hash([]byte("password")))
 	time.Sleep(1 * time.Second)
-	client.Close()
+	client.Close(true)
 
 	hdump.Close()
 	_ = client
