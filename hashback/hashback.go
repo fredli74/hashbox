@@ -152,7 +152,6 @@ func (e *FileEntry) Unserialize(r io.Reader) (size int) {
 		panic(errors.New("Corrupted FileEntry!"))
 	}
 	size += e.FileName.Unserialize(r)
-	Debug("Reading file entry with filename: %s", e.FileName)
 	size += core.ReadOrPanic(r, &e.FileSize)
 	size += core.ReadOrPanic(r, &e.FileMode)
 	size += core.ReadOrPanic(r, &e.ModTime)
@@ -269,7 +268,7 @@ func (session *BackupSession) Connect() *core.Client {
 
 	// Resetting statistics
 	session.Start = time.Now()
-	session.Progress = time.Now()
+	session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
 	session.ReadData = 0
 	session.WriteData = 0
 	session.Directories = 0
@@ -288,7 +287,7 @@ func (session *BackupSession) Connect() *core.Client {
 
 	client := core.NewClient(conn, session.User, *session.AccessKey)
 	client.QueueMax = SendingQueueSize
-	client.DoPaint = session.Paint
+	client.EnablePaint = session.Paint
 	session.Client = client
 	return session.Client
 }

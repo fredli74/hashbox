@@ -36,11 +36,18 @@ func (session *BackupSession) PrintStoreProgress(interval time.Duration) {
 			compression = 100.0 * (float64(session.Client.WriteData) - float64(session.Client.WriteDataCompressed)) / float64(session.Client.WriteData)
 		}
 		sent, skipped, _, queuedsize := session.Client.GetStats()
-		session.Log(fmt.Sprintf(">>> %.1f min, read: %s, written: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s\n",
+		session.Log(fmt.Sprintf(">>> %.1f min, read: %s, written: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s",
 			time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(session.Client.WriteDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
 			sent, skipped+sent, core.HumanSize(int64(queuedsize))))
 
 		//fmt.Println(core.MemoryStats())
+		session.Progress = time.Now().Add(interval)
+	}
+}
+
+func (session *BackupSession) PrintRecoverProgress(progress float64, interval time.Duration) {
+	if session.ShowProgress && (interval == 0 || time.Now().After(session.Progress)) {
+		session.Log(fmt.Sprintf(">>> %.1f min, resuming last backup: %.0f%%", time.Since(session.Start).Minutes(), progress))
 		session.Progress = time.Now().Add(interval)
 	}
 }
@@ -261,7 +268,9 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime && refEntry.FileLink == entry.FileLink {
 			// It's the same!
 			entry = refEntry
-			session.UnchangedFiles++
+			if entry.ReferenceID.Compare(session.State.StateID) != 0 {
+				session.UnchangedFiles++
+			}
 		} else {
 			session.LogVerbose("SYMLINK", path, "->", sym)
 		}
@@ -291,11 +300,16 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			// It's the same!
 			entry = refEntry
 
-			session.Client.Paint(" ")
-			session.UnchangedFiles++
+			if entry.ReferenceID.Compare(session.State.StateID) != 0 {
+				session.Client.Paint(" ")
+				session.UnchangedFiles++
 
-			if !session.reference.loaded { // We are using unique as a diff-size, so first backup (with no reference) has full diff-size
-				// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server?
+				if !session.reference.loaded { // We are using unique as a diff-size, so first backup (with no reference) has full diff-size
+					// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server?
+					session.State.UniqueSize += entry.FileSize
+				}
+			} else {
+				// Resuming backup, still count it as unique
 				session.State.UniqueSize += entry.FileSize
 			}
 		} else {
@@ -483,7 +497,7 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 
 		date := time.Unix(int64(timestamp), 0)
 		if throwAway {
-			session.Log("Removing backup %s (%s)\n", date.Format(time.RFC3339), reason)
+			session.Log("Removing backup %s (%s)", date.Format(time.RFC3339), reason)
 			session.Client.RemoveDatasetState(datasetName, s.StateID)
 		} else {
 			Debug("Keeping backup %s\n", date.Format(time.RFC3339))
@@ -549,6 +563,8 @@ func (r *referenceEngine) start(rootBlockID *core.Byte128) {
 				var entry FileEntry
 				Debug("Read cache entry at %x", offset)
 				offset += int64(entry.Unserialize(reader))
+
+				r.session.PrintRecoverProgress(99.0*(float64(offset)/float64(cacheSize)), PROGRESS_INTERVAL_SECS)
 
 				if entry.FileName == "" { // EOD
 					treedepth--
@@ -799,13 +815,14 @@ func (r *referenceEngine) Close() {
 	}
 }
 func NewReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *referenceEngine {
-	tempfile, err := ioutil.TempFile("", "hbcache")
-	PanicOn(err)
-
 	r := &referenceEngine{
 		session:      session,
 		datasetNameH: datasetNameH,
-		cacheCurrent: tempfile,
 	}
+
+	var err error
+	r.cacheCurrent, err = ioutil.TempFile(LocalStoragePath, r.cacheName("temp"))
+	PanicOn(err)
+
 	return r
 }

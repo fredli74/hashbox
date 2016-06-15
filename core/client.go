@@ -38,9 +38,9 @@ type Client struct {
 	Session
 	AccessKey Byte128 // = hmac^20000( AccountName "*ACCESS*KEY*PAD*", md5( password ))
 
-	conn    *TimeoutConn
-	wg      sync.WaitGroup
-	DoPaint bool
+	conn        *TimeoutConn
+	wg          sync.WaitGroup
+	EnablePaint bool
 
 	QueueMax int64 // max size of the outgoing block queue (in bytes)
 
@@ -95,17 +95,17 @@ func NewClient(conn net.Conn, account string, accesskey Byte128) *Client {
 	return client
 }
 
-var lastPaint string
+var lastPaint string = "\n"
 
 func (c *Client) Paint(what string) {
-	if c.DoPaint && (what != "\n" || what != lastPaint) {
+	if c.EnablePaint && (what != "\n" || what != lastPaint) {
 		fmt.Print(what)
 		lastPaint = what
 	}
 }
 
 func (c *Client) Close(polite bool) {
-	if (polite) {
+	if polite {
 		c.dispatchAndWait(MsgTypeGoodbye, nil)
 	}
 
@@ -137,7 +137,7 @@ func (c *Client) sendQueue(what Byte128) {
 		if c.sendworkers < int32(runtime.NumCPU()) {
 			atomic.AddInt32(&c.sendworkers, 1)
 			go func() {
-				defer func() {	// a panic was raised inside the goroutine (most likely the channel was closed)
+				defer func() { // a panic was raised inside the goroutine (most likely the channel was closed)
 					if r := recover(); !c.closing && r != nil {
 						err, _ := <-c.handlerErrorSignal
 						if err != nil {
@@ -256,7 +256,7 @@ func (c *Client) singleExchange(outgoing *messageDispatch) *ProtocolMessage {
 func (c *Client) ioHandler() {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised inside the goroutine
-//			fmt.Println("ioHandler error:", r)
+			//			fmt.Println("ioHandler error:", r)
 			c.handlerErrorSignal <- r.(error)
 			close(c.handlerErrorSignal)
 		}
