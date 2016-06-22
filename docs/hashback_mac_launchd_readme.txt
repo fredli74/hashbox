@@ -1,6 +1,5 @@
-platform=mac-amd64
-
 # 1. Create upgrade script
+platform=mac-amd64
 mkdir -p ~/.hashback
 cat >~/.hashback/update-hashback.sh <<EOL
 #!/bin/sh
