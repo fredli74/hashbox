@@ -25,8 +25,8 @@ func (session *BackupSession) PrintRestoreProgress() {
 	if session.WriteData > 0 {
 		compression = 100.0 * (float64(session.WriteData) - float64(session.ReadData)) / float64(session.WriteData)
 	}
-	session.Log(">>> %.1f min, read: %s (%.0f%% compr), written: %s, %d folders, %d files\n",
-		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
+	session.Log(fmt.Sprintf(">>> %.1f min, read: %s (%.0f%% compr), written: %s, %d folders, %d files\n",
+		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files))
 
 	//fmt.Println(core.MemoryStats())
 }
@@ -36,8 +36,8 @@ func (session *BackupSession) PrintDiffProgress() {
 	if session.WriteData > 0 {
 		compression = 100.0 * (float64(session.WriteData) - float64(session.ReadData)) / float64(session.WriteData)
 	}
-	session.Log(">>> %.1f min, read: %s (%.0f%% compr), compared: %s, %d folders, %d files\n",
-		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
+	session.Log(fmt.Sprintf(">>> %.1f min, read: %s (%.0f%% compr), compared: %s, %d folders, %d files\n",
+		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files))
 
 	//fmt.Println(core.MemoryStats())
 }
