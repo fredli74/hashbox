@@ -82,7 +82,7 @@ func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
 			panic(errors.New(fmt.Sprintf("Invalid ContentType for a Symlink (%d)", e.ContentType)))
 		}
 	} else if e.FileMode&uint32(os.ModeDir) > 0 {
-		if err := os.MkdirAll(localpath, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
+		if err := os.MkdirAll(localpath, 0777); err != nil {
 			return err
 		}
 
@@ -94,6 +94,9 @@ func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		case ContentTypeEmpty:
 		default:
 			panic(errors.New(fmt.Sprintf("Invalid ContentType for a directory (%d)", e.ContentType)))
+		}
+		if err := os.Chmod(localpath, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
+			return err
 		}
 		backup.Directories++
 	} else {
