@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -46,6 +47,13 @@ func PanicOn(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+func Try(f func()) (err interface{}) {
+	defer func() {
+		err = recover()
+	}()
+	f()
+	return nil
 }
 
 func Debug(format string, a ...interface{}) {
@@ -374,12 +382,40 @@ func main() {
 	})
 
 	var doRepair bool
+	var doRebuild bool
 	var skipData, skipMeta, skipIndex bool
-	cmd.BoolOption("repair", "check-storage", "Try to repair non-fatal errors", &doRepair, cmd.Standard)
+	cmd.BoolOption("repair", "check-storage", "Repair non-fatal errors", &doRepair, cmd.Standard)
+	cmd.BoolOption("rebuild", "check-storage", "Rebuild index and meta files from data", &doRebuild, cmd.Standard)
 	cmd.BoolOption("skipdata", "check-storage", "Skip checking data files", &skipData, cmd.Standard)
 	cmd.BoolOption("skipmeta", "check-storage", "Skip checking meta files", &skipMeta, cmd.Standard)
 	cmd.BoolOption("skipindex", "check-storage", "Skip checking index files", &skipIndex, cmd.Standard)
 	cmd.Command("check-storage", "", func() {
+		if doRebuild {
+			if len(cmd.Args) > 2 {
+				panic("Start and end file arguments are not valid in combination with rebuild")
+			}
+			doRepair = true
+		}
+
+		startfile := int32(0)
+		endfile := int32(-1)
+		if len(cmd.Args) > 2 {
+			i, err := strconv.ParseInt(cmd.Args[2], 0, 32)
+			if err != nil {
+				panic(err)
+			}
+			startfile = int32(i)
+			fmt.Printf("Starting from file #%d (%04x)\n", startfile, startfile)
+		}
+		if len(cmd.Args) > 3 {
+			i, err := strconv.ParseInt(cmd.Args[3], 0, 32)
+			if err != nil {
+				panic(err)
+			}
+			endfile = int32(i)
+			fmt.Printf("Stopping after file #%d (%04x)\n", endfile, endfile)
+		}
+
 		if doRepair {
 			if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 				panic(err)
@@ -390,27 +426,37 @@ func main() {
 
 		start := time.Now()
 
-		fmt.Println("Checking all storage files")
-		repaired, critical := storageHandler.CheckFiles(doRepair)
-		if !skipData && repaired == 0 && critical == 0 {
-			fmt.Println("Checking data files")
-			repaired, critical = storageHandler.CheckData(doRepair)
-		}
-		if !skipMeta && repaired == 0 && critical == 0 {
-			fmt.Println("Checking meta files")
-			repaired, critical = storageHandler.CheckMeta(doRepair)
+		if doRebuild {
+			fmt.Println("Removing index files")
+			storageHandler.RemoveFiles(storageFileTypeIndex)
+			fmt.Println("Removing meta files")
+			storageHandler.RemoveFiles(storageFileTypeMeta)
 		}
 
-		if !skipIndex && repaired == 0 && critical == 0 {
+		fmt.Println("Checking all storage files")
+		repaired, critical := storageHandler.CheckFiles(doRepair)
+		if !skipData && (doRepair || critical == 0) {
+			fmt.Println("Checking data files")
+			r, c := storageHandler.CheckData(doRepair, startfile, endfile)
+			repaired += r
+			critical += c
+		}
+		if !skipMeta && (doRepair || critical == 0) {
+			fmt.Println("Checking meta files")
+			storageHandler.CheckMeta()
+		}
+
+		if !skipIndex && (doRepair || critical == 0) {
 			fmt.Println("Checking index files")
 			storageHandler.CheckIndexes()
 		}
 
-		if repaired == 0 && critical == 0 {
+		if doRepair || critical == 0 {
 			fmt.Println("Checking dataset transactions")
 			roots := accountHandler.CollectAllRootBlocks()
 			fmt.Println("Checking block chain integrity")
-			storageHandler.CheckChain(roots, true)
+			c := storageHandler.CheckChain(roots)
+			critical += c
 		}
 
 		if critical > 0 {
@@ -425,7 +471,9 @@ func main() {
 	})
 
 	var doCompact bool
+	var doIgnore bool
 	cmd.BoolOption("compact", "gc", "Compact data files to free space", &doCompact, cmd.Standard)
+	cmd.BoolOption("ignore", "gc", "Ignore broken block chains (ERASES UNLINKED DATA)", &doIgnore, cmd.Standard)
 	cmd.Command("gc", "", func() {
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
@@ -436,7 +484,7 @@ func main() {
 		start := time.Now()
 		fmt.Println("Marking index entries")
 		roots := accountHandler.CollectAllRootBlocks()
-		storageHandler.MarkIndexes(roots, true)
+		storageHandler.MarkIndexes(roots, true, doIgnore)
 		storageHandler.SweepIndexes(true)
 		fmt.Printf("Mark and sweep duration %.1f minutes\n", time.Since(start).Minutes())
 		storageHandler.ShowStorageDeadSpace()
