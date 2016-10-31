@@ -165,6 +165,20 @@ func (handler *StorageHandler) writeBlock(Block *core.HashboxBlock) bool {
 	}
 }
 
+const MINIMUM_IX_FREE = int64(storageIXFileSize + storageIXFileSize/20) // 105% of an IX file because we must be able to create a new one
+const MINIMUM_DAT_FREE = int64(2 ^ 26)                                  // 64 MB minimum free space
+func (handler *StorageHandler) checkFree(size int64) bool {
+	if free, _ := core.FreeSpace(idxDirectory); free < MINIMUM_IX_FREE {
+		serverLog("Storage rejected because free space on index path has dropped below", MINIMUM_IX_FREE)
+		return false
+	}
+	if free, _ := core.FreeSpace(datDirectory); free < size+MINIMUM_DAT_FREE {
+		serverLog("Storage rejected because free space on data path has dropped below", size+MINIMUM_DAT_FREE)
+		return false
+	}
+	return true
+}
+
 //********************************************************************************//
 //                                                                                //
 //                      Storage database handling                                 //
@@ -183,25 +197,24 @@ const (
 	storageFileTypeData
 )
 
-var storageFileTypeInfo []_storageFileTypeInfo = []_storageFileTypeInfo{
+var storageFileTypeInfo []_storageFileTypeInfo = []_storageFileTypeInfo{ // datamarker, extension, buffersize
 	_storageFileTypeInfo{0x48534958, ".idx", 2048},  // "HSIX" Hashbox Storage Index
-	_storageFileTypeInfo{0x48534D44, ".meta", 2048}, // "HSMD" Hashbox Storage Index
-	_storageFileTypeInfo{0x48534442, ".dat", 3072},  // "HSDB" Hashbox Storage Index
+	_storageFileTypeInfo{0x48534D44, ".meta", 2048}, // "HSMD" Hashbox Storage Meta
+	_storageFileTypeInfo{0x48534442, ".dat", 3072},  // "HSDB" Hashbox Storage Data
 }
 
 const (
-	storageVersion uint32 = 1
+	storageVersion        uint32 = 1
+	storageFileHeaderSize int64  = 16 // 16 bytes (filetype + version + deadspace)
 
-	storageFileHeaderSize int64 = 16 // 16 bytes (filetype + version + deadspace)
-
-	storageMaxFileSize int64  = (1 << 34) - 1 // 0x3ffffffff = 16 GiB data and metadata files
 	storageDataMarker  uint32 = 0x68626C6B    // "hblk"
+	storageOffsetLimit int64  = (1 << 34) - 1 // 0x3ffffffff ~= 16 GiB data and metadata files
 )
 
 const ( // 2 bytes, max 16 flags
-	entryFlagExists = 1 << iota
-	entryFlagNoLinks
-	entryFlagMarked
+	entryFlagExists  = 1 << iota // index entry exists
+	entryFlagNoLinks             // index entry has no links
+	entryFlagMarked              // sweep marker
 )
 
 type storageFileHeader struct {
@@ -258,8 +271,9 @@ func (b *sixByteLocation) Unserialize(r io.Reader) (size int) {
 //                           storageIXEntry                                      //
 //*******************************************************************************//
 
-const storageIXEntrySize int64 = 24      // 24 bytes
-const storageIXEntryProbeLimit int = 682 // 682*24 bytes = 16368 < 16k
+const storageIXEntrySize int64 = 24                                                 // 24 bytes
+const storageIXEntryProbeLimit int = 682                                            // 682*24 bytes = 16368 < 16k
+const storageIXFileSize = storageIXEntrySize * int64(2^24+storageIXEntryProbeLimit) // last 24 bits of hash, plus max probe = 24*(2^24+682) = 384MiB indexes
 
 type storageIXEntry struct { // 24 bytes data
 	flags    int16           // 2 bytes
@@ -563,7 +577,7 @@ func (handler *StorageHandler) writeMetaEntry(metaFileNumber int32, metaOffset i
 			metaFile = handler.getNumberedFile(storageFileTypeMeta, handler.topMetaFileNumber, true)
 			metaOffset, _ = metaFile.Writer.Seek(0, os.SEEK_END)
 			Debug("writeMetaEntry %x:%x", handler.topMetaFileNumber, metaOffset)
-			if metaOffset <= storageMaxFileSize {
+			if metaOffset <= storageOffsetLimit {
 				break
 			}
 			handler.topMetaFileNumber++
@@ -613,7 +627,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	for {
 		datFile = handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber, true)
 		datOffset, _ = datFile.Writer.Seek(0, os.SEEK_END)
-		if datOffset <= storageMaxFileSize {
+		if datOffset <= storageOffsetLimit {
 			break
 		}
 		handler.topDatFileNumber++
@@ -921,7 +935,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 					newFile = handler.getNumberedFile(fileType, newFileNumber, true)
 					newOffset, err = newFile.Writer.Seek(0, os.SEEK_END)
 					PanicOn(err)
-					if newOffset <= storageMaxFileSize {
+					if newOffset <= storageOffsetLimit {
 						break
 					}
 					newFileNumber++

@@ -204,6 +204,10 @@ func handleConnection(conn net.Conn) {
 									break
 								}
 							}
+							if !storageHandler.checkFree(int64(c.Block.Data.Len())) {
+								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+								reply.Data = &core.MsgServerError{"Write permission is denied because the server is out of space"}
+							}
 							if reply.Data == nil {
 								storageHandler.writeBlock(c.Block)
 								reply.Type = core.MsgTypeAcknowledgeBlock & core.MsgTypeServerMask
