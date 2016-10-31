@@ -563,7 +563,7 @@ func (handler *StorageHandler) writeMetaEntry(metaFileNumber int32, metaOffset i
 			metaFile = handler.getNumberedFile(storageFileTypeMeta, handler.topMetaFileNumber, true)
 			metaOffset, _ = metaFile.Writer.Seek(0, os.SEEK_END)
 			Debug("writeMetaEntry %x:%x", handler.topMetaFileNumber, metaOffset)
-			if metaOffset+int64(data.Len()) <= storageMaxFileSize {
+			if metaOffset <= storageMaxFileSize {
 				break
 			}
 			handler.topMetaFileNumber++
@@ -613,7 +613,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	for {
 		datFile = handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber, true)
 		datOffset, _ = datFile.Writer.Seek(0, os.SEEK_END)
-		if datOffset+int64(data.Len()) <= storageMaxFileSize {
+		if datOffset <= storageMaxFileSize {
 			break
 		}
 		handler.topDatFileNumber++
@@ -921,7 +921,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 					newFile = handler.getNumberedFile(fileType, newFileNumber, true)
 					newOffset, err = newFile.Writer.Seek(0, os.SEEK_END)
 					PanicOn(err)
-					if newOffset+int64(entrySize)+12 <= storageMaxFileSize {
+					if newOffset <= storageMaxFileSize {
 						break
 					}
 					newFileNumber++
