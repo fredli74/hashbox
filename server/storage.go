@@ -478,14 +478,26 @@ func (handler *StorageHandler) getNumberedFile(fileType int, fileNumber int32, c
 	return handler.filepool[name]
 }
 
+// getDeadSpace is used to read the dead space value from a meta or data file header
+func (handler *StorageHandler) getNumberedFileSize(fileType int, fileNumber int32) (size int64, deadspace int64, err error) {
+	file := handler.getNumberedFile(fileType, fileNumber, false)
+	if file == nil {
+		return 0, 0, errors.New(fmt.Sprintf("Trying to read free space from %.8X%s which does not exist", fileNumber, storageFileTypeInfo[fileType].Extension))
+	}
+	file.Reader.Seek(0, os.SEEK_SET)
+	var header storageFileHeader
+	header.Unserialize(file.Reader)
+	return file.Size(), header.deadspace, nil
+}
+
 // setDeadSpace is used to mark the amount of dead space in a meta or data file
 func (handler *StorageHandler) setDeadSpace(fileType int, fileNumber int32, size int64, add bool) {
 	file := handler.getNumberedFile(fileType, fileNumber, false)
 	if file == nil {
 		panic(errors.New(fmt.Sprintf("Trying to mark free space in %.8X%s which does not exist", fileNumber, storageFileTypeInfo[fileType].Extension)))
 	}
-	var header storageFileHeader
 	file.Reader.Seek(0, os.SEEK_SET)
+	var header storageFileHeader
 	header.Unserialize(file.Reader)
 	if add {
 		header.deadspace += size
@@ -873,6 +885,41 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 	}
 }
 
+func SkipDataGap(reader *BufferedReader) int64 {
+	offset := int64(0)
+	peek, err := reader.Peek(12)
+	PanicOn(err)
+	if bytes.Equal(peek[:4], []byte("Cgap")) {
+		skip := core.BytesInt64(peek[4:12])
+		Debug(fmt.Sprintf("Cgap marker found in %s, jumping %d bytes", reader.File.Name(), skip))
+		// Special skip logic since Discard only takes int32 and not int64
+		for skip > 0 {
+			n, _ := reader.Discard(core.LimitInt(skip))
+			offset += int64(n)
+			skip -= int64(n)
+		}
+	}
+	return offset
+}
+func ForwardToDataMarker(reader *BufferedReader) (int64, error) {
+	offset := int64(0)
+	for {
+		peek, err := reader.Peek(4)
+		if err != nil {
+			return offset, err
+		}
+		if uint32(peek[3])|uint32(peek[2])<<8|uint32(peek[1])<<16|uint32(peek[0])<<24 == storageDataMarker {
+			return offset, nil
+		}
+		reader.Discard(1)
+		offset++
+	}
+	if offset > 0 {
+		Debug(fmt.Sprintf("Jumped %d bytes to next data marker in %s", offset, reader.File.Name()))
+	}
+	return offset, nil
+}
+
 func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (compacted int64) {
 	var entry storageEntry
 	switch fileType {
@@ -886,16 +933,8 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 	}
 
 	file := handler.getNumberedFile(fileType, fileNumber, false)
-
-	var deadSpace int64
-	{
-		file.Reader.Seek(0, os.SEEK_SET)
-		var header storageFileHeader
-		header.Unserialize(file.Reader)
-		deadSpace = header.deadspace
-	}
-
-	fileSize := file.Size()
+	fileSize, deadSpace, err := handler.getNumberedFileSize(fileType, fileNumber)
+	PanicOn(err)
 	serverLog(fmt.Sprintf("Compacting file %s, %s (est. dead data %s)", file.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace)))
 
 	// Open a separate reader
@@ -908,19 +947,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 	offset, writeOffset := int64(storageFileHeaderSize), int64(storageFileHeaderSize)
 	for offset < fileSize {
 		// Check if there is a Cgap marker here and in that case, jump ahead of it
-		peek, err := reader.Peek(12)
-		PanicOn(err)
-		if bytes.Equal(peek[:4], []byte("Cgap")) {
-			skip := core.BytesInt64(peek[4:12])
-			Debug("Cgap marker, jumping %d bytes", skip)
-			// Special skip logic since Discard only takes int32 and not int64
-			for skip > 0 {
-				n, _ := reader.Discard(core.LimitInt(skip))
-				offset += int64(n)
-				skip -= int64(n)
-			}
-			continue
-		}
+		offset += SkipDataGap(reader)
 
 		readOffset := offset
 		entrySize := entry.Unserialize(reader)
@@ -1022,6 +1049,8 @@ func (handler *StorageHandler) CheckMeta() {
 
 		var lastProgress = -1
 		for offset := int64(storageFileHeaderSize); offset < metaSize; {
+			// Check if there is a Cgap marker here and in that case, jump ahead of it
+			offset += SkipDataGap(metaFile.Reader)
 			offset += int64(entry.Unserialize(metaFile.Reader))
 
 			dataFileNumber, dataOffset := entry.location.Get()
@@ -1121,11 +1150,9 @@ func (handler *StorageHandler) CheckFiles(doRepair bool) (repaired int, critical
 			err = binary.Read(f.Reader, binary.BigEndian, &header.filetype)
 			if err != nil {
 				fmt.Printf("Unable to read file type from file header in file %s\n", filename)
-				critical++
 				rewriteHeader = true
 			} else if header.filetype != storageFileTypeInfo[fileType].Type {
 				fmt.Printf("Incorrect filetype in file %s: %x (should be %x)\n", filename, header.filetype, storageFileTypeInfo[fileType].Type)
-				critical++
 				rewriteHeader = true
 			} else {
 				err := binary.Read(f.Reader, binary.BigEndian, &header.version)
@@ -1135,6 +1162,9 @@ func (handler *StorageHandler) CheckFiles(doRepair bool) (repaired int, critical
 				}
 			}
 
+			if rewriteHeader && !doRepair {
+				critical++
+			}
 			if rewriteHeader && doRepair {
 				fmt.Println("Repairing file", filename)
 				f.Close()
@@ -1167,20 +1197,6 @@ func (handler *StorageHandler) CheckFiles(doRepair bool) (repaired int, critical
 	return repaired, critical
 }
 
-func (handler *StorageHandler) ForwardToDataMarker(r *BufferedReader) (int64, error) {
-	offset := int64(0)
-	for {
-		peek, err := r.Peek(4)
-		if err != nil {
-			return offset, err
-		}
-		if uint32(peek[3])|uint32(peek[2])<<8|uint32(peek[1])<<16|uint32(peek[0])<<24 == storageDataMarker {
-			return offset, nil
-		}
-		r.Discard(1)
-		offset++
-	}
-}
 func (handler *StorageHandler) FindFreeOffset(fileType int) (freeFileNum int32, freeOffset int64, freeFile *BufferedFile) {
 	var err error
 	freeFileNum = int32(0)
@@ -1216,11 +1232,13 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 		var lastProgress = -1
 		brokenSpot := int64(0)
 		for offset := int64(storageFileHeaderSize); offset < datSize; {
+			// Check if there is a Cgap marker here and in that case, jump ahead of it
+			offset += SkipDataGap(datFile.Reader)
+
 			blockOffset := offset
 
 			skipToNextBlock := false
 			if err := Try(func() { offset += int64(dataEntry.Unserialize(datFile.Reader)) }); err != nil {
-				critical++
 				err := errors.New(fmt.Sprintf("Error reading dataEntry at %x:%x (%s)", datFileNumber, blockOffset, err))
 				if doRepair {
 					fmt.Println(err)
@@ -1233,7 +1251,6 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 					panic(errors.New("Content verification failed"))
 				}
 			}); err != nil {
-				critical++
 				err := errors.New(fmt.Sprintf("Error verifying block %x (type %d, size %d) at %x:%x (%s)", dataEntry.block.BlockID, dataEntry.block.DataType, dataEntry.block.Data.Len(), datFileNumber, blockOffset, err))
 				if doRepair {
 					fmt.Println(err)
@@ -1248,7 +1265,7 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 				}
 				offset = blockOffset + 1
 				datFile.Reader.Seek(offset, os.SEEK_SET)
-				if o, err := handler.ForwardToDataMarker(datFile.Reader); err == nil {
+				if o, err := ForwardToDataMarker(datFile.Reader); err == nil {
 					offset += o
 					fmt.Printf("Skipped forward to next block at %x:%x\n", datFileNumber, offset)
 					continue
@@ -1298,18 +1315,15 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 				if err != nil {
 					fmt.Printf("Metadata cache error for block %x (%s)\n", dataEntry.block.BlockID[:], err.Error())
 					rewriteIX = true
-					critical++
 				} else {
 					f, o := metaEntry.location.Get()
 					if f != datFileNumber || o != blockOffset {
 						fmt.Printf("Metadata cache location error for block %x (%x:%x != %x:%x)\n", dataEntry.block.BlockID[:], f, o, datFileNumber, blockOffset)
 						rewriteIX = true
-						critical++
 					}
 					if int(metaEntry.dataSize) != dataEntry.block.Data.Len() {
 						fmt.Printf("Metadata cache size error for block %x (%x:%x != %x:%x)\n", dataEntry.block.BlockID[:], metaEntry.dataSize, dataEntry.block.Data.Len())
 						rewriteIX = true
-						critical++
 					}
 					linksOk := true
 					if len(metaEntry.links) != len(dataEntry.block.Links) {
@@ -1324,7 +1338,6 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 					if !linksOk {
 						fmt.Printf("Metadata cache block links mismatch for block %x\n", dataEntry.block.BlockID[:])
 						rewriteIX = true
-						critical++
 					}
 				}
 			}
@@ -1334,7 +1347,6 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 				}
 				ixEntry.flags &^= entryFlagNoLinks
 				rewriteIX = true
-				critical++
 			} else if ixEntry.flags&entryFlagNoLinks == 0 && len(dataEntry.block.Links) == 0 {
 				if !rewriteIX {
 					fmt.Printf("Block %x has no links but the index NoLinks flag is not set\n", dataEntry.block.BlockID[:])
@@ -1343,6 +1355,9 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 				rewriteIX = true
 			}
 
+			if !doRepair && rewriteIX {
+				critical++
+			}
 			if doRepair && rewriteIX {
 				Debug("REPAIRING meta for block %x", dataEntry.block.BlockID[:])
 				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: uint32(dataEntry.block.Data.Len()), links: dataEntry.block.Links}
@@ -1352,6 +1367,7 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 				Debug("REPAIRING index for block %x", dataEntry.block.BlockID[:])
 				ixEntry.location.Set(metaFileNumber, metaOffset)
 				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
+				repaired++
 			}
 
 			p := int(offset * 100 / datSize)
@@ -1377,16 +1393,8 @@ func (handler *StorageHandler) ShowStorageDeadSpace() {
 		if datFile == nil {
 			break // no more data
 		}
-
-		var deadSpace int64
-		{
-			datFile.Reader.Seek(0, os.SEEK_SET)
-			var header storageFileHeader
-			header.Unserialize(datFile.Reader)
-			deadSpace = header.deadspace
-		}
-
-		fileSize := datFile.Size()
+		fileSize, deadSpace, err := handler.getNumberedFileSize(storageFileTypeData, datFileNumber)
+		PanicOn(err)
 		serverLog(fmt.Sprintf("File %s, %s (est. dead data %s)", datFile.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace)))
 	}
 }
