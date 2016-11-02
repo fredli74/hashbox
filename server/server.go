@@ -472,7 +472,9 @@ func main() {
 
 	var doCompact bool
 	var doIgnore bool
+	var deadSkip int64 = 5
 	cmd.BoolOption("compact", "gc", "Compact data files to free space", &doCompact, cmd.Standard)
+	cmd.IntOption("threshold", "gc", "<percentage>", "Compact minimum dead space threshold", &deadSkip, cmd.Standard)
 	cmd.BoolOption("ignore", "gc", "Ignore broken block chains (ERASES UNLINKED DATA)", &doIgnore, cmd.Standard)
 	cmd.Command("gc", "", func() {
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
@@ -489,8 +491,8 @@ func main() {
 		fmt.Printf("Mark and sweep duration %.1f minutes\n", time.Since(start).Minutes())
 		storageHandler.ShowStorageDeadSpace()
 		if doCompact {
-			storageHandler.CompactAll(storageFileTypeData)
-			storageHandler.CompactAll(storageFileTypeMeta)
+			storageHandler.CompactAll(storageFileTypeData, int(deadSkip))
+			storageHandler.CompactAll(storageFileTypeMeta, int(deadSkip))
 		}
 		fmt.Printf("Garbage collection completed in %.1f minutes\n\n", time.Since(start).Minutes())
 	})

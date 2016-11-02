@@ -14,11 +14,13 @@ BuildAndZip () {
 }
 
 cd server
+go fmt
 GOOS=darwin  GOARCH=amd64       BuildAndZip "hashbox-mac-amd64"     "hashbox-mac"
 GOOS=windows GOARCH=amd64       BuildAndZip "hashbox-windows-amd64" "hashbox-windows.exe"
 GOOS=freebsd GOARCH=amd64       BuildAndZip "hashbox-freebsd-amd64" "hashbox-freebsd-amd64"
 GOOS=linux   GOARCH=arm GOARM=7 BuildAndZip "hashbox-linux-armv7l"  "hashbox-linux-armv7l"
 cd ../hashback
+go fmt
 GOOS=linux   GOARCH=amd64 BuildAndZip "hashback-linux-amd64" "hashback"
 GOOS=darwin  GOARCH=amd64 BuildAndZip "hashback-mac-amd64"   "hashback"
 GOOS=windows GOARCH=amd64 BuildAndZip "hashback-win-amd64"   "hashback.exe"

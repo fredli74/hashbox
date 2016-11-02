@@ -1021,15 +1021,24 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 	serverLog(fmt.Sprintf("Removed %s from file %s", core.HumanSize(compacted), file.Path))
 	return compacted
 }
-func (handler *StorageHandler) CompactAll(fileType int) {
+func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
 	var compacted int64
 	for fileNumber := int32(0); ; fileNumber++ {
 		file := handler.getNumberedFile(fileType, fileNumber, false)
 		if file == nil {
 			break // no more data
 		}
+		fileSize, deadSpace, err := handler.getNumberedFileSize(fileType, fileNumber)
+		PanicOn(err)
+		if int(deadSpace*100/fileSize) >= threshold {
+			compacted += handler.CompactFile(fileType, fileNumber)
+		} else {
+			serverLog(fmt.Sprintf("Skipping compact on file %s, est. dead data %s is less than %d%%", file.Path, core.HumanSize(deadSpace), threshold))
+		}
+		if err != nil {
+			break // no more data files
+		}
 
-		compacted += handler.CompactFile(fileType, fileNumber)
 	}
 	serverLog(fmt.Sprintf("All %s files compacted, %s released", storageFileTypeInfo[fileType].Extension, core.HumanSize(compacted)))
 }
