@@ -684,40 +684,31 @@ func (handler *StorageHandler) readBlockFile(blockID core.Byte128) (*core.Hashbo
 	return dataEntry.block, nil
 }
 
-func (handler *StorageHandler) CheckChain(roots []core.Byte128) (critical int) {
-	var chain []core.Byte128
-	visited := make(map[core.Byte128]bool) // Keep track if we have read the links from the block already
-
-	var progress time.Time
-	for _, r := range roots {
-		Debug("CheckChain on %x", r[:])
-		chain = append(chain, r)
-		for i := 0; len(chain) > 0; i++ {
-			blockID := chain[len(chain)-1]
-			chain = chain[:len(chain)-1]
-			if !visited[blockID] {
-				entry, _, _, err := handler.readIXEntry(blockID)
-				if err != nil {
-					critical++
-					fmt.Printf("Root block %x chain error: %s\n", r[:], err)
-				} else if entry.flags&entryFlagNoLinks == 0 {
-					metaFileNumber, metaOffset := entry.location.Get()
-					metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-					PanicOn(err)
-					if len(metaEntry.links) > 0 && entry.flags&entryFlagNoLinks == entryFlagNoLinks {
-						//panic(errors.New(fmt.Sprintf("Index entry for block %x is marked with NoLinks but the block has %d links", blockID[:], len(metaEntry.links))))
-					} else if len(metaEntry.links) == 0 && entry.flags&entryFlagNoLinks == 0 {
-						Debug("Block %x has no links but the index is missing NoLinks flag", blockID[:])
-					}
-					chain = append(chain, metaEntry.links...)
-				}
-				visited[blockID] = true
+func (handler *StorageHandler) CheckChain(blockID core.Byte128, tag string, verified map[core.Byte128]bool) (critical int) {
+	if !verified[blockID] {
+		entry, _, _, err := handler.readIXEntry(blockID)
+		if err != nil {
+			critical++
+			fmt.Printf("Chain %s error %s\n", tag, err)
+			return critical
+		} else if entry.flags&entryFlagNoLinks == 0 {
+			metaFileNumber, metaOffset := entry.location.Get()
+			metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+			PanicOn(err)
+			if len(metaEntry.links) > 0 && entry.flags&entryFlagNoLinks == entryFlagNoLinks {
+				//panic(errors.New(fmt.Sprintf("Index entry for block %x is marked with NoLinks but the block has %d links", blockID[:], len(metaEntry.links))))
+			} else if len(metaEntry.links) == 0 && entry.flags&entryFlagNoLinks == 0 {
+				Debug("[%s] Block %x has no links but the index is missing NoLinks flag", tag, blockID[:])
 			}
-
-			if time.Now().After(progress) {
-				fmt.Printf("%8d links\r", len(chain))
-				progress = time.Now().Add(500 * time.Millisecond)
+			for _, r := range metaEntry.links {
+				c := handler.CheckChain(r, tag, verified)
+				critical += c
 			}
+		}
+		if critical == 0 {
+			verified[blockID] = true
+		} else {
+			Debug("[%s] Block chain for %x contains an error", tag, blockID)
 		}
 	}
 	return critical
@@ -891,7 +882,7 @@ func SkipDataGap(reader *BufferedReader) int64 {
 	PanicOn(err)
 	if bytes.Equal(peek[:4], []byte("Cgap")) {
 		skip := core.BytesInt64(peek[4:12])
-		Debug(fmt.Sprintf("Cgap marker found in %s, jumping %d bytes", reader.File.Name(), skip))
+		Debug("Cgap marker found in %s, jumping %d bytes", reader.File.Name(), skip)
 		// Special skip logic since Discard only takes int32 and not int64
 		for skip > 0 {
 			n, _ := reader.Discard(core.LimitInt(skip))
@@ -915,7 +906,7 @@ func ForwardToDataMarker(reader *BufferedReader) (int64, error) {
 		offset++
 	}
 	if offset > 0 {
-		Debug(fmt.Sprintf("Jumped %d bytes to next data marker in %s", offset, reader.File.Name()))
+		Debug("Jumped %d bytes to next data marker in %s", offset, reader.File.Name())
 	}
 	return offset, nil
 }
@@ -1364,19 +1355,22 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 				rewriteIX = true
 			}
 
-			if !doRepair && rewriteIX {
-				critical++
-			}
-			if doRepair && rewriteIX {
-				Debug("REPAIRING meta for block %x", dataEntry.block.BlockID[:])
-				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: uint32(dataEntry.block.Data.Len()), links: dataEntry.block.Links}
-				metaEntry.location.Set(datFileNumber, blockOffset)
-				metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
+			if !rewriteIX {
+				Debug("Block %x (%x:%x) verified", dataEntry.block.BlockID[:], datFileNumber, blockOffset)
+			} else {
+				if doRepair {
+					Debug("REPAIRING meta for block %x", dataEntry.block.BlockID[:])
+					metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: uint32(dataEntry.block.Data.Len()), links: dataEntry.block.Links}
+					metaEntry.location.Set(datFileNumber, blockOffset)
+					metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
 
-				Debug("REPAIRING index for block %x", dataEntry.block.BlockID[:])
-				ixEntry.location.Set(metaFileNumber, metaOffset)
-				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
-				repaired++
+					Debug("REPAIRING index for block %x", dataEntry.block.BlockID[:])
+					ixEntry.location.Set(metaFileNumber, metaOffset)
+					handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
+					repaired++
+				} else {
+					critical++
+				}
 			}
 
 			p := int(offset * 100 / datSize)
@@ -1386,7 +1380,7 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 			}
 		}
 		if brokenSpot > 0 {
-			Debug(fmt.Sprintf("Truncating file %x at %x", datFileNumber, brokenSpot))
+			Debug("Truncating file %x at %x", datFileNumber, brokenSpot)
 			datFile.Writer.File.Truncate(brokenSpot)
 		}
 		if doRepair { // reset the amount of dead space as everything has been added back when repairing

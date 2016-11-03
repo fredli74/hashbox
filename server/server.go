@@ -453,10 +453,16 @@ func main() {
 
 		if doRepair || critical == 0 {
 			fmt.Println("Checking dataset transactions")
-			roots := accountHandler.CollectAllRootBlocks()
+			rootlist := accountHandler.CollectAllRootBlocks()
+
 			fmt.Println("Checking block chain integrity")
-			c := storageHandler.CheckChain(roots)
-			critical += c
+			verified := make(map[core.Byte128]bool) // Keep track of verified blocks
+			for _, r := range rootlist {
+				tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.BlockID[:])
+				Debug("CheckChain on %s", tag)
+				c := storageHandler.CheckChain(r.BlockID, tag, verified)
+				critical += c
+			}
 		}
 
 		if critical > 0 {
@@ -474,8 +480,8 @@ func main() {
 	var doIgnore bool
 	var deadSkip int64 = 5
 	cmd.BoolOption("compact", "gc", "Compact data files to free space", &doCompact, cmd.Standard)
-	cmd.IntOption("threshold", "gc", "<percentage>", "Compact minimum dead space threshold", &deadSkip, cmd.Standard)
 	cmd.BoolOption("ignore", "gc", "Ignore broken block chains (ERASES UNLINKED DATA)", &doIgnore, cmd.Standard)
+	cmd.IntOption("threshold", "gc", "<percentage>", "Compact minimum dead space threshold", &deadSkip, cmd.Standard)
 	cmd.Command("gc", "", func() {
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
@@ -485,7 +491,10 @@ func main() {
 
 		start := time.Now()
 		fmt.Println("Marking index entries")
-		roots := accountHandler.CollectAllRootBlocks()
+		var roots []core.Byte128
+		for _, r := range accountHandler.CollectAllRootBlocks() {
+			roots = append(roots, r.BlockID)
+		}
 		storageHandler.MarkIndexes(roots, true, doIgnore)
 		storageHandler.SweepIndexes(true)
 		fmt.Printf("Mark and sweep duration %.1f minutes\n", time.Since(start).Minutes())

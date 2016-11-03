@@ -436,9 +436,13 @@ func datasetFilename(aH core.Byte128, dName string) string {
 	return accountFilename(aH) + "." + base64filename(dNameH[:])
 }
 
-func (handler *AccountHandler) CollectAllRootBlocks() []core.Byte128 {
-	var rootBlocks []core.Byte128
+type BlockSource struct {
+	BlockID     core.Byte128
+	AccountName string
+	DatasetName string
+}
 
+func (handler *AccountHandler) CollectAllRootBlocks() (rootBlocks []BlockSource) {
 	// Open each dataset and check the chains
 	dir, err := os.Open(filepath.Join(datDirectory, "account"))
 	PanicOn(err)
@@ -469,11 +473,16 @@ func (handler *AccountHandler) CollectAllRootBlocks() []core.Byte128 {
 		name := info.Name()
 		if m, _ := filepath.Match("??????????????????????.??????????????????????.trn", name); m {
 			// Read the accountNameH from the filename
+			var accountName string
 			var accountNameH core.Byte128
 			{
 				decoded, err := base64.RawURLEncoding.DecodeString(name[:22])
 				PanicOn(err)
 				accountNameH.Set(decoded)
+				info := readInfoFile(accountNameH)
+				if info != nil {
+					accountName = string(info.AccountName)
+				}
 			}
 
 			// Open the file, read and check the file headers
@@ -518,7 +527,7 @@ func (handler *AccountHandler) CollectAllRootBlocks() []core.Byte128 {
 			}
 
 			for _, state := range collection.States {
-				rootBlocks = append(rootBlocks, state.BlockID)
+				rootBlocks = append(rootBlocks, BlockSource{BlockID: state.BlockID, DatasetName: string(datasetName), AccountName: string(accountName)})
 			}
 		}
 	}
