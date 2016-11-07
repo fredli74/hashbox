@@ -478,7 +478,7 @@ func (handler *StorageHandler) getNumberedFile(fileType int, fileNumber int32, c
 	return handler.filepool[name]
 }
 
-// getDeadSpace is used to read the dead space value from a meta or data file header
+// getNumberedFileSize is used to read the dead space value from a meta or data file header
 func (handler *StorageHandler) getNumberedFileSize(fileType int, fileNumber int32) (size int64, deadspace int64, err error) {
 	file := handler.getNumberedFile(fileType, fileNumber, false)
 	if file == nil {

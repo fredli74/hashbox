@@ -458,7 +458,7 @@ func main() {
 			fmt.Println("Checking block chain integrity")
 			verified := make(map[core.Byte128]bool) // Keep track of verified blocks
 			for _, r := range rootlist {
-				tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.BlockID[:])
+				tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
 				Debug("CheckChain on %s", tag)
 				c := storageHandler.CheckChain(r.BlockID, tag, verified)
 				critical += c

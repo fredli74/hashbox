@@ -440,6 +440,7 @@ type BlockSource struct {
 	BlockID     core.Byte128
 	AccountName string
 	DatasetName string
+	StateID     core.Byte128
 }
 
 func (handler *AccountHandler) CollectAllRootBlocks() (rootBlocks []BlockSource) {
@@ -527,7 +528,7 @@ func (handler *AccountHandler) CollectAllRootBlocks() (rootBlocks []BlockSource)
 			}
 
 			for _, state := range collection.States {
-				rootBlocks = append(rootBlocks, BlockSource{BlockID: state.BlockID, DatasetName: string(datasetName), AccountName: string(accountName)})
+				rootBlocks = append(rootBlocks, BlockSource{BlockID: state.BlockID, StateID: state.StateID, DatasetName: string(datasetName), AccountName: string(accountName)})
 			}
 		}
 	}
