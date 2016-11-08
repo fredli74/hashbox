@@ -56,22 +56,24 @@ func Try(f func()) (err interface{}) {
 	return nil
 }
 
+const LOGTIMEFORMAT string = "20060102 15:04:05"
+
 func Debug(format string, a ...interface{}) {
 	if DEBUG {
-		fmt.Print("DEBUG: ")
+		fmt.Print(time.Now().Format(LOGTIMEFORMAT), " [DEBUG] ")
 		fmt.Printf(format, a...)
 		fmt.Println()
 	}
 }
 func clientLog(v ...interface{}) {
 	logLock.Lock()
-	fmt.Print("C: ")
+	fmt.Print(time.Now().Format(LOGTIMEFORMAT), " [C] ")
 	fmt.Println(v...)
 	logLock.Unlock()
 }
 func serverLog(v ...interface{}) {
 	logLock.Lock()
-	fmt.Print("S: ")
+	fmt.Print(time.Now().Format(LOGTIMEFORMAT), " [S] ")
 	fmt.Println(v...)
 	logLock.Unlock()
 }
@@ -87,14 +89,14 @@ func panicHard(s string) {
 
 func handleConnection(conn net.Conn) {
 	remoteID := conn.RemoteAddr().String()
-	clientLog(remoteID, "= Connection established")
+	clientLog(".", remoteID, "= Connection established")
 
 	defer func() {
 		if err := recover(); err != nil {
-			clientLog(remoteID, "! ", err)
+			clientLog("!", remoteID, err)
 		}
 
-		clientLog(remoteID, "= Connection closed")
+		clientLog(".", remoteID, "= Connection closed")
 		conn.Close()
 	}()
 
@@ -110,7 +112,7 @@ func handleConnection(conn net.Conn) {
 		func() {
 			incoming := core.ReadMessage(conn)
 			defer incoming.Release()
-			clientLog(remoteID, "< "+incoming.String()+" "+incoming.Details())
+			clientLog(".", remoteID, "< "+incoming.String()+" "+incoming.Details())
 			reply := &core.ProtocolMessage{Num: incoming.Num, Type: incoming.Type & core.MsgTypeServerMask}
 			defer reply.Release()
 
@@ -238,7 +240,7 @@ func handleConnection(conn net.Conn) {
 				reply.Data = &core.MsgServerError{"Invalid authentication"}
 				keepAlive = false
 			}
-			clientLog(remoteID, "> "+reply.String()+" "+reply.Details())
+			clientLog(".", remoteID, "> "+reply.String()+" "+reply.Details())
 			core.WriteMessage(conn, reply)
 		}()
 	}
@@ -248,7 +250,7 @@ func connectionListener(listener *net.TCPListener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			serverLog("Closed network connection")
+			serverLog(".", "Closed network connection")
 			done <- true
 			return
 		}
@@ -305,7 +307,7 @@ func main() {
 			fmt.Println("Error listening: ", err.Error())
 			os.Exit(1)
 		}
-		serverLog(cmd.Title, "is listening on", listener.Addr().String())
+		serverLog(".", cmd.Title, "is listening on", listener.Addr().String())
 
 		done = make(chan bool)
 		defer close(done)
@@ -316,7 +318,7 @@ func main() {
 		signal.Notify(signalchan, os.Kill)
 		go func() {
 			for s := range signalchan {
-				serverLog("Received OS signal:", s)
+				serverLog(".", "Received OS signal:", s)
 				listener.Close()
 				// done <- true
 				return
@@ -344,7 +346,7 @@ func main() {
 		case <-storageHandler.signal:
 		}
 
-		serverLog("Hashbox Server terminating")
+		serverLog(".", "Hashbox Server terminating")
 	})
 
 	// TODO: This is a temporary hack to allow creation of hashback users on the server side
@@ -378,7 +380,7 @@ func main() {
 		PanicOn(err)
 
 		block.Release()
-		fmt.Println("User added")
+		serverLog(".", "User added")
 	})
 
 	var doRepair bool
@@ -405,7 +407,7 @@ func main() {
 				panic(err)
 			}
 			startfile = int32(i)
-			fmt.Printf("Starting from file #%d (%04x)\n", startfile, startfile)
+			serverLog(".", fmt.Sprintf("Starting from file #%d (%04x)", startfile, startfile))
 		}
 		if len(cmd.Args) > 3 {
 			i, err := strconv.ParseInt(cmd.Args[3], 0, 32)
@@ -413,7 +415,7 @@ func main() {
 				panic(err)
 			}
 			endfile = int32(i)
-			fmt.Printf("Stopping after file #%d (%04x)\n", endfile, endfile)
+			serverLog(".", fmt.Sprintf("Stopping after file #%d (%04x)", endfile, endfile))
 		}
 
 		if doRepair {
@@ -427,35 +429,35 @@ func main() {
 		start := time.Now()
 
 		if doRebuild {
-			fmt.Println("Removing index files")
+			serverLog(".", "Removing index files")
 			storageHandler.RemoveFiles(storageFileTypeIndex)
-			fmt.Println("Removing meta files")
+			serverLog(".", "Removing meta files")
 			storageHandler.RemoveFiles(storageFileTypeMeta)
 		}
 
-		fmt.Println("Checking all storage files")
+		serverLog(".", "Checking all storage files")
 		repaired, critical := storageHandler.CheckFiles(doRepair)
 		if !skipData && (doRepair || critical == 0) {
-			fmt.Println("Checking data files")
+			serverLog(".", "Checking data files")
 			r, c := storageHandler.CheckData(doRepair, startfile, endfile)
 			repaired += r
 			critical += c
 		}
 		if !skipMeta && (doRepair || critical == 0) {
-			fmt.Println("Checking meta files")
+			serverLog(".", "Checking meta files")
 			storageHandler.CheckMeta()
 		}
 
 		if !skipIndex && (doRepair || critical == 0) {
-			fmt.Println("Checking index files")
+			serverLog(".", "Checking index files")
 			storageHandler.CheckIndexes()
 		}
 
 		if doRepair || critical == 0 {
-			fmt.Println("Checking dataset transactions")
+			serverLog(".", "Checking dataset transactions")
 			rootlist := accountHandler.CollectAllRootBlocks()
 
-			fmt.Println("Checking block chain integrity")
+			serverLog(".", "Checking block chain integrity")
 			verified := make(map[core.Byte128]bool) // Keep track of verified blocks
 			for _, r := range rootlist {
 				tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
@@ -466,13 +468,13 @@ func main() {
 		}
 
 		if critical > 0 {
-			fmt.Printf("Detected %d critical errors, DO NOT start the server unless everything is repaired\n", critical)
+			serverLog("!", fmt.Sprintf("Detected %d critical errors, DO NOT start the server unless everything is repaired", critical))
 		}
 		if repaired > 0 {
-			fmt.Printf("Performed %d repairs, please run again to verify repairs\n", repaired)
+			serverLog("*", fmt.Sprintf("Performed %d repairs, please run again to verify repairs", repaired))
 		}
 		if critical == 0 && repaired == 0 {
-			fmt.Printf("All checks completed successfully in %.1f minutes\n\n", time.Since(start).Minutes())
+			serverLog(".", fmt.Sprintf("All checks completed successfully in %.1f minutes", time.Since(start).Minutes()))
 		}
 	})
 
@@ -490,20 +492,20 @@ func main() {
 		}
 
 		start := time.Now()
-		fmt.Println("Marking index entries")
+		serverLog(".", "Marking index entries")
 		var roots []core.Byte128
 		for _, r := range accountHandler.CollectAllRootBlocks() {
 			roots = append(roots, r.BlockID)
 		}
 		storageHandler.MarkIndexes(roots, true, doIgnore)
 		storageHandler.SweepIndexes(true)
-		fmt.Printf("Mark and sweep duration %.1f minutes\n", time.Since(start).Minutes())
+		serverLog(".", fmt.Sprintf("Mark and sweep duration %.1f minutes", time.Since(start).Minutes()))
 		storageHandler.ShowStorageDeadSpace()
 		if doCompact {
 			storageHandler.CompactAll(storageFileTypeData, int(deadSkip))
 			storageHandler.CompactAll(storageFileTypeMeta, int(deadSkip))
 		}
-		fmt.Printf("Garbage collection completed in %.1f minutes\n\n", time.Since(start).Minutes())
+		serverLog(".", fmt.Sprintf("Garbage collection completed in %.1f minutes", time.Since(start).Minutes()))
 	})
 
 	err = cmd.Parse()
