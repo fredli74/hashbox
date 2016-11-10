@@ -133,6 +133,16 @@ func NewStorageHandler() *StorageHandler {
 	}
 	handler.wg.Add(1)
 
+	// With new age shuffle compression, always fill new data at the end
+	for {
+		topFile := handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber+1, false)
+		if topFile != nil {
+			handler.topDatFileNumber++
+		} else {
+			break
+		}
+	}
+
 	go handler.dispatcher()
 	return handler
 }
@@ -911,7 +921,7 @@ func ForwardToDataMarker(reader *BufferedReader) (int64, error) {
 	return offset, nil
 }
 
-func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (compacted int64) {
+func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowestMove int) (compacted int64) {
 	var entry storageEntry
 	switch fileType {
 	case storageFileTypeMeta:
@@ -928,7 +938,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 	PanicOn(err)
 	serverLog(".", fmt.Sprintf("Compacting file %s, %s (est. dead data %s)", file.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace)))
 
-	// Open a separate reader
+	// Open a separate reader that is not moved by any other routines
 	reader, err := OpenBufferedReader(file.Path, file.BufferSize, file.Flag)
 	PanicOn(err)
 	_, err = reader.Seek(storageFileHeaderSize, os.SEEK_SET)
@@ -938,7 +948,9 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 	offset, writeOffset := int64(storageFileHeaderSize), int64(storageFileHeaderSize)
 	for offset < fileSize {
 		// Check if there is a Cgap marker here and in that case, jump ahead of it
-		offset += SkipDataGap(reader)
+		skip := SkipDataGap(reader)
+		compacted += skip
+		offset += skip
 
 		readOffset := offset
 		entrySize := entry.Unserialize(reader)
@@ -949,70 +961,64 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) (comp
 
 		if _, _, _, err = handler.readIXEntry(entryBlockID); err != nil {
 			Debug("* Removed %x:%x block %x (%s)", fileNumber, readOffset, entryBlockID[:], err.Error())
+			compacted += int64(entrySize)
 		} else if !entry.VerifyLocation(handler, fileNumber, readOffset) {
 			Debug("* Removed %x:%x block %x (obsolete entry)", fileNumber, readOffset, entryBlockID[:])
-		} else if readOffset != writeOffset {
-			newOffset := writeOffset
-			if readOffset-writeOffset < int64(entrySize)+12 { // 12 bytes for the Cgap marker
-				Debug("( No room to move block to %x, %d < %d (+12 bytes)", writeOffset, readOffset-writeOffset, entrySize)
-
-				var newFile *BufferedFile
-				var newOffset int64
-				var newFileNumber int32 = 0
-				for {
-					newFile = handler.getNumberedFile(fileType, newFileNumber, true)
-					newOffset, err = newFile.Writer.Seek(0, os.SEEK_END)
-					PanicOn(err)
-					if newOffset <= storageOffsetLimit {
-						break
-					}
-					newFileNumber++
-				}
-				written := int64(entry.Serialize(newFile.Writer))
-				newFile.Writer.Flush()
-				Debug(". Moved block to end of file %s, bytes %x-%x", newFile.Path, newOffset, newOffset+written)
-				if newFileNumber == fileNumber {
-					Debug("( File %s, increased in size from %x to %x", newFile.Path, fileSize, fileSize+written)
-					fileSize += written
-				}
-
-				entry.ChangeLocation(handler, newFileNumber, newOffset)
-			} else {
-				file.Writer.Seek(newOffset, os.SEEK_SET)
+			compacted += int64(entrySize)
+		} else {
+			// Keep the block
+			freeFileNum, freeOffset, freeFile := handler.FindFreeOffset(fileType, lowestMove)
+			if freeFileNum >= fileNumber && readOffset == writeOffset { // No space in earlier file let it be if possible
+				writeOffset += int64(entrySize)
+				Debug("( No need to write, moving writeOffset to %x", writeOffset)
+			} else if freeFileNum >= fileNumber && readOffset-writeOffset >= int64(entrySize)+12 { // No space in earlier file, but it can be shifted inside the same file
+				file.Writer.Seek(writeOffset, os.SEEK_SET)
 				written := int64(entry.Serialize(file.Writer))
-				Debug(". Moved block from %x to %x:%x", readOffset, writeOffset, writeOffset+written)
+				Debug(". Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, fileNumber, writeOffset)
 				writeOffset += written
 
-				Debug("( Creating a free space marker at %x:%x (skip %d bytes)", fileNumber, readOffset, readOffset-writeOffset)
+				Debug("( Creating a free space marker (%d bytes skip) at %x:%x", readOffset-writeOffset, fileNumber, readOffset)
 
 				core.WriteOrPanic(file.Writer, []byte("Cgap"))
 				core.WriteOrPanic(file.Writer, readOffset-writeOffset)
 				file.Writer.Flush()
 
-				entry.ChangeLocation(handler, fileNumber, newOffset)
+				entry.ChangeLocation(handler, fileNumber, writeOffset)
+			} else if free, _ := core.FreeSpace(datDirectory); free < int64(entrySize)*2 {
+				serverLog("*", fmt.Sprintf("Unable to move block %x (%d bytes) because there is not enough free space on data path", entryBlockID[:], entrySize))
+				writeOffset += int64(entrySize)
+			} else { // found space in a different file, move the block
+				entry.Serialize(freeFile.Writer)
+				written := int64(entry.Serialize(freeFile.Writer))
+				Debug(". Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, freeFileNum, freeOffset)
+				freeFile.Writer.Flush()
+
+				if freeFileNum == fileNumber {
+					Debug("( File %s, increased in size from %x to %x", freeFile.Path, fileSize, fileSize+written)
+					fileSize += written
+				}
+
+				entry.ChangeLocation(handler, freeFileNum, freeOffset)
 			}
-		} else {
-			writeOffset += int64(entrySize)
-			Debug("( No need to write, moving writeOffset to %x", writeOffset)
 		}
 
 		p := int(offset * 100 / fileSize)
 		if p > lastProgress {
-			fmt.Printf("%d (%d%%)\r", writeOffset-offset, p)
+			fmt.Printf("%d (%d%%)\r", 0-compacted, p)
 		}
 	}
 	if writeOffset > offset {
 		panic(" ASSERT !  compact made the file larger?")
 	}
 
-	compacted = (offset - writeOffset)
 	file.Writer.File.Truncate(writeOffset)
 	handler.setDeadSpace(fileType, fileNumber, 0, false)
 
-	serverLog(".", fmt.Sprintf("Removed %s from file %s", core.HumanSize(compacted), file.Path))
+	serverLog(".", fmt.Sprintf("Removed %s from file %s", core.HumanSize(offset-writeOffset), file.Path))
 	return compacted
 }
 func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
+	var lowestMove int
 	var compacted int64
 	for fileNumber := int32(0); ; fileNumber++ {
 		file := handler.getNumberedFile(fileType, fileNumber, false)
@@ -1022,9 +1028,10 @@ func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
 		fileSize, deadSpace, err := handler.getNumberedFileSize(fileType, fileNumber)
 		PanicOn(err)
 		if int(deadSpace*100/fileSize) >= threshold {
-			compacted += handler.CompactFile(fileType, fileNumber)
+			compacted += handler.CompactFile(fileType, fileNumber, lowestMove)
 		} else {
 			serverLog(".", fmt.Sprintf("Skipping compact on file %s, est. dead data %s is less than %d%%", file.Path, core.HumanSize(deadSpace), threshold))
+			lowestMove = int(fileNumber)
 		}
 		if err != nil {
 			break // no more data files
@@ -1197,9 +1204,9 @@ func (handler *StorageHandler) CheckFiles(doRepair bool) (repaired int, critical
 	return repaired, critical
 }
 
-func (handler *StorageHandler) FindFreeOffset(fileType int) (freeFileNum int32, freeOffset int64, freeFile *BufferedFile) {
+func (handler *StorageHandler) FindFreeOffset(fileType int, lowestNum int) (freeFileNum int32, freeOffset int64, freeFile *BufferedFile) {
 	var err error
-	freeFileNum = int32(0)
+	freeFileNum = int32(lowestNum)
 	freeOffset = int64(0)
 	for {
 		freeFile = handler.getNumberedFile(fileType, freeFileNum, true)
@@ -1276,7 +1283,7 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 			}
 			if brokenSpot > 0 && blockOffset-brokenSpot < 12 {
 				// Cannot fit a Cgap marker, so we need to move the block
-				moveFileNum, moveOffset, moveFile := handler.FindFreeOffset(storageFileTypeData)
+				moveFileNum, moveOffset, moveFile := handler.FindFreeOffset(storageFileTypeData, 0)
 				Debug(". Rewriting block %x at (%x:%x)", dataEntry.block.BlockID[:], moveFileNum, moveOffset)
 				dataEntry.Serialize(moveFile.Writer)
 				moveFile.Writer.Flush()
