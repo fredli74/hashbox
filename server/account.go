@@ -70,7 +70,7 @@ func (handler *AccountHandler) dispatcher() {
 		// did this goroutine panic?
 		switch r := recover().(type) {
 		case error:
-			serverLog(r)
+			core.Log(core.LogError, "%v", r)
 			handler.signal <- r
 		}
 		handler.wg.Done()

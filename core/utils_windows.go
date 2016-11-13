@@ -25,8 +25,8 @@ func FreeSpace(path string) (int64, error) {
 	}
 	lpFreeBytesAvailable := int64(0)
 	if r1, _, e1 := syscall.Syscall6(uintptr(GetDiskFreeSpaceEx), 4,
-			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(path))),
-			uintptr(unsafe.Pointer(&lpFreeBytesAvailable)), 0, 0, 0, 0); r1 == 0 {
+		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(path))),
+		uintptr(unsafe.Pointer(&lpFreeBytesAvailable)), 0, 0, 0, 0); r1 == 0 {
 		if e1 != 0 {
 			return 0, error(e1)
 		} else {

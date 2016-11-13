@@ -7,7 +7,7 @@
 
 package core
 
-import 	"syscall"
+import "syscall"
 
 func FreeSpace(path string) (int64, error) {
 	stat := syscall.Statfs_t{}

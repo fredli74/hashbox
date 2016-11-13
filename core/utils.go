@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func ReadOrPanic(r io.Reader, data interface{}) int {
@@ -45,6 +46,26 @@ func CopyNOrPanic(dst io.Writer, src io.Reader, n int) int {
 		panic(err)
 	}
 	return int(written)
+}
+
+const LOGTIMEFORMAT string = "20060102 15:04:05"
+const (
+	LogError = iota
+	LogWarning
+	LogInfo
+	LogDebug
+	LogTrace
+)
+
+var LogLevel int = LogInfo
+var logMarks []string = []string{"!", "*", ".", "(", "?"}
+
+func Log(level int, format string, a ...interface{}) {
+	if level <= LogLevel {
+		fmt.Printf("%s %s ", time.Now().UTC().Format(LOGTIMEFORMAT), logMarks[level])
+		fmt.Printf(format, a...)
+		fmt.Println()
+	}
 }
 
 var humanUnitName []string = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}

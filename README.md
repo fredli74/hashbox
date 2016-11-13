@@ -134,12 +134,12 @@ If the last remaining backup id of a dataset is removed, the dataset will no lon
 
 ### Roadmap ###
 Things that should be implemented or considered
-* Server low storage space threshold, return error on store before hitting 0 free space.
 * Client platform specific file information (User/Group on linux, system/hidden on Windows for example). Client should store a root block with platform information.
 * Server admin interface (API?) to adduser and change password so it can be done online.
 * Server GC scheduled or triggered on low free space.
 * Server GC mark and sweep partially or fully online.
 * Server GC compact phase online through the storage engine.
+* Server recover broken chains, the only reliable solution now is to GC and remove everything that gets unlinked
 * Server mirroring.
 * Client GUI.
 * Client data encryption (system design allows it).
