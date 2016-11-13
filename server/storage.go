@@ -127,21 +127,12 @@ func (handler *StorageHandler) Close() {
 }
 func NewStorageHandler() *StorageHandler {
 	handler := &StorageHandler{
-		queue:    make(chan ChannelCommand, 32),
-		signal:   make(chan error), // cannot be buffered
-		filepool: make(map[string]*BufferedFile),
+		queue:            make(chan ChannelCommand, 32),
+		signal:           make(chan error), // cannot be buffered
+		filepool:         make(map[string]*BufferedFile),
+		topDatFileNumber: -1,
 	}
 	handler.wg.Add(1)
-
-	// With new age shuffle compression, always fill new data at the end
-	for {
-		topFile := handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber+1, false)
-		if topFile != nil {
-			handler.topDatFileNumber++
-		} else {
-			break
-		}
-	}
 
 	go handler.dispatcher()
 	return handler
@@ -640,9 +631,16 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 		return false
 	}
 
-	dataEntry := storageDataEntry{block: block}
-	var data = new(bytes.Buffer)
-	dataEntry.Serialize(data)
+	// With new age shuffle compression, always fill new data at the end
+	if handler.topDatFileNumber < 0 {
+		for {
+			if topFile := handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber+1, false); topFile != nil {
+				handler.topDatFileNumber++
+			} else {
+				break
+			}
+		}
+	}
 
 	var datFile *BufferedFile
 	var datOffset int64
@@ -655,6 +653,9 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 		handler.topDatFileNumber++
 	}
 
+	dataEntry := storageDataEntry{block: block}
+	var data = new(bytes.Buffer)
+	dataEntry.Serialize(data)
 	data.WriteTo(datFile.Writer)
 	datFile.Writer.Flush()
 
