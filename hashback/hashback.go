@@ -302,14 +302,16 @@ func (session *BackupSession) Close(polite bool) {
 	Debug("Disconnected from %s", session.ServerString)
 }
 
-func (session *BackupSession) Log(v ...interface{}) {
+func (session *BackupSession) Log(format string, a ...interface{}) {
 	session.Client.Paint("\n")
-	fmt.Println(v...)
+	fmt.Printf(format, a...)
+	fmt.Println()
 }
-func (session *BackupSession) LogVerbose(v ...interface{}) {
+func (session *BackupSession) LogVerbose(format string, a ...interface{}) {
 	if session.Verbose {
 		session.Client.Paint("\n")
-		fmt.Println(v...)
+		fmt.Printf(format, a...)
+		fmt.Println()
 	}
 }
 

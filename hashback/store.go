@@ -36,9 +36,9 @@ func (session *BackupSession) PrintStoreProgress(interval time.Duration) {
 			compression = 100.0 * (float64(session.Client.WriteData) - float64(session.Client.WriteDataCompressed)) / float64(session.Client.WriteData)
 		}
 		sent, skipped, _, queuedsize := session.Client.GetStats()
-		session.Log(fmt.Sprintf(">>> %.1f min, read: %s, written: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s",
+		session.Log(">>> %.1f min, read: %s, written: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s",
 			time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(session.Client.WriteDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
-			sent, skipped+sent, core.HumanSize(int64(queuedsize))))
+			sent, skipped+sent, core.HumanSize(int64(queuedsize)))
 
 		//fmt.Println(core.MemoryStats())
 		session.Progress = time.Now().Add(interval)
@@ -47,7 +47,7 @@ func (session *BackupSession) PrintStoreProgress(interval time.Duration) {
 
 func (session *BackupSession) PrintRecoverProgress(progress float64, interval time.Duration) {
 	if session.ShowProgress && (interval == 0 || time.Now().After(session.Progress)) {
-		session.Log(fmt.Sprintf(">>> %.1f min, resuming last backup: %.0f%%", time.Since(session.Start).Minutes(), progress))
+		session.Log(">>> %.1f min, resuming last backup: %.0f%%", time.Since(session.Start).Minutes(), progress)
 		session.Progress = time.Now().Add(interval)
 	}
 }
@@ -187,7 +187,7 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) (id core.B
 	for _, info := range filelist {
 		e, err := session.storePath(filepath.Join(path, info.Name()), false)
 		if err != nil {
-			session.Log(fmt.Sprintf("Skipping (ERROR) %v", err))
+			session.Log("Skipping (ERROR) %v", err)
 		}
 		if e != nil {
 			dir.File = append(dir.File, e)
@@ -226,7 +226,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			isDir = info.IsDir() // Check ignore even if we cannot open the file (to avoid output errors on files we already ignore)
 		}
 		if match, pattern := session.ignoreMatch(path, isDir); match {
-			session.LogVerbose(fmt.Sprintf("Skipping (ignore %s) %s", pattern, path))
+			session.LogVerbose("Skipping (ignore %s) %s", pattern, path)
 			return nil, nil
 		}
 		if err != nil {
@@ -243,16 +243,16 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 	}
 
 	if entry.FileMode&uint32(os.ModeTemporary) > 0 {
-		session.LogVerbose("Skipping (temporary file)", path)
+		session.LogVerbose("Skipping (temporary file) %s", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeDevice) > 0 {
-		session.LogVerbose("Skipping (device file)", path)
+		session.LogVerbose("Skipping (device file) %s", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeNamedPipe) > 0 {
-		session.LogVerbose("Skipping (named pipe file)", path)
+		session.LogVerbose("Skipping (named pipe file) %s", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeSocket) > 0 {
-		session.LogVerbose("Skipping (socket file)", path)
+		session.LogVerbose("Skipping (socket file) %s", path)
 		return nil, nil
 	} else if entry.FileMode&uint32(os.ModeSymlink) > 0 {
 		entry.ContentType = ContentTypeSymLink
@@ -272,7 +272,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 				session.UnchangedFiles++
 			}
 		} else {
-			session.LogVerbose("SYMLINK", path, "->", sym)
+			session.LogVerbose("SYMLINK %s -> %s", path, sym)
 		}
 
 		session.Files++
@@ -314,7 +314,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			}
 		} else {
 			if entry.FileSize > 0 {
-				session.LogVerbose(fmt.Sprintf("%s", path))
+				session.LogVerbose("%s", path)
 				if err = session.storeFile(path, entry); err != nil {
 					if e, ok := err.(*os.PathError); ok && runtime.GOOS == "windows" && e.Err == syscall.Errno(0x20) { // Windows ERROR_SHARING_VIOLATION
 						return refEntry, err // Returning refEntry here in case this file existed and could be opened in a previous backup
@@ -500,7 +500,7 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 			session.Log("Removing backup %s (%s)", date.Format(time.RFC3339), reason)
 			session.Client.RemoveDatasetState(datasetName, s.StateID)
 		} else {
-			Debug("Keeping backup %s\n", date.Format(time.RFC3339))
+			Debug("Keeping backup %s", date.Format(time.RFC3339))
 			lastbackup = timestamp
 		}
 	}

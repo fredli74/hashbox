@@ -25,8 +25,8 @@ func (session *BackupSession) PrintRestoreProgress() {
 	if session.WriteData > 0 {
 		compression = 100.0 * (float64(session.WriteData) - float64(session.ReadData)) / float64(session.WriteData)
 	}
-	session.Log(fmt.Sprintf(">>> %.1f min, read: %s (%.0f%% compr), written: %s, %d folders, %d files\n",
-		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files))
+	session.Log(">>> %.1f min, read: %s (%.0f%% compr), written: %s, %d folders, %d files",
+		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
 
 	//fmt.Println(core.MemoryStats())
 }
@@ -36,8 +36,8 @@ func (session *BackupSession) PrintDiffProgress() {
 	if session.WriteData > 0 {
 		compression = 100.0 * (float64(session.WriteData) - float64(session.ReadData)) / float64(session.WriteData)
 	}
-	session.Log(fmt.Sprintf(">>> %.1f min, read: %s (%.0f%% compr), compared: %s, %d folders, %d files\n",
-		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files))
+	session.Log(">>> %.1f min, read: %s (%.0f%% compr), compared: %s, %d folders, %d files",
+		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
 
 	//fmt.Println(core.MemoryStats())
 }
@@ -64,13 +64,13 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 	return nil
 }
 
-func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
+func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 	localname := platformSafeFilename(string(e.FileName))
 	if localname != string(e.FileName) {
-		backup.Log("Platform restricted characters substituted in filename", string(e.FileName))
+		session.Log("Platform restricted characters substituted in filename %s", string(e.FileName))
 	}
 	localpath := filepath.Join(path, localname)
-	backup.LogVerbose(localpath)
+	session.LogVerbose(localpath)
 
 	if e.FileMode&uint32(os.ModeSymlink) > 0 {
 		switch e.ContentType {
@@ -88,7 +88,7 @@ func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
 
 		switch e.ContentType {
 		case ContentTypeDirectory:
-			if err := backup.restoreDir(e.ContentBlockID, localpath); err != nil {
+			if err := session.restoreDir(e.ContentBlockID, localpath); err != nil {
 				return err
 			}
 		case ContentTypeEmpty:
@@ -98,7 +98,7 @@ func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		if err := os.Chmod(localpath, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
 			return err
 		}
-		backup.Directories++
+		session.Directories++
 	} else {
 		if e.ContentType != ContentTypeFileChain && e.ContentType != ContentTypeFileData && e.ContentType != ContentTypeEmpty {
 			panic(errors.New(fmt.Sprintf("Invalid ContentType for a file (%d)", e.ContentType)))
@@ -116,17 +116,17 @@ func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
 			case ContentTypeFileChain:
 				var chain FileChainBlock
 
-				blockData := backup.Client.ReadBlock(e.ContentBlockID).Data
+				blockData := session.Client.ReadBlock(e.ContentBlockID).Data
 				chain.Unserialize(&blockData)
 				blockData.Release()
 
 				for i := range chain.ChainBlocks {
-					if err := backup.restoreFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i]); err != nil {
+					if err := session.restoreFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i]); err != nil {
 						return err
 					}
 				}
 			case ContentTypeFileData:
-				if err := backup.restoreFileData(fil, e.ContentBlockID, e.DecryptKey); err != nil {
+				if err := session.restoreFileData(fil, e.ContentBlockID, e.DecryptKey); err != nil {
 					return err
 				}
 			}
@@ -138,36 +138,36 @@ func (backup *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		if err := os.Chtimes(localpath, time.Now(), time.Unix(0, e.ModTime)); err != nil {
 			return err
 		}
-		backup.Files++
+		session.Files++
 	}
 	return nil
 }
 
-func (backup *BackupSession) restoreDir(blockID core.Byte128, path string) error {
+func (session *BackupSession) restoreDir(blockID core.Byte128, path string) error {
 	var dir DirectoryBlock
 
-	blockData := backup.Client.ReadBlock(blockID).Data
+	blockData := session.Client.ReadBlock(blockID).Data
 	dir.Unserialize(&blockData)
 	blockData.Release()
 
 	for _, e := range dir.File {
-		if err := backup.restoreEntry(e, path); err != nil {
+		if err := session.restoreEntry(e, path); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (backup *BackupSession) changeDir(blockID core.Byte128, pathList []string) (*DirectoryBlock, int, error) {
+func (session *BackupSession) changeDir(blockID core.Byte128, pathList []string) (*DirectoryBlock, int, error) {
 	var dir DirectoryBlock
-	blockData := backup.Client.ReadBlock(blockID).Data
+	blockData := session.Client.ReadBlock(blockID).Data
 	dir.Unserialize(&blockData)
 	blockData.Release()
 
 	if len(pathList) > 0 {
 		for _, f := range dir.File {
 			if string(f.FileName) == pathList[0] && f.ContentType == ContentTypeDirectory {
-				return backup.changeDir(f.ContentBlockID, pathList[1:])
+				return session.changeDir(f.ContentBlockID, pathList[1:])
 			}
 		}
 		return &dir, len(pathList), errors.New("Path not found")
@@ -175,29 +175,29 @@ func (backup *BackupSession) changeDir(blockID core.Byte128, pathList []string) 
 	return &dir, len(pathList), nil
 }
 
-func (backup *BackupSession) Restore(rootBlockID core.Byte128, restorepath string, restorelist ...string) {
+func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath string, restorelist ...string) {
 	if err := os.MkdirAll(restorepath, 0777); err != nil {
 		panic(err)
 	}
 
 	if len(restorelist) > 0 {
 		for _, r := range restorelist {
-			list, err := backup.findPathMatch(rootBlockID, r)
+			list, err := session.findPathMatch(rootBlockID, r)
 			if err != nil {
 				panic(err)
 			}
 			for _, e := range list {
-				if err := backup.restoreEntry(e, restorepath); err != nil {
+				if err := session.restoreEntry(e, restorepath); err != nil {
 					panic(err)
 				}
 			}
 		}
 	} else {
-		if err := backup.restoreDir(rootBlockID, restorepath); err != nil {
+		if err := session.restoreDir(rootBlockID, restorepath); err != nil {
 			panic(err)
 		}
 	}
-	backup.PrintRestoreProgress()
+	session.PrintRestoreProgress()
 }
 
 /*********************** DIFF *******************/
@@ -221,7 +221,7 @@ func hexdumpLine(offset int64, buffer []byte) (line string) {
 	line += "|"
 	return line
 }
-func (backup *BackupSession) diffAndPrint(startOffset int64, A io.Reader, B io.Reader) bool {
+func (session *BackupSession) diffAndPrint(startOffset int64, A io.Reader, B io.Reader) bool {
 	bufA := make([]byte, 16)
 	bufB := make([]byte, 16)
 	for offset := startOffset; ; {
@@ -236,8 +236,8 @@ func (backup *BackupSession) diffAndPrint(startOffset int64, A io.Reader, B io.R
 		}
 
 		if bytes.Compare(bufA[:nA], bufB[:nA]) != 0 {
-			backup.Log("local: ", hexdumpLine(offset, bufA[:nA]))
-			backup.Log("remote:", hexdumpLine(offset, bufB[:nB]))
+			session.Log("local:  %s", hexdumpLine(offset, bufA[:nA]))
+			session.Log("remote: %s", hexdumpLine(offset, bufB[:nB]))
 			return false
 		}
 		offset += int64(nA)
@@ -245,18 +245,18 @@ func (backup *BackupSession) diffAndPrint(startOffset int64, A io.Reader, B io.R
 	return true
 }
 
-func (backup *BackupSession) diffFileData(f *os.File, blockID core.Byte128, DecryptKey core.Byte128) bool {
-	if backup.ShowProgress && time.Now().After(backup.Progress) {
-		backup.PrintDiffProgress()
-		backup.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
+func (session *BackupSession) diffFileData(f *os.File, blockID core.Byte128, DecryptKey core.Byte128) bool {
+	if session.ShowProgress && time.Now().After(session.Progress) {
+		session.PrintDiffProgress()
+		session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
 	}
 
-	block := backup.Client.ReadBlock(blockID)
+	block := session.Client.ReadBlock(blockID)
 	if !block.VerifyBlock() {
 		panic(errors.New(fmt.Sprintf("Block %x corrupted, hash does not match")))
 	}
 
-	backup.ReadData += int64(block.CompressedSize)
+	session.ReadData += int64(block.CompressedSize)
 	// TODO: Decrypt block
 
 	d := block.Data
@@ -265,15 +265,15 @@ func (backup *BackupSession) diffFileData(f *os.File, blockID core.Byte128, Decr
 	d.ReadSeek(0, os.SEEK_SET)
 	offset, _ := f.Seek(0, os.SEEK_CUR)
 
-	if !backup.diffAndPrint(offset, &d, f) {
+	if !session.diffAndPrint(offset, &d, f) {
 		return false
 	}
 
-	backup.WriteData += int64(d.Len())
+	session.WriteData += int64(d.Len())
 	return true
 }
 
-func (backup *BackupSession) diffEntry(e *FileEntry, path string) (same bool, err error) {
+func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, err error) {
 	localname := filepath.Join(path, platformSafeFilename(string(e.FileName)))
 	localinfo, err := os.Lstat(localname)
 	if os.IsNotExist(err) {
@@ -304,12 +304,12 @@ func (backup *BackupSession) diffEntry(e *FileEntry, path string) (same bool, er
 
 		switch e.ContentType {
 		case ContentTypeDirectory:
-			backup.diffDir(e.ContentBlockID, localname)
+			session.diffDir(e.ContentBlockID, localname)
 		case ContentTypeEmpty:
 		default:
 			panic(errors.New(fmt.Sprintf("Invalid ContentType for a directory (%d)", e.ContentType)))
 		}
-		backup.Directories++
+		session.Directories++
 	} else {
 		if e.ContentType != ContentTypeFileChain && e.ContentType != ContentTypeFileData && e.ContentType != ContentTypeEmpty {
 			panic(errors.New(fmt.Sprintf("Invalid ContentType for a file (%d)", e.ContentType)))
@@ -319,11 +319,11 @@ func (backup *BackupSession) diffEntry(e *FileEntry, path string) (same bool, er
 				return false, errors.New(fmt.Sprintf("local file size %d and remote size %d are different", e.FileSize, int64(localinfo.Size())))
 			}
 			if e.FileMode&uint32(os.ModePerm) != uint32(localinfo.Mode())&uint32(os.ModePerm) {
-				backup.Log(fmt.Sprintf("%s local permissions %s and remote %s are different", localname, localinfo.Mode(), os.FileMode(e.FileMode)))
+				session.Log("%s local permissions %s and remote %s are different", localname, localinfo.Mode(), os.FileMode(e.FileMode))
 				same = false
 			}
 			if e.ModTime != localinfo.ModTime().UnixNano() {
-				backup.Log(fmt.Sprintf("%s local modification time %s and remote %s are different", localname, localinfo.ModTime().Format(time.RFC3339), time.Unix(0, int64(e.ModTime)).Format(time.RFC3339)))
+				session.Log("%s local modification time %s and remote %s are different", localname, localinfo.ModTime().Format(time.RFC3339), time.Unix(0, int64(e.ModTime)).Format(time.RFC3339))
 				same = false
 			}
 
@@ -339,34 +339,34 @@ func (backup *BackupSession) diffEntry(e *FileEntry, path string) (same bool, er
 			case ContentTypeFileChain:
 				var chain FileChainBlock
 
-				blockData := backup.Client.ReadBlock(e.ContentBlockID).Data
+				blockData := session.Client.ReadBlock(e.ContentBlockID).Data
 				chain.Unserialize(&blockData)
 				blockData.Release()
 
 				for i := range chain.ChainBlocks {
-					same = backup.diffFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i])
+					same = session.diffFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i])
 					if !same {
 						break
 					}
 				}
 			case ContentTypeFileData:
-				same = backup.diffFileData(fil, e.ContentBlockID, e.DecryptKey)
+				same = session.diffFileData(fil, e.ContentBlockID, e.DecryptKey)
 			}
 			return same, err
 		}()
 		if err != nil {
 			return false, err
 		}
-		backup.Files++
+		session.Files++
 	}
 	return same, err
 }
 
 // Todo: diffDir does not work with platform filename substitution
-func (backup *BackupSession) diffDir(blockID core.Byte128, path string) {
+func (session *BackupSession) diffDir(blockID core.Byte128, path string) {
 	var dir DirectoryBlock
 
-	blockData := backup.Client.ReadBlock(blockID).Data
+	blockData := session.Client.ReadBlock(blockID).Data
 	dir.Unserialize(&blockData)
 	blockData.Release()
 
@@ -385,23 +385,23 @@ func (backup *BackupSession) diffDir(blockID core.Byte128, path string) {
 	iL, iR := 0, 0
 	for iL < len(fl) && iR < len(dir.File) {
 		if iL >= len(fl) || (iR < len(dir.File) && fl[iL].Name() > string(dir.File[iR].FileName)) {
-			backup.Log(filepath.Join(path, string(dir.File[iR].FileName)), "local path does not exist")
+			session.Log("%s local path does not exist", filepath.Join(path, string(dir.File[iR].FileName)))
 			iR++
 		} else if iR >= len(dir.File) || (iL < len(fl) && fl[iL].Name() < string(dir.File[iR].FileName)) {
-			backup.Log(filepath.Join(path, fl[iL].Name()), "remote path does not exist")
+			session.Log("%s remote path does not exist", filepath.Join(path, fl[iL].Name()))
 			iL++
 		} else {
 			e := dir.File[iR]
-			same, err := backup.diffEntry(e, path)
+			same, err := session.diffEntry(e, path)
 			if !same {
-				backup.DifferentFiles++
+				session.DifferentFiles++
 				if err != nil {
-					backup.Log(filepath.Join(path, string(e.FileName)), err.Error())
+					session.Log("%s %s", filepath.Join(path, string(e.FileName)), err.Error())
 				} else {
-					backup.Log(filepath.Join(path, string(e.FileName)), "data is different")
+					session.Log("%s data is different", filepath.Join(path, string(e.FileName)))
 				}
 			} else {
-				backup.LogVerbose(filepath.Join(path, string(e.FileName)), "is the same")
+				session.LogVerbose("%s is the same", filepath.Join(path, string(e.FileName)))
 			}
 			iL++
 			iR++
@@ -409,7 +409,7 @@ func (backup *BackupSession) diffDir(blockID core.Byte128, path string) {
 	}
 }
 
-func (backup *BackupSession) DiffRestore(rootBlockID core.Byte128, restorepath string, restorelist ...string) {
+func (session *BackupSession) DiffRestore(rootBlockID core.Byte128, restorepath string, restorelist ...string) {
 	info, err := os.Stat(restorepath)
 	PanicOn(err)
 
@@ -419,26 +419,26 @@ func (backup *BackupSession) DiffRestore(rootBlockID core.Byte128, restorepath s
 
 	if len(restorelist) > 0 {
 		for _, r := range restorelist {
-			list, err := backup.findPathMatch(rootBlockID, r)
+			list, err := session.findPathMatch(rootBlockID, r)
 			if err != nil {
 				panic(err)
 			}
 			for _, e := range list {
-				same, err := backup.diffEntry(e, restorepath)
+				same, err := session.diffEntry(e, restorepath)
 				if !same {
-					backup.DifferentFiles++
+					session.DifferentFiles++
 					if err != nil {
-						backup.Log(filepath.Join(restorepath, string(e.FileName)), err.Error())
+						session.Log("%s %s", err.Error(), filepath.Join(restorepath, string(e.FileName)))
 					} else {
-						backup.Log(filepath.Join(restorepath, string(e.FileName)), "data is different")
+						session.Log("%s data is different", filepath.Join(restorepath, string(e.FileName)))
 					}
 				} else {
-					backup.LogVerbose(filepath.Join(restorepath, string(e.FileName)), "is the same")
+					session.LogVerbose("%s is the same", filepath.Join(restorepath, string(e.FileName)))
 				}
 			}
 		}
 	} else {
-		backup.diffDir(rootBlockID, restorepath)
+		session.diffDir(rootBlockID, restorepath)
 	}
-	backup.PrintDiffProgress()
+	session.PrintDiffProgress()
 }
