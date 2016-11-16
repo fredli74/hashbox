@@ -7,6 +7,10 @@ package main
 
 import (
 	//"github.com/davecheney/profile"
+	"log"
+	"net/http"
+	_ "net/http/pprof"
+	"runtime"
 
 	"github.com/fredli74/bytearray"
 	cmd "github.com/fredli74/cmdparser"
@@ -234,8 +238,13 @@ func connectionListener(listener *net.TCPListener) {
 	}
 }
 
-func main() {
+func run() int {
 	bytearray.EnableAutoGC(60, 74)
+
+	runtime.SetBlockProfileRate(1000)
+	go func() {
+		log.Println(http.ListenAndServe(":6060", nil))
+	}()
 
 	//defer profile.Start(&profile.Config{CPUProfile: false, MemProfile: true, ProfilePath: ".", NoShutdownHook: true}).Stop()
 
@@ -243,7 +252,7 @@ func main() {
 		// Panic error handling
 		if r := recover(); r != nil {
 			fmt.Println(r)
-			os.Exit(1)
+			return 1
 		}
 	}()*/
 
@@ -287,8 +296,7 @@ func main() {
 
 		var listener *net.TCPListener
 		if listener, err = net.ListenTCP("tcp", &serverAddr); err != nil {
-			fmt.Println("Error listening: ", err.Error())
-			os.Exit(1)
+			panic(errors.New(fmt.Sprintf("Error listening: %v", err.Error())))
 		}
 		core.Log(core.LogInfo, "%s is listening on %s", cmd.Title, listener.Addr().String())
 
@@ -496,5 +504,9 @@ func main() {
 
 	fmt.Println(core.MemoryStats())
 
-	os.Exit(0)
+	return 0
+}
+
+func main() {
+	os.Exit(run())
 }

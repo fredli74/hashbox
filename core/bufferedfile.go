@@ -3,7 +3,8 @@
 //	| # | |    Copyright 2015-2016
 //	+---+´
 
-package main
+// Hashbox core, version 0.1
+package core
 
 import (
 	"bufio"
@@ -17,6 +18,10 @@ import (
 type BufferedReader struct {
 	File *os.File
 	*bufio.Reader
+}
+
+type BufferedUnserializer interface {
+	Unserialize(r *BufferedReader) (size int)
 }
 
 func OpenBufferedReader(path string, buffersize int, flag int) (*BufferedReader, error) {
@@ -37,6 +42,10 @@ func (b *BufferedReader) Seek(offset int64, whence int) (ret int64, err error) {
 type BufferedWriter struct {
 	File *os.File
 	*bufio.Writer
+}
+
+type BufferedSerializer interface {
+	Serialize(w *BufferedWriter) (size int)
 }
 
 func OpenBufferedWriter(path string, buffersize int, flag int, perm os.FileMode) (*BufferedWriter, error) {
@@ -77,9 +86,11 @@ func OpenBufferedFile(path string, buffersize int, flag int, perm os.FileMode) (
 }
 func (b *BufferedFile) Size() int64 {
 	b.Writer.Flush() // Always flush in case we want to read what we have written
-	info, err := b.Reader.File.Stat()
-	PanicOn(err)
-	return info.Size()
+	if info, err := b.Reader.File.Stat(); err != nil {
+		panic(err)
+	} else {
+		return info.Size()
+	}
 }
 func (b *BufferedFile) Close() (err error) {
 	b.Writer.Flush() // Always flush in case we want to read what we have written
