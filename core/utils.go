@@ -62,9 +62,7 @@ var logMarks []string = []string{"!", "*", ".", "(", "?"}
 
 func Log(level int, format string, a ...interface{}) {
 	if level <= LogLevel {
-		fmt.Printf("%s %s ", time.Now().UTC().Format(LOGTIMEFORMAT), logMarks[level])
-		fmt.Printf(format, a...)
-		fmt.Println()
+		fmt.Printf("%s %s " + format + "\n", append([]interface{}{time.Now().UTC().Format(LOGTIMEFORMAT), logMarks[level]}, a...)...)
 	}
 }
 
