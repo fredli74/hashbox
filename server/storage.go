@@ -833,6 +833,8 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 					e, f, o, err := handler.readIXEntry(entry.blockID)
 					if err == nil && e != nil && (f < ixFileNumber || (f == ixFileNumber && o < offset)) {
 						core.Log(core.LogDebug, "Found an obsolete index for Block %x at %x:%x, the correct index already exists at %x:%x", entry.blockID[:], ixFileNumber, offset, f, o)
+						deletedBlocks++
+						blanks = append(blanks, offset)
 					} else if f < ixFileNumber {
 						core.Log(core.LogDebug, "Moving file for Block %x IX from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, f, o)
 						if e != nil || err == nil {
