@@ -27,7 +27,7 @@ const (
 type HashboxBlock struct {
 	BlockID  Byte128   // = md5( LinkLength Links DataLength Data )
 	Links    []Byte128 // Array of BlockIDs
-	DataType byte      // 1 byte data type
+	DataType uint8      // 1 byte data type
 
 	Data bytearray.ByteArray
 
@@ -47,7 +47,7 @@ func (b *HashboxBlock) Release() {
 }
 
 func (b *HashboxBlock) SerializeLinks(w io.Writer) (size int) {
-	size += WriteOrPanic(w, uint32(len(b.Links)))
+	size += WriteUint32(w, uint32(len(b.Links)))
 	for i := range b.Links {
 		size += b.Links[i].Serialize(w)
 	}
@@ -56,10 +56,10 @@ func (b *HashboxBlock) SerializeLinks(w io.Writer) (size int) {
 func (b *HashboxBlock) Serialize(w io.Writer) (size int) {
 	size += b.BlockID.Serialize(w)
 	size += b.SerializeLinks(w)
-	size += WriteOrPanic(w, b.DataType)
+	size += WriteUint8(w, b.DataType)
 
 	b.CompressData()
-	size += WriteOrPanic(w, uint32(b.Data.Len()))
+	size += WriteUint32(w, uint32(b.Data.Len()))
 	l := CopyOrPanic(w, &b.Data)
 	if l != b.Data.Len() {
 		panic(errors.New(fmt.Sprintf("ASSERT! Writing block %x with data length %d bytes, but wrote %d bytes")))
@@ -75,13 +75,13 @@ func (b *HashboxBlock) Unserialize(r io.Reader) (size int) {
 
 	size += b.BlockID.Unserialize(r)
 	var n uint32
-	size += ReadOrPanic(r, &n)
+	size += ReadUint32(r, &n)
 	b.Links = make([]Byte128, n)
 	for i := 0; i < int(n); i++ {
 		size += b.Links[i].Unserialize(r)
 	}
-	size += ReadOrPanic(r, &b.DataType)
-	size += ReadOrPanic(r, &n)
+	size += ReadUint8(r, &b.DataType)
+	size += ReadUint32(r, &n)	// Data length
 	size += CopyNOrPanic(&b.Data, r, int(n))
 
 	b.Compressed = true
@@ -97,9 +97,9 @@ func (b *HashboxBlock) HashData() (BlockID Byte128) {
 
 	hash := md5.New()
 	b.SerializeLinks(hash)
-	//	WriteOrPanic(hash, b.DataType)   not part of the hash
+	//	WriteUint8(hash, b.DataType)   not part of the hash
 
-	WriteOrPanic(hash, uint32(b.Data.Len()))
+	WriteUint32(hash, uint32(b.Data.Len()))
 	b.Data.ReadSeek(0, bytearray.SEEK_SET)
 	CopyOrPanic(hash, &b.Data)
 
@@ -156,7 +156,7 @@ func (b *HashboxBlock) VerifyBlock() bool {
 			c := ZlibUncompress(b.Data)
 			hash := md5.New()
 			b.SerializeLinks(hash)
-			WriteOrPanic(hash, uint32(c.Len()))
+			WriteUint32(hash, uint32(c.Len()))
 			CopyOrPanic(hash, &c)
 			copy(verifyID[:], hash.Sum(nil)[:16])
 			c.Release()

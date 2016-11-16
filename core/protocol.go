@@ -172,8 +172,8 @@ type ProtocolMessage struct {
 }
 
 func (m *ProtocolMessage) Serialize(w io.Writer) (size int) {
-	size += WriteOrPanic(w, m.Num)
-	size += WriteOrPanic(w, m.Type)
+	size += WriteUint16(w, m.Num)
+	size += WriteUint32(w, m.Type)
 
 	if m.Data != nil {
 		mv := reflect.ValueOf(m.Data).Elem()
@@ -191,8 +191,8 @@ func (m *ProtocolMessage) Serialize(w io.Writer) (size int) {
 	return
 }
 func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
-	size += ReadOrPanic(r, &m.Num)
-	size += ReadOrPanic(r, &m.Type)
+	size += ReadUint16(r, &m.Num)
+	size += ReadUint32(r, &m.Type)
 
 	switch m.Type {
 	case MsgTypeListDataset | MsgTypeClientMask:

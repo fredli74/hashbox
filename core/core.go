@@ -26,11 +26,11 @@ type Serializer interface {
 type Byte128 [16]byte
 
 func (b Byte128) Serialize(w io.Writer) (size int) {
-	size += WriteOrPanic(w, b[:])
+	size += WriteBytes(w, b[:])
 	return
 }
 func (b *Byte128) Unserialize(r io.Reader) (size int) {
-	size += ReadOrPanic(r, b[:])
+	size += ReadBytes(r, b[:])
 	return
 }
 func (b *Byte128) Compare(a Byte128) int {
@@ -81,15 +81,15 @@ func DeepHmac(depth int, data []byte, key Byte128) Byte128 {
 type String string
 
 func (m String) Serialize(w io.Writer) (size int) {
-	size += WriteOrPanic(w, int32(len(m)))
-	size += WriteOrPanic(w, []byte(m))
+	size += WriteUint32(w, uint32(len(m)))
+	size += WriteBytes(w, []byte(m))
 	return
 }
 func (m *String) Unserialize(r io.Reader) (size int) {
-	var l int32
-	size += ReadOrPanic(r, &l)
+	var l uint32
+	size += ReadUint32(r, &l)
 	b := make([]byte, l)
-	size += ReadOrPanic(r, b)
+	size += ReadBytes(r, b)
 	*m = String(b)
 	return
 }
@@ -103,13 +103,13 @@ type Dataset struct {
 
 func (d *Dataset) Serialize(w io.Writer) (size int) {
 	size += d.Name.Serialize(w)
-	size += WriteOrPanic(w, d.Size)
+	size += WriteInt64(w, d.Size)
 	size += d.ListH.Serialize(w)
 	return
 }
 func (d *Dataset) Unserialize(r io.Reader) (size int) {
 	size += d.Name.Unserialize(r)
-	size += ReadOrPanic(r, &d.Size)
+	size += ReadInt64(r, &d.Size)
 	size += d.ListH.Unserialize(r)
 	return
 }
@@ -117,7 +117,7 @@ func (d *Dataset) Unserialize(r io.Reader) (size int) {
 type DatasetArray []Dataset
 
 func (a DatasetArray) Serialize(w io.Writer) (size int) {
-	size += WriteOrPanic(w, uint32(len(a)))
+	size += WriteUint32(w, uint32(len(a)))
 	for i := range a {
 		size += a[i].Serialize(w)
 	}
@@ -125,7 +125,7 @@ func (a DatasetArray) Serialize(w io.Writer) (size int) {
 }
 func (a *DatasetArray) Unserialize(r io.Reader) (size int) {
 	var n uint32
-	size += ReadOrPanic(r, &n)
+	size += ReadUint32(r, &n)
 	A := make([]Dataset, n)
 	for i := 0; i < int(n); i++ {
 		size += A[i].Unserialize(r)
@@ -146,22 +146,22 @@ type DatasetState struct {
 func (d DatasetState) Serialize(w io.Writer) (size int) {
 	size += d.StateID.Serialize(w)
 	size += d.BlockID.Serialize(w)
-	size += WriteOrPanic(w, d.Size)
-	size += WriteOrPanic(w, d.UniqueSize)
+	size += WriteInt64(w, d.Size)
+	size += WriteInt64(w, d.UniqueSize)
 	return
 }
 func (m *DatasetState) Unserialize(r io.Reader) (size int) {
 	size += m.StateID.Unserialize(r)
 	size += m.BlockID.Unserialize(r)
-	size += ReadOrPanic(r, &m.Size)
-	size += ReadOrPanic(r, &m.UniqueSize)
+	size += ReadInt64(r, &m.Size)
+	size += ReadInt64(r, &m.UniqueSize)
 	return
 }
 
 type DatasetStateArray []DatasetState
 
 func (a DatasetStateArray) Serialize(w io.Writer) (size int) {
-	size += WriteOrPanic(w, uint32(len(a)))
+	size += WriteUint32(w, uint32(len(a)))
 	for i := range a {
 		size += a[i].Serialize(w)
 	}
@@ -169,7 +169,7 @@ func (a DatasetStateArray) Serialize(w io.Writer) (size int) {
 }
 func (a *DatasetStateArray) Unserialize(r io.Reader) (size int) {
 	var n uint32
-	size += ReadOrPanic(r, &n)
+	size += ReadUint32(r, &n)
 	A := make([]DatasetState, n)
 	for i := 0; i < int(n); i++ {
 		size += A[i].Unserialize(r)

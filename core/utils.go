@@ -9,7 +9,6 @@ package core
 import (
 	"github.com/fredli74/bytearray"
 
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -19,20 +18,61 @@ import (
 	"time"
 )
 
-func ReadOrPanic(r io.Reader, data interface{}) int {
-	err := binary.Read(r, binary.BigEndian, data)
-	if err != nil {
+func ReadBytes(r io.Reader, data []byte) int {
+	if n, err := io.ReadFull(r, data); err != nil {
 		panic(err)
-	}
-	return binary.Size(data)
+	} else {
+		return n
+	}	
 }
-func WriteOrPanic(w io.Writer, data interface{}) int {
-	err := binary.Write(w, binary.BigEndian, data)
-	if err != nil {
+func ReadUint8(r io.Reader, data *uint8) int {
+	var b [1]byte
+	n := ReadBytes(r, b[:])
+	*data = b[0]
+	return n
+}
+func ReadUint16(r io.Reader, data *uint16) int {
+	var b [2]byte
+	n := ReadBytes(r, b[:])
+	*data = uint16(b[1]) | uint16(b[0])<<8
+	return n
+}
+func ReadUint32(r io.Reader, data *uint32) int {
+	var b [4]byte
+	n := ReadBytes(r, b[:])
+	*data = uint32(b[3]) | uint32(b[2])<<8 | uint32(b[1])<<16 | uint32(b[0])<<24
+	return n
+}
+func ReadInt64(r io.Reader, data *int64) int {
+	var b [8]byte
+	n := ReadBytes(r, b[:])
+	*data = int64(uint64(b[7]) | uint64(b[6])<<8 | uint64(b[5])<<16 | uint64(b[4])<<24 | uint64(b[3])<<32 | uint64(b[2])<<40 | uint64(b[1])<<48 | uint64(b[0])<<56)
+	return n
+}
+func WriteBytes(w io.Writer, data []byte) int {
+	if n, err := w.Write(data); err != nil {
 		panic(err)
+	} else {
+		return n
 	}
-	return binary.Size(data)
 }
+func WriteUint8(w io.Writer, data uint8) int {
+	var b [1]byte = [1]byte{data}
+	return WriteBytes(w, b[:])
+}
+func WriteUint16(w io.Writer, data uint16) int {
+	var b [2]byte = [2]byte{byte(data >> 8),byte(data)}
+	return WriteBytes(w, b[:])
+}
+func WriteUint32(w io.Writer, data uint32) int {
+	var b [4]byte = [4]byte{byte(data >> 24),byte(data >> 16),byte(data >> 8),byte(data)}
+	return WriteBytes(w, b[:])
+}
+func WriteInt64(w io.Writer, data int64) int {
+	var b [8]byte = [8]byte{byte(data >> 56),byte(data >> 48),byte(data >> 40),byte(data>>32),byte(data >> 24),byte(data >> 16),byte(data >> 8),byte(data)}
+	return WriteBytes(w, b[:])
+}
+
 func CopyOrPanic(dst io.Writer, src io.Reader) int {
 	written, err := io.Copy(dst, src)
 	if err != nil {

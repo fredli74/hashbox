@@ -126,14 +126,14 @@ func (e FileEntry) HasFileLink() bool {
 }
 
 func (e FileEntry) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, uint32(0x66656E74)) // "fent"
+	size += core.WriteUint32(w, uint32(0x66656E74)) // "fent"
 	size += e.FileName.Serialize(w)
-	size += core.WriteOrPanic(w, e.FileSize)
-	size += core.WriteOrPanic(w, e.FileMode)
-	size += core.WriteOrPanic(w, e.ModTime)
+	size += core.WriteInt64(w, e.FileSize)
+	size += core.WriteUint32(w, e.FileMode)
+	size += core.WriteInt64(w, e.ModTime)
 	size += e.ReferenceID.Serialize(w)
 
-	size += core.WriteOrPanic(w, e.ContentType)
+	size += core.WriteUint8(w, e.ContentType)
 	if e.HasContentBlockID() {
 		size += e.ContentBlockID.Serialize(w)
 	}
@@ -147,17 +147,17 @@ func (e FileEntry) Serialize(w io.Writer) (size int) {
 }
 func (e *FileEntry) Unserialize(r io.Reader) (size int) {
 	var check uint32
-	size += core.ReadOrPanic(r, &check)
+	size += core.ReadUint32(r, &check)
 	if check != 0x66656E74 { // "fent"
 		panic(errors.New("Corrupted FileEntry!"))
 	}
 	size += e.FileName.Unserialize(r)
-	size += core.ReadOrPanic(r, &e.FileSize)
-	size += core.ReadOrPanic(r, &e.FileMode)
-	size += core.ReadOrPanic(r, &e.ModTime)
+	size += core.ReadInt64(r, &e.FileSize)
+	size += core.ReadUint32(r, &e.FileMode)
+	size += core.ReadInt64(r, &e.ModTime)
 	size += e.ReferenceID.Unserialize(r)
 
-	size += core.ReadOrPanic(r, &e.ContentType)
+	size += core.ReadUint8(r, &e.ContentType)
 	if e.HasContentBlockID() {
 		size += e.ContentBlockID.Unserialize(r)
 	}
@@ -177,8 +177,8 @@ type FileChainBlock struct {
 }
 
 func (b FileChainBlock) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, uint32(0x6663686E)) // "fchn"
-	size += core.WriteOrPanic(w, uint32(len(b.ChainBlocks)))
+	size += core.WriteUint32(w, uint32(0x6663686E)) // "fchn"
+	size += core.WriteUint32(w, uint32(len(b.ChainBlocks)))
 	for i := range b.ChainBlocks {
 		size += b.ChainBlocks[i].Serialize(w)
 		size += b.DecryptKeys[i].Serialize(w)
@@ -187,12 +187,12 @@ func (b FileChainBlock) Serialize(w io.Writer) (size int) {
 }
 func (b *FileChainBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
-	size += core.ReadOrPanic(r, &check)
+	size += core.ReadUint32(r, &check)
 	if check != 0x6663686E { // "fchn"
 		panic(errors.New("Corrupted FileChainBlock!"))
 	}
 	var l uint32
-	size += core.ReadOrPanic(r, &l)
+	size += core.ReadUint32(r, &l)
 	b.ChainBlocks = make([]core.Byte128, l)
 	b.DecryptKeys = make([]core.Byte128, l)
 	for i := range b.ChainBlocks {
@@ -207,8 +207,8 @@ type DirectoryBlock struct {
 }
 
 func (b DirectoryBlock) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, uint32(0x64626C6B)) // "dblk"
-	size += core.WriteOrPanic(w, uint32(len(b.File)))
+	size += core.WriteUint32(w, uint32(0x64626C6B)) // "dblk"
+	size += core.WriteUint32(w, uint32(len(b.File)))
 	for _, f := range b.File {
 		size += f.Serialize(w)
 	}
@@ -216,12 +216,12 @@ func (b DirectoryBlock) Serialize(w io.Writer) (size int) {
 }
 func (b *DirectoryBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
-	size += core.ReadOrPanic(r, &check)
+	size += core.ReadUint32(r, &check)
 	if check != 0x64626C6B { // "dblk"
 		panic(errors.New("Corrupted DirectoryBlock!"))
 	}
 	var l uint32
-	size += core.ReadOrPanic(r, &l)
+	size += core.ReadUint32(r, &l)
 	b.File = make([]*FileEntry, l)
 	for i := range b.File {
 		b.File[i] = new(FileEntry)

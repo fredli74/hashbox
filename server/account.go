@@ -205,29 +205,29 @@ func NewAccountHandler() *AccountHandler {
 //*****************************************************************************************************************//
 
 const (
-	dbVersion                  int32  = 1
-	dbFileTypeTransaction      int32  = 0x48415458 // "HATX" Hashbox Account Transaction
+	dbVersion                  uint32 = 1
+	dbFileTypeTransaction      uint32 = 0x48415458 // "HATX" Hashbox Account Transaction
 	dbFileExtensionTransaction string = ".trn"
-	dbFileTypeDatabase         int32  = 0x48414442 // "HADB" Hashbox Account Database
+	dbFileTypeDatabase         uint32 = 0x48414442 // "HADB" Hashbox Account Database
 	dbFileExtensionDatabase    string = ".db"
-	dbTxTypeAdd                int32  = 0x2B414444 // "+ADD"
-	dbTxTypeDel                int32  = 0x2D44454C // "-DEL"
+	dbTxTypeAdd                uint32 = 0x2B414444 // "+ADD"
+	dbTxTypeDel                uint32 = 0x2D44454C // "-DEL"
 )
 
 type dbFileHeader struct {
-	filetype    int32
-	version     int32
+	filetype    uint32
+	version     uint32
 	datasetName core.String
 }
 
 func (h *dbFileHeader) Serialize(w io.Writer) {
-	core.WriteOrPanic(w, h.filetype)
-	core.WriteOrPanic(w, h.version)
+	core.WriteUint32(w, h.filetype)
+	core.WriteUint32(w, h.version)
 	h.datasetName.Serialize(w)
 }
 func (h *dbFileHeader) Unserialize(r io.Reader) {
-	core.ReadOrPanic(r, &h.filetype)
-	core.ReadOrPanic(r, &h.version)
+	core.ReadUint32(r, &h.filetype)
+	core.ReadUint32(r, &h.version)
 	if h.version != dbVersion {
 		panic(errors.New("Invalid version in dbFileHeader"))
 	}
@@ -236,18 +236,18 @@ func (h *dbFileHeader) Unserialize(r io.Reader) {
 
 type dbTx struct {
 	timestamp int64
-	txType    int32
+	txType    uint32
 	data      interface{}
 }
 
 func (t *dbTx) Serialize(w io.Writer) {
-	core.WriteOrPanic(w, t.timestamp)
-	core.WriteOrPanic(w, t.txType)
+	core.WriteInt64(w, t.timestamp)
+	core.WriteUint32(w, t.txType)
 	t.data.(core.Serializer).Serialize(w)
 }
 func (t *dbTx) Unserialize(r io.Reader) {
-	core.ReadOrPanic(r, &t.timestamp)
-	core.ReadOrPanic(r, &t.txType)
+	core.ReadInt64(r, &t.timestamp)
+	core.ReadUint32(r, &t.txType)
 	switch t.txType {
 	case dbTxTypeAdd:
 		var s core.DatasetState
@@ -270,12 +270,12 @@ type dbStateCollection struct {
 }
 
 func (c *dbStateCollection) Serialize(w io.Writer) {
-	core.WriteOrPanic(w, c.Size)
+	core.WriteInt64(w, c.Size)
 	c.ListH.Serialize(w)
 	c.States.Serialize(w)
 }
 func (c *dbStateCollection) Unserialize(r io.Reader) {
-	core.ReadOrPanic(r, &c.Size)
+	core.ReadInt64(r, &c.Size)
 	c.ListH.Unserialize(r)
 	c.States.Unserialize(r)
 }

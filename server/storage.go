@@ -225,18 +225,18 @@ type storageFileHeader struct {
 }
 
 func (h *storageFileHeader) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, h.filetype)
-	size += core.WriteOrPanic(w, h.version)
-	size += core.WriteOrPanic(w, h.deadspace)
+	size += core.WriteUint32(w, h.filetype)
+	size += core.WriteUint32(w, h.version)
+	size += core.WriteInt64(w, h.deadspace)
 	return
 }
 func (h *storageFileHeader) Unserialize(r io.Reader) (size int) {
-	size += core.ReadOrPanic(r, &h.filetype)
-	size += core.ReadOrPanic(r, &h.version)
+	size += core.ReadUint32(r, &h.filetype)
+	size += core.ReadUint32(r, &h.version)
 	if h.version != storageVersion {
 		panic(errors.New("Invalid version in dbFileHeader"))
 	}
-	size += core.ReadOrPanic(r, &h.deadspace)
+	size += core.ReadInt64(r, &h.deadspace)
 	return
 }
 
@@ -260,12 +260,10 @@ func (b sixByteLocation) Get() (File int32, Offset int64) {
 	return int32(l >> 34), (l & 0x3ffffffff)
 }
 func (b sixByteLocation) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, b[:])
-	return
+	return core.WriteBytes(w, b[:])
 }
 func (b *sixByteLocation) Unserialize(r io.Reader) (size int) {
-	size += core.ReadOrPanic(r, b[:])
-	return
+	return core.ReadBytes(r, b[:])
 }
 
 //*******************************************************************************//
@@ -277,7 +275,7 @@ const storageIXEntryProbeLimit int = 682                                        
 const storageIXFileSize = storageIXEntrySize * int64(2^24+storageIXEntryProbeLimit) // last 24 bits of hash, plus max probe = 24*(2^24+682) = 384MiB indexes
 
 type storageIXEntry struct { // 24 bytes data
-	flags    int16           // 2 bytes
+	flags    uint16          // 2 bytes
 	blockID  core.Byte128    // 16 bytes
 	location sixByteLocation // 6 bytes
 }
@@ -287,13 +285,13 @@ func (e *storageIXEntry) BlockID() core.Byte128 {
 }
 
 func (e *storageIXEntry) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, e.flags)
+	size += core.WriteUint16(w, e.flags)
 	size += e.blockID.Serialize(w)
 	size += e.location.Serialize(w)
 	return
 }
 func (e *storageIXEntry) Unserialize(r io.Reader) (size int) {
-	size += core.ReadOrPanic(r, &e.flags)
+	size += core.ReadUint16(r, &e.flags)
 	size += e.blockID.Unserialize(r)
 	size += e.location.Unserialize(r)
 	return
@@ -328,26 +326,26 @@ func (e *storageMetaEntry) BlockID() core.Byte128 {
 }
 
 func (e *storageMetaEntry) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, storageDataMarker)
+	size += core.WriteUint32(w, storageDataMarker)
 	size += e.blockID.Serialize(w)
 	size += e.location.Serialize(w)
-	size += core.WriteOrPanic(w, e.dataSize)
-	size += core.WriteOrPanic(w, uint32(len(e.links)))
+	size += core.WriteUint32(w, e.dataSize)
+	size += core.WriteUint32(w, uint32(len(e.links)))
 	for i := range e.links {
 		size += e.links[i].Serialize(w)
 	}
 	return
 }
 func (e *storageMetaEntry) Unserialize(r io.Reader) (size int) {
-	size += core.ReadOrPanic(r, &e.datamarker)
+	size += core.ReadUint32(r, &e.datamarker)
 	if e.datamarker != storageDataMarker {
 		panic(errors.New(fmt.Sprintf("Incorrect metadata cache marker %x (should be %x)", e.datamarker, storageDataMarker)))
 	}
 	size += e.blockID.Unserialize(r)
 	size += e.location.Unserialize(r)
-	size += core.ReadOrPanic(r, &e.dataSize)
+	size += core.ReadUint32(r, &e.dataSize)
 	var n uint32
-	size += core.ReadOrPanic(r, &n)
+	size += core.ReadUint32(r, &n)
 	e.links = make([]core.Byte128, n)
 	for i := 0; i < int(n); i++ {
 		size += e.links[i].Unserialize(r)
@@ -386,14 +384,14 @@ func (e *storageDataEntry) Release() {
 }
 
 func (e *storageDataEntry) Serialize(w io.Writer) (size int) {
-	size += core.WriteOrPanic(w, storageDataMarker)
+	size += core.WriteUint32(w, storageDataMarker)
 	size += e.block.Serialize(w)
 	return
 }
 
 // IMPORTANT Unserialize allocates memory that needs to be freed manually
 func (e *storageDataEntry) Unserialize(r io.Reader) (size int) {
-	size += core.ReadOrPanic(r, &e.datamarker)
+	size += core.ReadUint32(r, &e.datamarker)
 	if e.datamarker != storageDataMarker {
 		panic(errors.New(fmt.Sprintf("Incorrect datamarker %x (should be %x)", e.datamarker, storageDataMarker)))
 	}
@@ -758,7 +756,7 @@ func (handler *StorageHandler) MarkIndexes(roots []core.Byte128, Paint bool, doI
 					}
 
 					ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
-					core.WriteOrPanic(ixFile.Writer, entry.flags)
+					core.WriteUint16(ixFile.Writer, entry.flags)
 					ixFile.Writer.Flush()
 				}
 			}
@@ -843,7 +841,7 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 						}
 						ixFile.Writer.Seek(newOffset, os.SEEK_SET)
 						if offset == newOffset { // no need to rewrite whole record
-							core.WriteOrPanic(ixFile.Writer, entry.flags)
+							core.WriteUint16(ixFile.Writer, entry.flags)
 						} else {
 							core.Log(core.LogDebug, "Moving Block %x IX from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, ixFileNumber, newOffset)
 							entry.Serialize(ixFile.Writer)
@@ -980,8 +978,8 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 
 				core.Log(core.LogTrace, "Creating a free space marker (%d bytes skip) at %x:%x", readOffset-writeOffset, fileNumber, readOffset)
 
-				core.WriteOrPanic(file.Writer, []byte("Cgap"))
-				core.WriteOrPanic(file.Writer, readOffset-writeOffset)
+				core.WriteBytes(file.Writer, []byte("Cgap"))
+				core.WriteInt64(file.Writer, readOffset-writeOffset)
 				file.Writer.Flush()
 
 				entry.ChangeLocation(handler, fileNumber, writeOffset)
@@ -1305,8 +1303,8 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 			} else if brokenSpot > 0 {
 				datFile.Writer.Seek(brokenSpot, os.SEEK_SET)
 				core.Log(core.LogTrace, "Creating a free space marker at %x:%x (skip %d bytes)", datFileNumber, brokenSpot, blockOffset-brokenSpot)
-				core.WriteOrPanic(datFile.Writer, []byte("Cgap"))
-				core.WriteOrPanic(datFile.Writer, blockOffset-brokenSpot)
+				core.WriteBytes(datFile.Writer, []byte("Cgap"))
+				core.WriteInt64(datFile.Writer, blockOffset-brokenSpot)
 				datFile.Writer.Flush()
 				brokenSpot = 0
 			}
