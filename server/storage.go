@@ -802,16 +802,18 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 			core.Log(core.LogInfo, "Sweeping index file #%d (%s)", ixFileNumber, core.HumanSize(ixSize))
 		}
 
-		ixFile.Reader.Seek(storageFileHeaderSize, os.SEEK_SET)
+		// Open a separate reader that is not moved by any other routines
+		reader, err := core.OpenBufferedReader(ixFile.Path, 32768, ixFile.Flag)
+		PanicOn(err)
+		_, err = reader.Seek(storageFileHeaderSize, os.SEEK_SET)
+		PanicOn(err)
 
 		var lastProgress = -1
-		for offset := int64(storageFileHeaderSize); offset <= ixSize; offset += storageIXEntrySize {
+		for offset := int64(storageFileHeaderSize); offset < ixSize; offset += storageIXEntrySize {
 			var entry storageIXEntry
-			if offset < ixSize { // We do one extra step to be able to clean up the end of a file
-				entry.Unserialize(ixFile.Reader)
-			}
-
+			entry.Unserialize(reader)
 			core.Log(core.LogTrace, "Read %x at %x:%x (flags:%x)", entry.blockID[:], ixFileNumber, offset, entry.flags)
+
 			if entry.flags&entryFlagExists == entryFlagExists {
 				if entry.flags&entryFlagDefunct == entryFlagDefunct {
 					blanks = append(blanks, offset)
@@ -829,20 +831,15 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 
 					// Move it down to a lower idx file?
 					e, f, o, err := handler.readIXEntry(entry.blockID)
-					if f < ixFileNumber {
+					if err == nil && e != nil && (f < ixFileNumber || (f == ixFileNumber && o < offset)) {
+						core.Log(core.LogDebug, "Found an obsolete index for Block %x at %x:%x, the correct index already exists at %x:%x", entry.blockID[:], ixFileNumber, offset, f, o)
+					} else if f < ixFileNumber {
 						core.Log(core.LogDebug, "Moving file for Block %x IX from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, f, o)
 						if e != nil || err == nil {
 							panic("ASSERT, this makes no sense, the block is in a lower idx already?")
 						}
 						handler.writeIXEntry(f, o, &entry)
-						deletedBlocks++
-						metaFileNumber, metaOffset := entry.location.Get()
-						sweepedSize += handler.killMetaEntry(entry.blockID, metaFileNumber, metaOffset)
-
 						blanks = append(blanks, offset)
-					} else if f == ixFileNumber && o < offset && e != nil && err == nil {
-						core.Log(core.LogDebug, "Found an obsolete index for Block %x at %x:%x, the correct index already exists at %x:%x", entry.blockID[:], ixFileNumber, offset, f, o)
-
 					} else {
 						// Move it inside same idx file
 						newOffset := offset
@@ -878,14 +875,16 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 				}
 			} else {
 				core.Log(core.LogTrace, "Empty spot at  %x:%x (blanks = %d)", ixFileNumber, offset, len(blanks))
-				// We found a hole, so we have nothing left to move
-				for len(blanks) > 0 {
-					core.Log(core.LogDebug, "Clearing %x:%x", ixFileNumber, blanks[0])
-					ixFile.Writer.Seek(blanks[0], os.SEEK_SET)
-					blankEntry.Serialize(ixFile.Writer)
-					blanks = blanks[1:]
-				}
+			}
+
+			for len(blanks) > 0 && // while there are blank spaces
+				(offset+storageIXEntrySize >= ixSize || // and we are at the end of the file
+					blanks[0] < offset-storageIXEntrySize*int64(storageIXEntryProbeLimit)) { // or the first blank is out of probe limit range
+				core.Log(core.LogDebug, "Clearing %x:%x", ixFileNumber, blanks[0])
+				ixFile.Writer.Seek(blanks[0], os.SEEK_SET)
+				blankEntry.Serialize(ixFile.Writer)
 				ixFile.Writer.Flush()
+				blanks = blanks[1:]
 			}
 
 			if ixSize > 0 {
@@ -965,7 +964,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 	core.Log(core.LogInfo, "Compacting file %s, %s (est. dead data %s)", file.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace))
 
 	// Open a separate reader that is not moved by any other routines
-	reader, err := core.OpenBufferedReader(file.Path, file.BufferSize, file.Flag)
+	reader, err := core.OpenBufferedReader(file.Path, 32768, file.Flag)
 	PanicOn(err)
 	_, err = reader.Seek(storageFileHeaderSize, os.SEEK_SET)
 	PanicOn(err)
