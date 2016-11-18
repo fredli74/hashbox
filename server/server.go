@@ -491,10 +491,13 @@ func run() int {
 		storageHandler.MarkIndexes(roots, true, doIgnore)
 		storageHandler.SweepIndexes(true)
 		core.Log(core.LogInfo, "Mark and sweep duration %.1f minutes", time.Since(start).Minutes())
+		if doCompact {
+			storageHandler.CompactIndexes(true)
+		}
 		storageHandler.ShowStorageDeadSpace()
 		if doCompact {
-			storageHandler.CompactAll(storageFileTypeData, int(deadSkip))
 			storageHandler.CompactAll(storageFileTypeMeta, int(deadSkip))
+			storageHandler.CompactAll(storageFileTypeData, int(deadSkip))			
 		}
 		core.Log(core.LogInfo, "Garbage collection completed in %.1f minutes", time.Since(start).Minutes())
 	})
