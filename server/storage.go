@@ -737,7 +737,7 @@ func (handler *StorageHandler) CheckChain(blockID core.Byte128, tag string, veri
 			if len(metaEntry.links) > 0 && entry.flags&entryFlagNoLinks == entryFlagNoLinks {
 				//panic(errors.New(fmt.Sprintf("Index entry for block %x is marked with NoLinks but the block has %d links", blockID[:], len(metaEntry.links))))
 			} else if len(metaEntry.links) == 0 && entry.flags&entryFlagNoLinks == 0 {
-				core.Log(core.LogDebug, "* [%s] Block %x has no links but the index is missing NoLinks flag", tag, blockID[:])
+				core.Log(core.LogDebug, "[%s] Block %x has no links but the index is missing NoLinks flag", tag, blockID[:])
 			}
 			for _, r := range metaEntry.links {
 				c := handler.CheckChain(r, tag, verified)
@@ -747,7 +747,7 @@ func (handler *StorageHandler) CheckChain(blockID core.Byte128, tag string, veri
 		if critical == 0 {
 			verified[blockID] = true
 		} else {
-			core.Log(core.LogDebug, "! [%s] Block chain for %x contains an error", tag, blockID)
+			core.Log(core.LogDebug, "[%s] Block chain for %x contains an error", tag, blockID)
 		}
 	}
 	return critical
@@ -1020,10 +1020,10 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 		core.Log(core.LogTrace, "Read %x:%x block %x (%d bytes)", fileNumber, readOffset, entryBlockID[:], entrySize)
 
 		if _, _, _, err = handler.readIXEntry(entryBlockID); err != nil {
-			core.Log(core.LogDebug, "* Removed %x:%x block %x (%s)", fileNumber, readOffset, entryBlockID[:], err.Error())
+			core.Log(core.LogDebug, "Removed %x:%x block %x (%s)", fileNumber, readOffset, entryBlockID[:], err.Error())
 			compacted += int64(entrySize)
 		} else if !entry.VerifyLocation(handler, fileNumber, readOffset) {
-			core.Log(core.LogDebug, "* Removed %x:%x block %x (obsolete entry)", fileNumber, readOffset, entryBlockID[:])
+			core.Log(core.LogDebug, "Removed %x:%x block %x (obsolete entry)", fileNumber, readOffset, entryBlockID[:])
 			compacted += int64(entrySize)
 		} else {
 			// Keep the block
