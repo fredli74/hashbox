@@ -1034,16 +1034,15 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 			} else if freeFileNum >= fileNumber && readOffset-writeOffset >= int64(entrySize)+12 { // No space in earlier file, but it can be shifted inside the same file
 				file.Writer.Seek(writeOffset, os.SEEK_SET)
 				written := int64(entry.Serialize(file.Writer))
+				file.Writer.Flush()
 				core.Log(core.LogDebug, "Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, fileNumber, writeOffset)
+				entry.ChangeLocation(handler, fileNumber, writeOffset)
 				writeOffset += written
 
 				core.Log(core.LogTrace, "Creating a free space marker (%d bytes skip) at %x:%x", readOffset-writeOffset, fileNumber, readOffset)
-
 				core.WriteBytes(file.Writer, []byte("Cgap"))
 				core.WriteInt64(file.Writer, readOffset-writeOffset)
 				file.Writer.Flush()
-
-				entry.ChangeLocation(handler, fileNumber, writeOffset)
 			} else if free, _ := core.FreeSpace(datDirectory); free < int64(entrySize)*2 {
 				core.Log(core.LogWarning, "Unable to move block %x (%d bytes) because there is not enough free space on data path", entryBlockID[:], entrySize)
 				writeOffset += int64(entrySize)

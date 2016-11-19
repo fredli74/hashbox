@@ -472,7 +472,9 @@ func run() int {
 	var doCompact bool
 	var doIgnore bool
 	var deadSkip int64 = 5
+	var skipSweep bool
 	cmd.BoolOption("compact", "gc", "Compact data files to free space", &doCompact, cmd.Standard)
+	cmd.BoolOption("skipsweep", "gc", "Skip sweeping indexes", &skipSweep, cmd.Standard)
 	cmd.BoolOption("ignore", "gc", "Ignore broken block chains (ERASES UNLINKED DATA)", &doIgnore, cmd.Standard)
 	cmd.IntOption("threshold", "gc", "<percentage>", "Compact minimum dead space threshold", &deadSkip, cmd.Standard)
 	cmd.Command("gc", "", func() {
@@ -483,21 +485,21 @@ func run() int {
 		}
 
 		start := time.Now()
-		core.Log(core.LogInfo, "Marking index entries")
-		var roots []core.Byte128
-		for _, r := range accountHandler.CollectAllRootBlocks() {
-			roots = append(roots, r.BlockID)
+		if !skipSweep {
+			core.Log(core.LogInfo, "Marking index entries")
+			var roots []core.Byte128
+			for _, r := range accountHandler.CollectAllRootBlocks() {
+				roots = append(roots, r.BlockID)
+			}
+			storageHandler.MarkIndexes(roots, true, doIgnore)
+			storageHandler.SweepIndexes(true)
+			core.Log(core.LogInfo, "Mark and sweep duration %.1f minutes", time.Since(start).Minutes())
+			storageHandler.ShowStorageDeadSpace()
 		}
-		storageHandler.MarkIndexes(roots, true, doIgnore)
-		storageHandler.SweepIndexes(true)
-		core.Log(core.LogInfo, "Mark and sweep duration %.1f minutes", time.Since(start).Minutes())
 		if doCompact {
 			storageHandler.CompactIndexes(true)
-		}
-		storageHandler.ShowStorageDeadSpace()
-		if doCompact {
 			storageHandler.CompactAll(storageFileTypeMeta, int(deadSkip))
-			storageHandler.CompactAll(storageFileTypeData, int(deadSkip))			
+			storageHandler.CompactAll(storageFileTypeData, int(deadSkip))
 		}
 		core.Log(core.LogInfo, "Garbage collection completed in %.1f minutes", time.Since(start).Minutes())
 	})
