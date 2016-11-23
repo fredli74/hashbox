@@ -167,7 +167,7 @@ func (handler *StorageHandler) writeBlock(Block *core.HashboxBlock) bool {
 }
 
 const MINIMUM_IX_FREE = int64(storageIXFileSize + storageIXFileSize/20) // 105% of an IX file because we must be able to create a new one
-const MINIMUM_DAT_FREE = int64(2 ^ 26)                                  // 64 MB minimum free space
+const MINIMUM_DAT_FREE = int64(1 << 26)                                 // 64 MB minimum free space
 func (handler *StorageHandler) checkFree(size int64) bool {
 	if free, _ := core.FreeSpace(idxDirectory); free < MINIMUM_IX_FREE {
 		core.Log(core.LogWarning, "Storage rejected because free space on index path has dropped below %d", MINIMUM_IX_FREE)
@@ -271,9 +271,9 @@ func (b *sixByteLocation) Unserialize(r io.Reader) (size int) {
 //                           storageIXEntry                                      //
 //*******************************************************************************//
 
-const storageIXEntrySize int64 = 24                                                 // 24 bytes
-const storageIXEntryProbeLimit int = 682                                            // 682*24 bytes = 16368 < 16k
-const storageIXFileSize = storageIXEntrySize * int64(2^24+storageIXEntryProbeLimit) // last 24 bits of hash, plus max probe = 24*(2^24+682) = 384MiB indexes
+const storageIXEntrySize int64 = 24                                                  // 24 bytes
+const storageIXEntryProbeLimit int = 682                                             // 682*24 bytes = 16368 < 16k
+const storageIXFileSize = storageIXEntrySize * int64(1<<24+storageIXEntryProbeLimit) // last 24 bits of hash, plus max probe = 24*(2^24+682) = 384MiB indexes
 
 type storageIXEntry struct { // 24 bytes data
 	flags    uint16          // 2 bytes
