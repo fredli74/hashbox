@@ -470,12 +470,10 @@ func run() int {
 	})
 
 	var doCompact bool
-	var doIgnore bool
 	var deadSkip int64 = 5
 	var skipSweep bool
 	cmd.BoolOption("compact", "gc", "Compact data files to free space", &doCompact, cmd.Standard)
 	cmd.BoolOption("skipsweep", "gc", "Skip sweeping indexes", &skipSweep, cmd.Standard)
-	cmd.BoolOption("ignore", "gc", "Ignore broken block chains (ERASES UNLINKED DATA)", &doIgnore, cmd.Standard)
 	cmd.IntOption("threshold", "gc", "<percentage>", "Compact minimum dead space threshold", &deadSkip, cmd.Standard)
 	cmd.Command("gc", "", func() {
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
@@ -491,7 +489,7 @@ func run() int {
 			for _, r := range accountHandler.CollectAllRootBlocks() {
 				roots = append(roots, r.BlockID)
 			}
-			storageHandler.MarkIndexes(roots, true, doIgnore)
+			storageHandler.MarkIndexes(roots, true)
 			storageHandler.SweepIndexes(true)
 			core.Log(core.LogInfo, "Mark and sweep duration %.1f minutes", time.Since(start).Minutes())
 			storageHandler.ShowStorageDeadSpace()
