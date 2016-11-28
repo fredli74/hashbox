@@ -582,6 +582,8 @@ func (r *referenceEngine) start(rootBlockID *core.Byte128) {
 						}
 					} else if skipcheck > 0 {
 						Debug("Skipping cache verification for %s as parent is already verified", entry.FileName)
+					} else if !entry.HasContentBlockID() {
+						Debug("Cache entry for %s has no content to verify", entry.FileName)
 					} else if r.session.Client.VerifyBlock(entry.ContentBlockID) {
 						Debug("Cache entry for %s verified against server", entry.FileName)
 					} else {
