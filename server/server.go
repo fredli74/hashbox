@@ -441,7 +441,7 @@ func run() int {
 
 		if !skipIndex && (doRepair || critical == 0) {
 			core.Log(core.LogInfo, "Checking index files")
-			storageHandler.CheckIndexes()
+			storageHandler.CheckIndexes(doRepair)
 		}
 
 		if doRepair || critical == 0 {

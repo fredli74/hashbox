@@ -213,10 +213,10 @@ const (
 )
 
 const ( // 2 bytes, max 16 flags
-	entryFlagExists      = 1 << iota // index entry exists
-	entryFlagNoLinks                 // index entry has no links
-	entryFlagMarked                  // sweep marker
-	entryFlagInvalid                 // entry is invalid
+	entryFlagExists  = 1 << iota // index entry exists
+	entryFlagNoLinks             // index entry has no links
+	entryFlagMarked              // sweep marker
+	entryFlagInvalid             // entry is invalid
 )
 
 type storageFileHeader struct {
@@ -515,11 +515,14 @@ func calculateIXEntryOffset(blockID core.Byte128) uint32 {
 	return uint32(storageFileHeaderSize) + ((uint32(blockID[15]) | uint32(blockID[14])<<8 | uint32(blockID[13])<<16) * 24)
 }
 
-func (handler *StorageHandler) findIXOffset(blockID core.Byte128) (*storageIXEntry, int32, int64, int32, int64) {
+// findIXOffset probes for a blockID and returns entry+file+offset if found, regardless if it is invalid or not
+// if firstFree == true, it returns the first possible location where the block could be stored (used for compacting)
+func (handler *StorageHandler) findIXOffset(blockID core.Byte128, firstFree bool) (*storageIXEntry, int32, int64) {
 	var entry storageIXEntry
+	var freeEntry *storageIXEntry
 
 	baseOffset := int64(calculateIXEntryOffset(blockID))
-	ixFileNumber, freeFileNumber := int32(0), int32(-1)
+	ixFileNumber, freeFileNumber := int32(0), int32(0)
 	ixOffset, freeOffset := baseOffset, baseOffset
 
 OuterLoop:
@@ -543,36 +546,35 @@ OuterLoop:
 			}
 			entry.Unserialize(ixFile.Reader)
 
-			if entry.flags&entryFlagExists == 0 {
-				break OuterLoop // stop probing cause we found a gap
+			if entry.flags&entryFlagExists == 0 || (firstFree && entry.flags&entryFlagInvalid == entryFlagInvalid) {
+				break OuterLoop // always stop on gaps because there is no way the block can exist after this position
 			}
-			if entry.flags&entryFlagInvalid == entryFlagInvalid { // skip this, it's not valid
-				if freeFileNumber < 0 {
+
+			if bytes.Equal(blockID[:], entry.blockID[:]) {
+				if entry.flags&entryFlagInvalid != entryFlagInvalid { // found a valid entry, use it
+					return &entry, ixFileNumber, ixOffset
+				} else if freeEntry == nil { // found an invalid copy, use it if a valid one is not found
+					e := entry // make a copy to make sure it is not overwritten in the next pass
+					freeEntry = &e
 					freeFileNumber = ixFileNumber
 					freeOffset = ixOffset
 				}
-			} else if bytes.Equal(blockID[:], entry.blockID[:]) {
-				if freeFileNumber < 0 {
-					freeFileNumber = ixFileNumber
-					freeOffset = ixOffset
-				}
-				return &entry, ixFileNumber, ixOffset, freeFileNumber, freeOffset
 			}
 			ixOffset += storageIXEntrySize
 		}
 		ixFileNumber++
 		ixOffset = baseOffset
 	}
-	if freeFileNumber < 0 {
-		freeFileNumber = ixFileNumber
-		freeOffset = ixOffset
+	if freeEntry != nil {
+		return freeEntry, freeFileNumber, freeOffset
+	} else {
+		return nil, ixFileNumber, ixOffset
 	}
-	return nil, freeFileNumber, freeOffset, freeFileNumber, freeOffset
 }
 
 func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (entry *storageIXEntry, ixFileNumber int32, ixOffset int64, err error) {
-	entry, ixFileNumber, ixOffset, _, _ = handler.findIXOffset(blockID)
-	if entry == nil {
+	entry, ixFileNumber, ixOffset = handler.findIXOffset(blockID, false)
+	if entry == nil || entry.flags&entryFlagInvalid == entryFlagInvalid {
 		err = errors.New(fmt.Sprintf("Block index entry not found for ID %x", blockID[:]))
 	}
 	return
@@ -804,11 +806,21 @@ func (handler *StorageHandler) MarkIndexes(roots []core.Byte128, Paint bool) {
 func (handler *StorageHandler) SweepIndexes(Paint bool) {
 	var sweepedSize int64
 
-	deletedBlocks := 0
-	for ixFileNumber := int32(0); ; ixFileNumber++ {
-		var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
+	ixFileNumber := int32(-1)
+	for { // find highest ixFileNumber
+		var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber+1, false)
 		if ixFile == nil {
 			break // no more indexes
+		} else {
+			ixFileNumber++
+		}
+	}
+
+	deletedBlocks := 0
+	for ; ixFileNumber >= 0; ixFileNumber-- {
+		var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
+		if ixFile == nil {
+			panic("An index file disappeared?")
 		}
 
 		ixSize := ixFile.Size()
@@ -845,24 +857,15 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 					entry.flags &^= entryFlagMarked
 
 					// Find out if it would fit somewhere else
-					e, en, eo, fn, fo := handler.findIXOffset(entry.blockID)
-					if e != nil && (en < ixFileNumber || (en == ixFileNumber && eo < offset)) {
-						// Found duplicate entry at a lower location
-						deletedBlocks++
+					_, eFileNumber, eOffset := handler.findIXOffset(entry.blockID, true)
+
+					if eFileNumber != ixFileNumber || eOffset != offset {
+						// there is a lower ix location where this could be stored
+						handler.writeIXEntry(eFileNumber, eOffset, &entry)
 						ixFile.Writer.Seek(offset, os.SEEK_SET)
 						core.WriteUint16(ixFile.Writer, entry.flags|entryFlagInvalid)
 						ixFile.Writer.Flush()
-						core.Log(core.LogDebug, "Deleted duplicate block index %x at %x:%x, the correct index already exists at %x:%x", entry.blockID[:], ixFileNumber, offset, en, eo)
-					} else if fn > ixFileNumber {
-						panic("ASSERT! WHAT?!")
-					} else if fn < ixFileNumber || fo < offset {
-						handler.writeIXEntry(fn, fo, &entry)
-						ixFile.Writer.Seek(offset, os.SEEK_SET)
-						core.WriteUint16(ixFile.Writer, entry.flags|entryFlagInvalid)
-						ixFile.Writer.Flush()
-						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, fn, fo)
-					} else if fn != ixFileNumber || fo != offset {
-						panic("ASSERT! Broken!")
+						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
 					} else {
 						core.Log(core.LogTrace, "Removing mark from block index at %x:%x", ixFileNumber, offset)
 						// So it remains... no need to rewrite whole record
@@ -1138,7 +1141,8 @@ func (handler *StorageHandler) CheckMeta() {
 	return
 }
 
-func (handler *StorageHandler) CheckIndexes() {
+func (handler *StorageHandler) CheckIndexes(doRepair bool) {
+	verified := make(map[core.Byte128]bool) // Keep track if we have verified block chain already
 	var entry storageIXEntry
 	var metaEntry storageMetaEntry
 
@@ -1182,6 +1186,24 @@ func (handler *StorageHandler) CheckIndexes() {
 				metaEntry.Unserialize(metaFile.Reader)
 				if metaEntry.blockID.Compare(entry.blockID) != 0 {
 					panic(errors.New(fmt.Sprintf("Error reading block %x, index is pointing to metadata cache for block %x", entry.blockID[:], metaEntry.blockID[:])))
+				}
+				brokenChain := false
+				for i := range metaEntry.links {
+					if handler.CheckChain(metaEntry.links[i], "check", verified) > 0 {
+						brokenChain = true
+						break
+					}
+				}
+				if brokenChain {
+					if doRepair {
+						core.Log(core.LogWarning, "Block %x referenced a broken block chain and was marked invalid", entry.blockID[:])
+						entry.flags |= entryFlagInvalid
+						ixFile.Writer.Seek(offset, os.SEEK_SET)
+						core.WriteUint16(ixFile.Writer, entry.flags)
+						ixFile.Writer.Flush()
+					} else {
+						core.Log(core.LogError, "Block %x has a broken block chain", entry.blockID[:])
+					}
 				}
 			}
 
