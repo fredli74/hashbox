@@ -80,7 +80,7 @@ func NewClient(conn net.Conn, account string, accesskey Byte128) *Client {
 	go client.ioHandler()
 
 	{ // Say hello
-		r := client.dispatchAndWait(MsgTypeGreeting, &MsgClientGreeting{ Version: ProtocolVersion }).(*MsgServerGreeting)
+		r := client.dispatchAndWait(MsgTypeGreeting, &MsgClientGreeting{Version: ProtocolVersion}).(*MsgServerGreeting)
 		client.SessionNonce = r.SessionNonce
 		client.GenerateSessionKey(client.AccessKey)
 	}

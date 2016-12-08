@@ -606,7 +606,7 @@ func main() {
 					fmt.Printf("Backup %s %x (%s) completed\n", cmd.Args[2], session.State.StateID[:], date.Format(time.RFC3339))
 				} else {
 					list := session.Client.ListDataset(cmd.Args[2])
-					for i := len(list.States)-1; i >= 0; i-- {
+					for i := len(list.States) - 1; i >= 0; i-- {
 						if list.States[i].StateFlags&core.StateFlagInvalid != core.StateFlagInvalid {
 							latestBackup = binary.BigEndian.Uint64(list.States[i].State.StateID[:])
 							break

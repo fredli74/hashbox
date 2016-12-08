@@ -19,7 +19,7 @@ import (
 )
 
 func randomUint32() Uint32 {
-	return Uint32( rand.Uint32())
+	return Uint32(rand.Uint32())
 }
 func randomByte128() (b Byte128) {
 	for i := 0; i < 16; i++ {
@@ -208,12 +208,14 @@ func TestMessageSerialization(t *testing.T) {
 
 	if ok, dump := protocolPipeCompare(MsgTypeListDataset&MsgTypeServerMask, &MsgServerListDataset{
 		States: DatasetStateArray{
-			DatasetState{
+			DatasetStateEntry{
 				StateFlags: uint8(rand.Uint32()),
-				StateID:    randomByte128(),
-				BlockID:    randomByte128(),
-				Size:       rand.Int63(),
-				UniqueSize: rand.Int63(),
+				State: DatasetState{
+					StateID:    randomByte128(),
+					BlockID:    randomByte128(),
+					Size:       rand.Int63(),
+					UniqueSize: rand.Int63(),
+				},
 			},
 		},
 		ListH: randomByte128()}); !ok {

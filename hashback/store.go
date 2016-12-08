@@ -401,13 +401,13 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	// Load up last backup into the reference engine
 	if !session.FullBackup {
 		list := session.Client.ListDataset(datasetName)
-		found := len(list.States)-1
+		found := len(list.States) - 1
 		for ; found >= 0; found-- {
 			if list.States[found].StateFlags&core.StateFlagInvalid != core.StateFlagInvalid {
 				break
 			}
 		}
-		if (found >= 0) {
+		if found >= 0 {
 			session.reference.start(&list.States[found].State.BlockID)
 		} else {
 			session.reference.start(nil)

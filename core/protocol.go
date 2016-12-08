@@ -37,7 +37,7 @@ func (s *Session) GenerateSessionKey(AccessKey Byte128) {
 //
 
 const (
-	ProtocolVersion 	Uint32 = 1
+	ProtocolVersion Uint32 = 1
 
 	MsgTypeOldGreeting  uint32 = 0x686F6C61 // = "hola"
 	MsgTypeGreeting     uint32 = 0x68616C6F // = "halo"

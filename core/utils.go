@@ -23,7 +23,7 @@ func ReadBytes(r io.Reader, data []byte) int {
 		panic(err)
 	} else {
 		return n
-	}	
+	}
 }
 func ReadUint8(r io.Reader, data *uint8) int {
 	var b [1]byte
@@ -61,15 +61,15 @@ func WriteUint8(w io.Writer, data uint8) int {
 	return WriteBytes(w, b[:])
 }
 func WriteUint16(w io.Writer, data uint16) int {
-	var b [2]byte = [2]byte{byte(data >> 8),byte(data)}
+	var b [2]byte = [2]byte{byte(data >> 8), byte(data)}
 	return WriteBytes(w, b[:])
 }
 func WriteUint32(w io.Writer, data uint32) int {
-	var b [4]byte = [4]byte{byte(data >> 24),byte(data >> 16),byte(data >> 8),byte(data)}
+	var b [4]byte = [4]byte{byte(data >> 24), byte(data >> 16), byte(data >> 8), byte(data)}
 	return WriteBytes(w, b[:])
 }
 func WriteInt64(w io.Writer, data int64) int {
-	var b [8]byte = [8]byte{byte(data >> 56),byte(data >> 48),byte(data >> 40),byte(data>>32),byte(data >> 24),byte(data >> 16),byte(data >> 8),byte(data)}
+	var b [8]byte = [8]byte{byte(data >> 56), byte(data >> 48), byte(data >> 40), byte(data >> 32), byte(data >> 24), byte(data >> 16), byte(data >> 8), byte(data)}
 	return WriteBytes(w, b[:])
 }
 
@@ -102,7 +102,7 @@ var logMarks []string = []string{"!", "*", ".", "(", "?"}
 
 func Log(level int, format string, a ...interface{}) {
 	if level <= LogLevel {
-		fmt.Printf("%s %s " + format + "\n", append([]interface{}{time.Now().UTC().Format(LOGTIMEFORMAT), logMarks[level]}, a...)...)
+		fmt.Printf("%s %s "+format+"\n", append([]interface{}{time.Now().UTC().Format(LOGTIMEFORMAT), logMarks[level]}, a...)...)
 	}
 }
 

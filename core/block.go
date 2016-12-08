@@ -27,7 +27,7 @@ const (
 type HashboxBlock struct {
 	BlockID  Byte128   // = md5( LinkLength Links DataLength Data )
 	Links    []Byte128 // Array of BlockIDs
-	DataType uint8      // 1 byte data type
+	DataType uint8     // 1 byte data type
 
 	Data bytearray.ByteArray
 
@@ -81,7 +81,7 @@ func (b *HashboxBlock) Unserialize(r io.Reader) (size int) {
 		size += b.Links[i].Unserialize(r)
 	}
 	size += ReadUint8(r, &b.DataType)
-	size += ReadUint32(r, &n)	// Data length
+	size += ReadUint32(r, &n) // Data length
 	size += CopyNOrPanic(&b.Data, r, int(n))
 
 	b.Compressed = true

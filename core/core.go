@@ -77,11 +77,12 @@ func DeepHmac(depth int, data []byte, key Byte128) Byte128 {
 	return hash
 }
 
-type Uint32 uint32 
+type Uint32 uint32
+
 func (m Uint32) Serialize(w io.Writer) (size int) {
 	return WriteUint32(w, uint32(m))
 }
-func (m *Uint32) Unserialize(r io.Reader) (size int) {	
+func (m *Uint32) Unserialize(r io.Reader) (size int) {
 	var l uint32
 	size += ReadUint32(r, &l)
 	*m = Uint32(l)
@@ -144,8 +145,8 @@ func (a *DatasetArray) Unserialize(r io.Reader) (size int) {
 	*a = A
 	return
 }
-func (a DatasetArray) Len() int      { return len(a) }
-func (a DatasetArray) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a DatasetArray) Len() int           { return len(a) }
+func (a DatasetArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a DatasetArray) Less(i, j int) bool { return string(a[i].Name) < string(a[j].Name) }
 
 // DatasetState stores a specific state (snapshot) of a Dataset.
@@ -173,13 +174,14 @@ func (m *DatasetState) Unserialize(r io.Reader) (size int) {
 }
 
 const ( // 1 byte, max 8 flags
-	StateFlagInvalid  = 1 << 7 // Dataset State is invalid
+	StateFlagInvalid = 1 << 7 // Dataset State is invalid
 )
-	
+
 type DatasetStateEntry struct {
-	StateFlags uint8      // 1 byte  Dataset state flags
-	State DatasetState
+	StateFlags uint8 // 1 byte  Dataset state flags
+	State      DatasetState
 }
+
 func (e DatasetStateEntry) Serialize(w io.Writer) (size int) {
 	size += WriteUint8(w, e.StateFlags)
 	size += e.State.Serialize(w)

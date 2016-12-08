@@ -133,11 +133,11 @@ func TestClientServerDataset(t *testing.T) {
 	keepstate := core.DatasetState{StateID: stateID, BlockID: blockID, Size: 5, UniqueSize: 42}
 
 	client.AddDatasetState("testset", keepstate)
-	array = append(array, keepstate)
+	array = append(array, core.DatasetStateEntry{State: keepstate})
 	copy(stateID[:], []byte("testD"))
 	keepstate = core.DatasetState{StateID: stateID, BlockID: blockID, Size: 125, UniqueSize: 33342}
 	client.AddDatasetState("testset", keepstate)
-	array = append(array, keepstate)
+	array = append(array, core.DatasetStateEntry{State: keepstate})
 
 	copy(stateID[:], []byte("testA"))
 	client.AddDatasetState("testset", core.DatasetState{StateID: stateID, BlockID: blockID, Size: 5, UniqueSize: 42})
