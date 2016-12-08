@@ -661,12 +661,10 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 		return false
 	}
 
-	// With new age shuffle compression, always fill new data at the end
+	// With age-shuffle compression, always fill new data at the end
 	if handler.topDatFileNumber < 0 {
-		for {
-			if topFile := handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber+1, false); topFile != nil {
-				handler.topDatFileNumber++
-			} else {
+		for handler.topDatFileNumber = 0; ; handler.topDatFileNumber++ {
+			if topFile := handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber+1, false); topFile == nil {
 				break
 			}
 		}
