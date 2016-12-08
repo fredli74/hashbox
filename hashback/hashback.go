@@ -348,7 +348,7 @@ func main() {
 
 	runtime.SetBlockProfileRate(1000)
 	go func() {
-		log.Println(http.ListenAndServe("127.0.0.1:6060", nil))
+		log.Println(http.ListenAndServe(":6060", nil))
 	}()
 
 	defer func() {
