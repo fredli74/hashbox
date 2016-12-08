@@ -18,6 +18,9 @@ import (
 	"testing"
 )
 
+func randomUint32() Uint32 {
+	return Uint32( rand.Uint32())
+}
 func randomByte128() (b Byte128) {
 	for i := 0; i < 16; i++ {
 		b[i] = byte(rand.Uint32())
@@ -74,7 +77,7 @@ func protocolPipeCompare(msgType uint32, msgData interface{}) (isEqual bool, dum
 }
 
 func TestMessageSerialization(t *testing.T) {
-	if ok, dump := protocolPipeCompare(MsgTypeGreeting, nil); !ok {
+	if ok, dump := protocolPipeCompare(MsgTypeGreeting, &MsgClientGreeting{randomUint32()}); !ok {
 		t.Errorf("MsgClientGreeting did not pass serialization / deserialization test:\n%s", dump)
 	} else {
 		if testing.Verbose() {
@@ -206,6 +209,7 @@ func TestMessageSerialization(t *testing.T) {
 	if ok, dump := protocolPipeCompare(MsgTypeListDataset&MsgTypeServerMask, &MsgServerListDataset{
 		States: DatasetStateArray{
 			DatasetState{
+				StateFlags: uint8(rand.Uint32()),
 				StateID:    randomByte128(),
 				BlockID:    randomByte128(),
 				Size:       rand.Int63(),

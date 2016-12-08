@@ -97,12 +97,24 @@ func handleConnection(conn net.Conn) {
 			defer reply.Release()
 
 			switch incoming.Type {
+			case core.MsgTypeOldGreeting:
+				reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+				reply.Data = &core.MsgServerError{"Client uses an outdated protocol version"}
 			case core.MsgTypeGreeting:
-				// Create server nonce using  64-bit time and 64-bit random
-				binary.BigEndian.PutUint64(clientSession.SessionNonce[0:], uint64(time.Now().UnixNano()))
-				binary.BigEndian.PutUint32(clientSession.SessionNonce[8:], rand.Uint32())
-				binary.BigEndian.PutUint32(clientSession.SessionNonce[12:], rand.Uint32())
-				reply.Data = &core.MsgServerGreeting{clientSession.SessionNonce}
+				c := incoming.Data.(*core.MsgClientGreeting)
+				if c.Version < core.ProtocolVersion {
+					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+					reply.Data = &core.MsgServerError{"Client uses an outdated protocol version"}
+				} else if c.Version > core.ProtocolVersion {
+					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+					reply.Data = &core.MsgServerError{"Server uses an outdated protocol version"}
+				} else {
+					// Create server nonce using  64-bit time and 64-bit random
+					binary.BigEndian.PutUint64(clientSession.SessionNonce[0:], uint64(time.Now().UnixNano()))
+					binary.BigEndian.PutUint32(clientSession.SessionNonce[8:], rand.Uint32())
+					binary.BigEndian.PutUint32(clientSession.SessionNonce[12:], rand.Uint32())
+					reply.Data = &core.MsgServerGreeting{clientSession.SessionNonce}
+				}
 			case core.MsgTypeAuthenticate:
 				c := incoming.Data.(*core.MsgClientAuthenticate)
 				clientSession.AccountNameH = c.AccountNameH
@@ -446,7 +458,7 @@ func run() int {
 
 		if doRepair || critical == 0 {
 			core.Log(core.LogInfo, "Checking dataset transactions")
-			rootlist := accountHandler.CollectAllRootBlocks()
+			rootlist := accountHandler.RebuildAccountFiles()
 
 			core.Log(core.LogInfo, "Checking block chain integrity")
 			verified := make(map[core.Byte128]bool) // Keep track of verified blocks
@@ -454,6 +466,9 @@ func run() int {
 				tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
 				core.Log(core.LogDebug, "CheckChain on %s", tag)
 				c := storageHandler.CheckChain(r.BlockID, tag, verified)
+				if c > 0 {
+					accountHandler.InvalidateDatasetState(r.AccountNameH, r.DatasetName, r.StateID)
+				}
 				critical += c
 			}
 		}
@@ -472,8 +487,10 @@ func run() int {
 	var doCompact bool
 	var deadSkip int64 = 5
 	var skipSweep bool
+	var doForce bool
 	cmd.BoolOption("compact", "gc", "Compact data files to free space", &doCompact, cmd.Standard)
 	cmd.BoolOption("skipsweep", "gc", "Skip sweeping indexes", &skipSweep, cmd.Standard)
+	cmd.BoolOption("force", "gc", "Ignore broken datasets and force a garbage collect", &doForce, cmd.Standard)
 	cmd.IntOption("threshold", "gc", "<percentage>", "Compact minimum dead space threshold", &deadSkip, cmd.Standard)
 	cmd.Command("gc", "", func() {
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
@@ -486,7 +503,7 @@ func run() int {
 		if !skipSweep {
 			core.Log(core.LogInfo, "Marking index entries")
 			var roots []core.Byte128
-			for _, r := range accountHandler.CollectAllRootBlocks() {
+			for _, r := range accountHandler.CollectAllRootBlocks(doForce) {
 				roots = append(roots, r.BlockID)
 			}
 			storageHandler.MarkIndexes(roots, true)

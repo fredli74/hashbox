@@ -77,6 +77,17 @@ func DeepHmac(depth int, data []byte, key Byte128) Byte128 {
 	return hash
 }
 
+type Uint32 uint32 
+func (m Uint32) Serialize(w io.Writer) (size int) {
+	return WriteUint32(w, uint32(m))
+}
+func (m *Uint32) Unserialize(r io.Reader) (size int) {	
+	var l uint32
+	size += ReadUint32(r, &l)
+	*m = Uint32(l)
+	return
+}
+
 // String is serialized as uint32(length) + [length]byte arrays
 type String string
 
@@ -133,6 +144,9 @@ func (a *DatasetArray) Unserialize(r io.Reader) (size int) {
 	*a = A
 	return
 }
+func (a DatasetArray) Len() int      { return len(a) }
+func (a DatasetArray) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a DatasetArray) Less(i, j int) bool { return string(a[i].Name) < string(a[j].Name) }
 
 // DatasetState stores a specific state (snapshot) of a Dataset.
 type DatasetState struct {
@@ -158,7 +172,26 @@ func (m *DatasetState) Unserialize(r io.Reader) (size int) {
 	return
 }
 
-type DatasetStateArray []DatasetState
+const ( // 1 byte, max 8 flags
+	StateFlagInvalid  = 1 << 7 // Dataset State is invalid
+)
+	
+type DatasetStateEntry struct {
+	StateFlags uint8      // 1 byte  Dataset state flags
+	State DatasetState
+}
+func (e DatasetStateEntry) Serialize(w io.Writer) (size int) {
+	size += WriteUint8(w, e.StateFlags)
+	size += e.State.Serialize(w)
+	return
+}
+func (e *DatasetStateEntry) Unserialize(r io.Reader) (size int) {
+	size += ReadUint8(r, &e.StateFlags)
+	size += e.State.Unserialize(r)
+	return
+}
+
+type DatasetStateArray []DatasetStateEntry
 
 func (a DatasetStateArray) Serialize(w io.Writer) (size int) {
 	size += WriteUint32(w, uint32(len(a)))
@@ -170,7 +203,7 @@ func (a DatasetStateArray) Serialize(w io.Writer) (size int) {
 func (a *DatasetStateArray) Unserialize(r io.Reader) (size int) {
 	var n uint32
 	size += ReadUint32(r, &n)
-	A := make([]DatasetState, n)
+	A := make([]DatasetStateEntry, n)
 	for i := 0; i < int(n); i++ {
 		size += A[i].Unserialize(r)
 	}
@@ -180,10 +213,10 @@ func (a *DatasetStateArray) Unserialize(r io.Reader) (size int) {
 func (a DatasetStateArray) Len() int      { return len(a) }
 func (a DatasetStateArray) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 func (a DatasetStateArray) Less(i, j int) bool {
-	for c := 0; c < len(a[i].StateID); c++ {
-		if a[i].StateID[c] < a[j].StateID[c] {
+	for c := 0; c < len(a[i].State.StateID); c++ {
+		if a[i].State.StateID[c] < a[j].State.StateID[c] {
 			return true
-		} else if a[i].StateID[c] > a[j].StateID[c] {
+		} else if a[i].State.StateID[c] > a[j].State.StateID[c] {
 			return false
 		}
 	}

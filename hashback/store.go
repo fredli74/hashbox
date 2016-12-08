@@ -401,8 +401,14 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	// Load up last backup into the reference engine
 	if !session.FullBackup {
 		list := session.Client.ListDataset(datasetName)
-		if len(list.States) > 0 {
-			session.reference.start(&list.States[len(list.States)-1].BlockID)
+		found := len(list.States)-1
+		for ; found >= 0; found-- {
+			if list.States[found].StateFlags&core.StateFlagInvalid != core.StateFlagInvalid {
+				break
+			}
+		}
+		if (found >= 0) {
+			session.reference.start(&list.States[found].State.BlockID)
 		} else {
 			session.reference.start(nil)
 		}
@@ -464,13 +470,13 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 	var lastbackup int64 = 0
 
 	list := session.Client.ListDataset(datasetName)
-	for i, s := range list.States {
+	for i, e := range list.States {
 		if i >= len(list.States)-2 { // Always keep the last two
 			break
 		}
 
 		// Extract the backup date from the stateID
-		timestamp := int64(binary.BigEndian.Uint64(s.StateID[:]) / 1e9) // nano timestamp in seconds
+		timestamp := int64(binary.BigEndian.Uint64(e.State.StateID[:]) / 1e9) // nano timestamp in seconds
 
 		age := (timenow - timestamp)
 		interval := (timestamp - truncateSecondsToDay(lastbackup)) // interval from last backup
@@ -498,7 +504,7 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 		date := time.Unix(int64(timestamp), 0)
 		if throwAway {
 			session.Log("Removing backup %s (%s)", date.Format(time.RFC3339), reason)
-			session.Client.RemoveDatasetState(datasetName, s.StateID)
+			session.Client.RemoveDatasetState(datasetName, e.State.StateID)
 		} else {
 			Debug("Keeping backup %s", date.Format(time.RFC3339))
 			lastbackup = timestamp

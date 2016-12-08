@@ -483,17 +483,21 @@ func main() {
 				fmt.Println("Backup id                           Backup start                 Total size     Diff prev")
 				fmt.Println("--------------------------------    -------------------------    ----------    ----------")
 
-				for _, s := range list.States {
-					timestamp := binary.BigEndian.Uint64(s.StateID[:])
+				for _, e := range list.States {
+					timestamp := binary.BigEndian.Uint64(e.State.StateID[:])
 					date := time.Unix(0, int64(timestamp))
 
-					fmt.Printf("%-32x    %-25s    %10s    %10s\n", s.StateID, date.Format(time.RFC3339), core.HumanSize(s.Size), core.HumanSize(s.UniqueSize))
+					if e.StateFlags&core.StateFlagInvalid == core.StateFlagInvalid {
+						fmt.Printf("%-32x    %-25s    !!! INVALID DATASET\n", e.State.StateID, date.Format(time.RFC3339))
+					} else {
+						fmt.Printf("%-32x    %-25s    %10s    %10s\n", e.State.StateID, date.Format(time.RFC3339), core.HumanSize(e.State.Size), core.HumanSize(e.State.UniqueSize))
+					}
 				}
 			} else {
 				var state *core.DatasetState
-				for i, s := range list.States {
-					if cmd.Args[3] == "." || fmt.Sprintf("%x", s.StateID[:]) == cmd.Args[3] {
-						state = &list.States[i]
+				for i, e := range list.States {
+					if e.StateFlags&core.StateFlagInvalid != core.StateFlagInvalid && cmd.Args[3] == "." || fmt.Sprintf("%x", e.State.StateID[:]) == cmd.Args[3] {
+						state = &list.States[i].State
 					}
 				}
 				if state == nil {
@@ -602,8 +606,11 @@ func main() {
 					fmt.Printf("Backup %s %x (%s) completed\n", cmd.Args[2], session.State.StateID[:], date.Format(time.RFC3339))
 				} else {
 					list := session.Client.ListDataset(cmd.Args[2])
-					if len(list.States) > 0 {
-						latestBackup = binary.BigEndian.Uint64(list.States[len(list.States)-1].StateID[:])
+					for i := len(list.States)-1; i >= 0; i-- {
+						if list.States[i].StateFlags&core.StateFlagInvalid != core.StateFlagInvalid {
+							latestBackup = binary.BigEndian.Uint64(list.States[i].State.StateID[:])
+							break
+						}
 					}
 				}
 			}()
@@ -644,8 +651,8 @@ func main() {
 		if stateid == "." {
 			found = len(list.States) - 1
 		} else {
-			for i, s := range list.States {
-				if stateid == fmt.Sprintf("%x", s.StateID) {
+			for i, e := range list.States {
+				if stateid == fmt.Sprintf("%x", e.State.StateID) {
 					found = i
 					break
 				}
@@ -658,11 +665,11 @@ func main() {
 			panic(errors.New("No backup found under dataset " + cmd.Args[2]))
 		}
 
-		timestamp := binary.BigEndian.Uint64(list.States[found].StateID[:])
+		timestamp := binary.BigEndian.Uint64(list.States[found].State.StateID[:])
 		date := time.Unix(0, int64(timestamp))
-		fmt.Printf("Restoring from %x (%s) to path %s\n", list.States[found].StateID, date.Format(time.RFC3339), restorepath)
+		fmt.Printf("Restoring from %x (%s) to path %s\n", list.States[found].State.StateID, date.Format(time.RFC3339), restorepath)
 
-		session.Restore(list.States[found].BlockID, restorepath, restorelist...)
+		session.Restore(list.States[found].State.BlockID, restorepath, restorelist...)
 	})
 	cmd.Command("diff", "<dataset> (<backup id>|.) [\"<path>\"...] <local-folder>", func() {
 		if len(cmd.Args) < 3 {
@@ -688,8 +695,8 @@ func main() {
 		if stateid == "." {
 			found = len(list.States) - 1
 		} else {
-			for i, s := range list.States {
-				if stateid == fmt.Sprintf("%x", s.StateID) {
+			for i, e := range list.States {
+				if stateid == fmt.Sprintf("%x", e.State.StateID) {
 					found = i
 					break
 				}
@@ -702,11 +709,11 @@ func main() {
 			panic(errors.New("No backup found under dataset " + cmd.Args[2]))
 		}
 
-		timestamp := binary.BigEndian.Uint64(list.States[found].StateID[:])
+		timestamp := binary.BigEndian.Uint64(list.States[found].State.StateID[:])
 		date := time.Unix(0, int64(timestamp))
-		fmt.Printf("Comparing %x (%s) to path %s\n", list.States[found].StateID, date.Format(time.RFC3339), restorepath)
+		fmt.Printf("Comparing %x (%s) to path %s\n", list.States[found].State.StateID, date.Format(time.RFC3339), restorepath)
 
-		session.DiffRestore(list.States[found].BlockID, restorepath, restorelist...)
+		session.DiffRestore(list.States[found].State.BlockID, restorepath, restorelist...)
 		if session.DifferentFiles > 0 {
 			os.Exit(2)
 		}
@@ -726,8 +733,8 @@ func main() {
 
 		var stateid string = cmd.Args[3]
 		var found int = -1
-		for i, s := range list.States {
-			if stateid == fmt.Sprintf("%x", s.StateID) {
+		for i, e := range list.States {
+			if stateid == fmt.Sprintf("%x", e.State.StateID) {
 				found = i
 				break
 			}
@@ -736,8 +743,8 @@ func main() {
 			panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
 		}
 
-		fmt.Printf("Removing backup %x from %s\n", list.States[found].StateID, cmd.Args[2])
-		session.Client.RemoveDatasetState(cmd.Args[2], list.States[found].StateID)
+		fmt.Printf("Removing backup %x from %s\n", list.States[found].State.StateID, cmd.Args[2])
+		session.Client.RemoveDatasetState(cmd.Args[2], list.States[found].State.StateID)
 	})
 
 	signalchan := make(chan os.Signal, 1)

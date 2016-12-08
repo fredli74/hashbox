@@ -37,7 +37,10 @@ func (s *Session) GenerateSessionKey(AccessKey Byte128) {
 //
 
 const (
-	MsgTypeGreeting     uint32 = 0x686F6C61 // = "hola"
+	ProtocolVersion 	Uint32 = 1
+
+	MsgTypeOldGreeting  uint32 = 0x686F6C61 // = "hola"
+	MsgTypeGreeting     uint32 = 0x68616C6F // = "halo"
 	MsgTypeAuthenticate uint32 = 0x61757468 // = "auth"
 	MsgTypeGoodbye      uint32 = 0x71756974 // = "quit"
 
@@ -73,8 +76,13 @@ type MsgClientAuthenticate struct {
 	AuthenticationH Byte128 // = hmac(AccountNameH, Session.SessionKey)
 }
 
+// MsgClientGreeting sent from client after connecting.
+type MsgClientGreeting struct { // <- "halo"
+	Version Uint32 // Protocol version
+}
+
 // MsgServerGreeting sent from server in response to client greeting.
-type MsgServerGreeting struct { // <- "HOLA"
+type MsgServerGreeting struct { // <- "HALO"
 	SessionNonce Byte128 // Unique nonce for the session
 }
 
@@ -200,7 +208,9 @@ func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
 	case MsgTypeAuthenticate | MsgTypeClientMask:
 		m.Data = new(MsgClientAuthenticate)
 	case MsgTypeGoodbye | MsgTypeClientMask: // no data
-	case MsgTypeGreeting | MsgTypeClientMask: // no data
+	case MsgTypeOldGreeting | MsgTypeClientMask: // no data
+	case MsgTypeGreeting | MsgTypeClientMask:
+		m.Data = new(MsgClientGreeting)
 	case MsgTypeReadBlock | MsgTypeClientMask:
 		m.Data = new(MsgClientReadBlock)
 	case MsgTypeWriteBlock | MsgTypeClientMask:
@@ -262,6 +272,8 @@ func (m ProtocolMessage) String() string {
 }
 func (m ProtocolMessage) Details() string {
 	switch t := m.Data.(type) {
+	case (*MsgClientGreeting):
+		return fmt.Sprintf("%x", t.Version)
 	case (*MsgClientAuthenticate):
 		return fmt.Sprintf("%x %x", t.AccountNameH, t.AuthenticationH)
 	case (*MsgClientAccountInfo):

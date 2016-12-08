@@ -619,7 +619,6 @@ func (handler *StorageHandler) writeMetaEntry(metaFileNumber int32, metaOffset i
 		for {
 			metaFile = handler.getNumberedFile(storageFileTypeMeta, handler.topMetaFileNumber, true)
 			metaOffset, _ = metaFile.Writer.Seek(0, os.SEEK_END)
-			core.Log(core.LogTrace, "writeMetaEntry %x:%x", handler.topMetaFileNumber, metaOffset)
 			if metaOffset <= storageOffsetLimit {
 				break
 			}
@@ -632,6 +631,7 @@ func (handler *StorageHandler) writeMetaEntry(metaFileNumber int32, metaOffset i
 	}
 	data.WriteTo(metaFile.Writer)
 	metaFile.Writer.Flush()
+	core.Log(core.LogTrace, "writeMetaEntry %x:%x", handler.topMetaFileNumber, metaOffset)
 
 	return metaFileNumber, metaOffset
 }
@@ -1028,22 +1028,22 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 				writeOffset += int64(entrySize)
 				core.Log(core.LogTrace, "No need to write, moving writeOffset to %x", writeOffset)
 			} else if freeFileNum >= fileNumber && readOffset-writeOffset >= int64(entrySize)+12 { // No space in earlier file, but it can be shifted inside the same file
+				newOffset := writeOffset
 				file.Writer.Seek(writeOffset, os.SEEK_SET)
 				written := int64(entry.Serialize(file.Writer))
-				file.Writer.Flush()
-				core.Log(core.LogDebug, "Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, fileNumber, writeOffset)
-				entry.ChangeLocation(handler, fileNumber, writeOffset)
 				writeOffset += written
+				core.Log(core.LogDebug, "Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, fileNumber, newOffset)
 
-				core.Log(core.LogTrace, "Creating a free space marker (%d bytes skip) at %x:%x", readOffset-writeOffset, fileNumber, readOffset)
+				core.Log(core.LogTrace, "Creating a free space marker (%d bytes skip) at %x:%x", readOffset-writeOffset, fileNumber, writeOffset)
 				core.WriteBytes(file.Writer, []byte("Cgap"))
 				core.WriteInt64(file.Writer, readOffset-writeOffset)
 				file.Writer.Flush()
+
+				entry.ChangeLocation(handler, fileNumber, newOffset)
 			} else if free, _ := core.FreeSpace(datDirectory); free < int64(entrySize)*2 {
 				core.Log(core.LogWarning, "Unable to move block %x (%d bytes) because there is not enough free space on data path", entryBlockID[:], entrySize)
-				writeOffset += int64(entrySize)
+				writeOffset = offset // make sure we point the writer pointer after this block so we do not overwrite it
 			} else { // found space in a different file, move the block
-				entry.Serialize(freeFile.Writer)
 				written := int64(entry.Serialize(freeFile.Writer))
 				core.Log(core.LogDebug, "Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, freeFileNum, freeOffset)
 				freeFile.Writer.Flush()
