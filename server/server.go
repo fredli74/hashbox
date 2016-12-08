@@ -283,7 +283,7 @@ func run() int {
 	var debug bool = false
 	cmd.BoolOption("debug", "", "Debug output", &debug, cmd.Hidden).OnChange(func() {
 		if debug {
-			core.LogLevel = core.LogTrace
+			core.LogLevel = core.LogDebug
 		} else {
 			core.LogLevel = core.LogInfo
 		}

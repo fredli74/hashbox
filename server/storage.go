@@ -839,7 +839,7 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 			core.Log(core.LogTrace, "Read %x at %x:%x (flags:%d, base:%x)", entry.blockID[:], ixFileNumber, offset, entry.flags, int64(calculateIXEntryOffset(entry.blockID)))
 
 			if entry.flags&entryFlagInvalid == entryFlagInvalid {
-				core.Log(core.LogTrace, "Skipping invalid block index at %x:%x", ixFileNumber, offset)
+				core.Log(core.LogDebug, "Skipping invalid block index at %x:%x", ixFileNumber, offset)
 			} else if entry.flags&entryFlagExists == entryFlagExists {
 				if entry.flags&entryFlagMarked == 0 {
 					metaFileNumber, metaOffset := entry.location.Get()
@@ -865,7 +865,7 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 						ixFile.Writer.Flush()
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
 					} else {
-						core.Log(core.LogTrace, "Removing mark from block index at %x:%x", ixFileNumber, offset)
+						core.Log(core.LogDebug, "Removing mark from block index at %x:%x", ixFileNumber, offset)
 						// So it remains... no need to rewrite whole record
 						ixFile.Writer.Seek(offset, os.SEEK_SET)
 						core.WriteUint16(ixFile.Writer, entry.flags)
@@ -918,7 +918,7 @@ func (handler *StorageHandler) CompactIndexes(Paint bool) {
 				ixFile.Writer.Seek(offset, os.SEEK_SET)
 				blankEntry.Serialize(ixFile.Writer)
 				ixFile.Writer.Flush()
-				core.Log(core.LogTrace, "Cleared index at %x:%x", ixFileNumber, offset)
+				core.Log(core.LogDebug, "Cleared index at %x:%x", ixFileNumber, offset)
 			} else if entry.flags&entryFlagExists == entryFlagExists {
 				truncPoint = offset + storageIXEntrySize
 			}

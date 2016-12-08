@@ -587,7 +587,7 @@ func (handler *AccountHandler) RebuildAccountFiles() (rootBlocks []BlockSource) 
 
 			datasetName := getDatasetNameFromFile(name)
 
-			core.Log(core.LogTrace, "Regenerating file %s (%s.%s)", name, accountName, datasetName)
+			core.Log(core.LogDebug, "Regenerating file %s (%s.%s)", name, accountName, datasetName)
 
 			// Generate the DB file from transactions
 			states := stateArrayFromTransactions(accountNameH, datasetName)
