@@ -248,6 +248,13 @@ func (h *storageFileHeader) Unserialize(r io.Reader) (size int) {
 type sixByteLocation [6]byte
 
 func (b *sixByteLocation) Set(File int32, Offset int64) {
+	if (File < 0 || File > 0x3fff) {
+		panic(errors.New(fmt.Sprintf("ASSERT! sixByteLocation SET called with File value out of bounds (%x)", File)))
+	}
+	if (Offset > 0x3ffffffff) {
+		panic(errors.New(fmt.Sprintf("ASSERT! sixByteLocation SET called with Offset value out of bounds (%x)", Offset)))
+	}
+
 	var l int64 = int64(File)<<34 | (Offset & 0x3ffffffff)
 	b[0] = byte(l >> 40)
 	b[1] = byte(l >> 32)
