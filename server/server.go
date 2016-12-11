@@ -280,13 +280,9 @@ func run() int {
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
 	cmd.StringOption("data", "", "<path>", "Full path to dat files", &datDirectory, cmd.Standard)
 	cmd.StringOption("index", "", "<path>", "Full path to idx and meta files", &idxDirectory, cmd.Standard)
-	var debug bool = false
-	cmd.BoolOption("debug", "", "Debug output", &debug, cmd.Hidden).OnChange(func() {
-		if debug {
-			core.LogLevel = core.LogDebug
-		} else {
-			core.LogLevel = core.LogInfo
-		}
+	var loglvl int64 = int64(core.LogInfo)
+	cmd.IntOption("loglevel", "", "<level>", "Set log level (0=errors, 1=warnings, 2=info, 3=debug, 4=trace", &loglvl, cmd.Hidden).OnChange(func() {
+		core.LogLevel = int(loglvl)
 	})
 
 	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers
