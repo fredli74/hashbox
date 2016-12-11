@@ -1368,6 +1368,10 @@ func (handler *StorageHandler) CheckData(doRepair bool, startfile int32, endfile
 					break
 				}
 			}
+			if blockOffset > storageOffsetLimit {
+				core.Log(core.LogError, "Offset %x for block %x is beyond offset limit, forcing a move", blockOffset, dataEntry.block.BlockID[:])
+				brokenSpot = blockOffset
+			}
 			if brokenSpot > 0 && blockOffset-brokenSpot < 12 {
 				// Cannot fit a Cgap marker, so we need to move the block
 				moveFileNum, moveOffset, moveFile := handler.FindFreeOffset(storageFileTypeData, 0)
