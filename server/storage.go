@@ -248,10 +248,10 @@ func (h *storageFileHeader) Unserialize(r io.Reader) (size int) {
 type sixByteLocation [6]byte
 
 func (b *sixByteLocation) Set(File int32, Offset int64) {
-	if (File < 0 || File > 0x3fff) {
+	if File < 0 || File > 0x3fff {
 		panic(errors.New(fmt.Sprintf("ASSERT! sixByteLocation SET called with File value out of bounds (%x)", File)))
 	}
-	if (Offset > 0x3ffffffff) {
+	if Offset > 0x3ffffffff {
 		panic(errors.New(fmt.Sprintf("ASSERT! sixByteLocation SET called with Offset value out of bounds (%x)", Offset)))
 	}
 
@@ -670,9 +670,12 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 
 	// With age-shuffle compression, always fill new data at the end
 	if handler.topDatFileNumber < 0 {
-		for handler.topDatFileNumber = 0; ; handler.topDatFileNumber++ {
-			if topFile := handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber+1, false); topFile == nil {
+		handler.topDatFileNumber = 0
+		for top := int32(1); ; top++ {
+			if topFile := handler.getNumberedFile(storageFileTypeData, top, false); topFile == nil {
 				break
+			} else if topFile.Size() > storageFileHeaderSize { // this file contains data
+				handler.topDatFileNumber = top
 			}
 		}
 	}

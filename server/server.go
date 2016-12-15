@@ -458,7 +458,7 @@ func run() int {
 
 			core.Log(core.LogInfo, "Checking block chain integrity")
 			verified := make(map[core.Byte128]bool) // Keep track of verified blocks
-			for _, r := range rootlist {
+			for i, r := range rootlist {
 				tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
 				core.Log(core.LogDebug, "CheckChain on %s", tag)
 				c := storageHandler.CheckChain(r.BlockID, tag, verified)
@@ -466,6 +466,9 @@ func run() int {
 					accountHandler.InvalidateDatasetState(r.AccountNameH, r.DatasetName, r.StateID)
 				}
 				critical += c
+
+				p := int(i * 100 / len(rootlist))
+				fmt.Printf("%d%%\r", p)
 			}
 		}
 
