@@ -862,8 +862,6 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 					ixFile.Writer.Flush()
 					core.Log(core.LogDebug, "Deleted orphan block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
 				} else {
-					entry.flags &^= entryFlagMarked
-
 					// Find out if it would fit somewhere else
 					_, eFileNumber, eOffset := handler.findIXOffset(entry.blockID, true)
 
@@ -878,7 +876,7 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 						core.Log(core.LogDebug, "Removing mark from block index at %x:%x", ixFileNumber, offset)
 						// So it remains... no need to rewrite whole record
 						ixFile.Writer.Seek(offset, os.SEEK_SET)
-						core.WriteUint16(ixFile.Writer, entry.flags)
+						core.WriteUint16(ixFile.Writer, entry.flags & ^uint16(entryFlagMarked))
 						ixFile.Writer.Flush()
 					}
 				}
