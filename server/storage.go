@@ -857,29 +857,32 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 
 					// Mark it as invalid as it is now deleted
 					deletedBlocks++
-					ixFile.Writer.Seek(offset, os.SEEK_SET)
-					core.WriteUint16(ixFile.Writer, entry.flags|entryFlagInvalid)
-					ixFile.Writer.Flush()
+					entry.flags |= entryFlagInvalid
 					core.Log(core.LogDebug, "Deleted orphan block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
 				} else {
-					// Find out if it would fit somewhere else
+					// Find out where the index would fit best
 					_, eFileNumber, eOffset := handler.findIXOffset(entry.blockID, true)
 
-					if eFileNumber != ixFileNumber || eOffset != offset {
-						// there is a lower ix location where this could be stored
-						handler.writeIXEntry(eFileNumber, eOffset, &entry)
-						ixFile.Writer.Seek(offset, os.SEEK_SET)
-						core.WriteUint16(ixFile.Writer, entry.flags|entryFlagInvalid)
-						ixFile.Writer.Flush()
+					if eFileNumber < ixFileNumber {
+						// Do not remove entryFlagMarked here because it is moved to a file that will be processed next
+						handler.writeIXEntry(eFileNumber, eOffset, &entry) // move it to an earlier file
+						entry.flags |= entryFlagInvalid                    // delete old entry
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
+					} else if eFileNumber == ixFileNumber && eOffset < offset {
+						entry.flags &^= entryFlagMarked                    // remove entryFlagMarked
+						handler.writeIXEntry(eFileNumber, eOffset, &entry) // move it to an earlier position
+						entry.flags |= entryFlagInvalid                    // delete old entry
+						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x", entry.blockID[:], ixFileNumber, offset, eOffset)
+					} else if eFileNumber == ixFileNumber && eOffset == offset {
+						entry.flags &^= entryFlagMarked // remove entryFlagMarked
+						core.Log(core.LogDebug, "Removed mark from block index at %x:%x", ixFileNumber, offset)
 					} else {
-						core.Log(core.LogDebug, "Removing mark from block index at %x:%x", ixFileNumber, offset)
-						// So it remains... no need to rewrite whole record
-						ixFile.Writer.Seek(offset, os.SEEK_SET)
-						core.WriteUint16(ixFile.Writer, entry.flags & ^uint16(entryFlagMarked))
-						ixFile.Writer.Flush()
+						panic(errors.New(fmt.Sprintf("ASSERT! findIXOffset for %x (%x:%x) returned an invalid offset %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)))
 					}
 				}
+				ixFile.Writer.Seek(offset, os.SEEK_SET)
+				core.WriteUint16(ixFile.Writer, entry.flags)
+				ixFile.Writer.Flush()
 			}
 
 			if ixSize > 0 {
