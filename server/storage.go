@@ -526,7 +526,6 @@ func calculateIXEntryOffset(blockID core.Byte128) uint32 {
 // if stopOnFree == true, it returns the first possible location where the block could be stored (used for compacting)
 func (handler *StorageHandler) findIXOffset(blockID core.Byte128, stopOnFree bool) (*storageIXEntry, int32, int64) {
 	var entry storageIXEntry
-	var freeEntry *storageIXEntry
 
 	baseOffset := int64(calculateIXEntryOffset(blockID))
 	ixFileNumber, freeFileNumber := int32(0), int32(0)
@@ -819,7 +818,7 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 	for ixFileNumber := int32(0); ; ixFileNumber++ {
 		var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
 		if ixFile == nil {
-			panic("An index file disappeared?")
+			break // no more indexes
 		}
 
 		ixSize := ixFile.Size()
@@ -854,7 +853,7 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 					entry.flags &^= entryFlagMarked // remove entryFlagMarked
 
 					e, eFileNumber, eOffset := handler.findIXOffset(entry.blockID, true)
-					if eFileNumber == ixFileNumber && eOffset == offset {  // already at best location
+					if eFileNumber == ixFileNumber && eOffset == offset { // already at best location
 						core.Log(core.LogDebug, "Removed mark from block index at %x:%x", ixFileNumber, offset)
 					} else if e != nil { // obsolete entry
 						entry.flags |= entryFlagInvalid
