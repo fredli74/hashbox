@@ -523,14 +523,15 @@ func calculateIXEntryOffset(blockID core.Byte128) uint32 {
 }
 
 // findIXOffset probes for a blockID and returns entry+file+offset if found, regardless if it is invalid or not
-// if firstFree == true, it returns the first possible location where the block could be stored (used for compacting)
-func (handler *StorageHandler) findIXOffset(blockID core.Byte128, firstFree bool) (*storageIXEntry, int32, int64) {
+// if stopOnFree == true, it returns the first possible location where the block could be stored (used for compacting)
+func (handler *StorageHandler) findIXOffset(blockID core.Byte128, stopOnFree bool) (*storageIXEntry, int32, int64) {
 	var entry storageIXEntry
 	var freeEntry *storageIXEntry
 
 	baseOffset := int64(calculateIXEntryOffset(blockID))
 	ixFileNumber, freeFileNumber := int32(0), int32(0)
 	ixOffset, freeOffset := baseOffset, baseOffset
+	foundFree := false
 
 OuterLoop:
 	for {
@@ -553,18 +554,18 @@ OuterLoop:
 			}
 			entry.Unserialize(ixFile.Reader)
 
-			if entry.flags&entryFlagExists == 0 || (firstFree && entry.flags&entryFlagInvalid == entryFlagInvalid) {
-				break OuterLoop // always stop on gaps because there is no way the block can exist after this position
-			}
-
-			if bytes.Equal(blockID[:], entry.blockID[:]) {
-				if entry.flags&entryFlagInvalid != entryFlagInvalid { // found a valid entry, use it
+			if entry.flags&entryFlagExists == entryFlagExists && entry.flags&entryFlagInvalid == 0 {
+				if bytes.Equal(blockID[:], entry.blockID[:]) { // found a valid entry, use it
 					return &entry, ixFileNumber, ixOffset
-				} else if freeEntry == nil { // found an invalid copy, use it if a valid one is not found
-					e := entry // make a copy to make sure it is not overwritten in the next pass
-					freeEntry = &e
+				}
+			} else { // found an invalid entry or empty space
+				if !foundFree {
 					freeFileNumber = ixFileNumber
 					freeOffset = ixOffset
+					foundFree = true
+				}
+				if stopOnFree || entry.flags&entryFlagExists == 0 {
+					break OuterLoop // always stop on gaps because there is no way the block can exist after this position
 				}
 			}
 			ixOffset += storageIXEntrySize
@@ -572,8 +573,8 @@ OuterLoop:
 		ixFileNumber++
 		ixOffset = baseOffset
 	}
-	if freeEntry != nil {
-		return freeEntry, freeFileNumber, freeOffset
+	if foundFree {
+		return nil, freeFileNumber, freeOffset
 	} else {
 		return nil, ixFileNumber, ixOffset
 	}
@@ -581,7 +582,7 @@ OuterLoop:
 
 func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (entry *storageIXEntry, ixFileNumber int32, ixOffset int64, err error) {
 	entry, ixFileNumber, ixOffset = handler.findIXOffset(blockID, false)
-	if entry == nil || entry.flags&entryFlagInvalid == entryFlagInvalid {
+	if entry == nil {
 		err = errors.New(fmt.Sprintf("Block index entry not found for ID %x", blockID[:]))
 	}
 	return
@@ -814,18 +815,8 @@ func (handler *StorageHandler) MarkIndexes(roots []core.Byte128, Paint bool) {
 func (handler *StorageHandler) SweepIndexes(Paint bool) {
 	var sweepedSize int64
 
-	ixFileNumber := int32(-1)
-	for { // find highest ixFileNumber
-		var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber+1, false)
-		if ixFile == nil {
-			break // no more indexes
-		} else {
-			ixFileNumber++
-		}
-	}
-
 	deletedBlocks := 0
-	for ; ixFileNumber >= 0; ixFileNumber-- {
+	for ixFileNumber := int32(0); ; ixFileNumber++ {
 		var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
 		if ixFile == nil {
 			panic("An index file disappeared?")
@@ -860,22 +851,22 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 					entry.flags |= entryFlagInvalid
 					core.Log(core.LogDebug, "Deleted orphan block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
 				} else {
-					// Find out where the index would fit best
-					_, eFileNumber, eOffset := handler.findIXOffset(entry.blockID, true)
+					entry.flags &^= entryFlagMarked // remove entryFlagMarked
 
-					if eFileNumber < ixFileNumber {
-						// Do not remove entryFlagMarked here because it is moved to a file that will be processed next
+					e, eFileNumber, eOffset := handler.findIXOffset(entry.blockID, true)
+					if eFileNumber == ixFileNumber && eOffset == offset {  // already at best location
+						core.Log(core.LogDebug, "Removed mark from block index at %x:%x", ixFileNumber, offset)
+					} else if e != nil { // obsolete entry
+						entry.flags |= entryFlagInvalid
+						core.Log(core.LogDebug, "Deleted obsolete block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
+					} else if eFileNumber < ixFileNumber {
 						handler.writeIXEntry(eFileNumber, eOffset, &entry) // move it to an earlier file
 						entry.flags |= entryFlagInvalid                    // delete old entry
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
 					} else if eFileNumber == ixFileNumber && eOffset < offset {
-						entry.flags &^= entryFlagMarked                    // remove entryFlagMarked
 						handler.writeIXEntry(eFileNumber, eOffset, &entry) // move it to an earlier position
 						entry.flags |= entryFlagInvalid                    // delete old entry
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x", entry.blockID[:], ixFileNumber, offset, eOffset)
-					} else if eFileNumber == ixFileNumber && eOffset == offset {
-						entry.flags &^= entryFlagMarked // remove entryFlagMarked
-						core.Log(core.LogDebug, "Removed mark from block index at %x:%x", ixFileNumber, offset)
 					} else {
 						panic(errors.New(fmt.Sprintf("ASSERT! findIXOffset for %x (%x:%x) returned an invalid offset %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)))
 					}
