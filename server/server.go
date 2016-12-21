@@ -45,26 +45,31 @@ var done chan bool
 
 var logLock sync.Mutex
 
-func PanicOn(err error) {
+// ASSERTS should be removed on release
+// ASSERTS are not error handling
+// ASSERTS are IQ checks of developers
+func ASSERT(ok bool, v ...interface{}) {
+	if !ok {
+		_, file, line, _ := runtime.Caller(1)
+		panic(errors.New(fmt.Sprintf("ASSERT raised by line %v:%v %v", file, line, v)))
+	}
+}
+func abort(format string, a ...interface{}) {
+	panic(errors.New(fmt.Sprintf(format, a)))
+}
+func abortOn(err error) {
 	if err != nil {
 		panic(err)
 	}
 }
+
+/* THIS SHOULD BE REMOVED, WE SHOULD NEVER USE PANICS AS A NORMAL EXECUTION STATE */
 func Try(f func()) (err interface{}) {
 	defer func() {
 		err = recover()
 	}()
 	f()
 	return nil
-}
-
-type HardError string
-
-func (e HardError) Error() string { return string(e) }
-
-func panicHard(s string) {
-	var err error = HardError(s)
-	panic(err)
 }
 
 func handleConnection(conn net.Conn) {
@@ -376,7 +381,7 @@ func run() int {
 			panic(errors.New("Error writing key block"))
 		}
 		err := accountHandler.AddDatasetState(accountNameH, core.String("\x07HASHBACK_DEK"), core.DatasetState{BlockID: block.BlockID})
-		PanicOn(err)
+		abortOn(err)
 
 		block.Release()
 		core.Log(core.LogInfo, "User added")
@@ -519,7 +524,7 @@ func run() int {
 	})
 
 	err = cmd.Parse()
-	PanicOn(err)
+	abortOn(err)
 
 	fmt.Println(core.MemoryStats())
 

@@ -8,8 +8,6 @@ package main
 import (
 	"crypto/md5"
 	"encoding/base64"
-	"errors"
-	"fmt"
 	"github.com/fredli74/hashbox/core"
 	"io"
 	"os"
@@ -146,13 +144,13 @@ func (handler *AccountHandler) dispatcher() {
 					q.result <- result
 
 				default:
-					panic(errors.New(fmt.Sprintf("Unknown query in AccountHandler causing hangup: %d", q.query)))
+					abort("Unknown query in AccountHandler causing hangup: %d", q.query)
 				}
 			}()
 		case _, ok := <-handler.signal: // Signal is closed?
 			// TODO: remove this check
 			if ok {
-				panic(errors.New("We should not reach this point, it means someone outside this goroutine sent a signal on the channel"))
+				abort("We should not reach this point, it means someone outside this goroutine sent a signal on the channel")
 			}
 			return
 		}
@@ -165,12 +163,12 @@ func (handler *AccountHandler) doCommand(q ChannelQuery) interface{} {
 		select {
 		case err := <-handler.signal:
 			if err != nil {
-				panic(errors.New("AccountHandler panic: " + err.Error()))
+				abort("AccountHandler panic: %v", err)
 			}
 		default:
 			switch t := r.(type) {
 			case error:
-				panic(errors.New("AccountHandler panic: " + t.Error()))
+				abort("AccountHandler panic: %v", t)
 			}
 		}
 	}()
@@ -261,7 +259,7 @@ func (h *dbFileHeader) Unserialize(r io.Reader) {
 	core.ReadUint32(r, &h.filetype)
 	core.ReadUint32(r, &h.version)
 	if h.version != dbVersion {
-		panic(errors.New("Invalid version in dbFileHeader"))
+		abort("Invalid version in dbFileHeader")
 	}
 	h.datasetName.Unserialize(r)
 }
@@ -290,7 +288,7 @@ func (t *dbTx) Unserialize(r io.Reader) {
 		s.Unserialize(r)
 		t.data = s
 	default:
-		panic(errors.New("Corrupt transaction file"))
+		abort("Corrupt transaction file")
 	}
 }
 
@@ -324,7 +322,7 @@ func (c *dbStateCollection) Unserialize(r io.Reader) {
 
 func appendDatasetTx(accountNameH core.Byte128, datasetName core.String, tx dbTx) error {
 	file, err := os.OpenFile(datasetFilename(accountNameH, string(datasetName))+dbFileExtensionTransaction, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
-	PanicOn(err)
+	abortOn(err)
 	defer file.Close()
 
 	pos, err := file.Seek(0, 2)
@@ -360,12 +358,12 @@ func updateInfoFile(accountNameH core.Byte128, datasetName core.String) {
 func stateArrayFromTransactions(accountNameH core.Byte128, datasetName core.String) (states core.DatasetStateArray) {
 	filename := datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
 	file, err := os.Open(filename)
-	PanicOn(err)
+	abortOn(err)
 	defer file.Close()
 	var header dbFileHeader
 	header.Unserialize(file)
 	if header.version != dbVersion || header.filetype != dbFileTypeTransaction {
-		panic(errors.New(filename + " is not a valid transaction file"))
+		abort("%s is not a valid transaction file", filename)
 	}
 
 	stateMap := make(map[core.Byte128]core.DatasetState)
@@ -383,7 +381,7 @@ func stateArrayFromTransactions(accountNameH core.Byte128, datasetName core.Stri
 			var tx dbTx
 			tx.Unserialize(file)
 			if tx.timestamp < pointInHistory {
-				panic(errors.New(fmt.Sprintf("%s is corrupt, timestamp check failed (%x < %x)", filename, tx.timestamp, pointInHistory)))
+				abort("%s is corrupt, timestamp check failed (%x < %x)", filename, tx.timestamp, pointInHistory)
 			}
 			pointInHistory = tx.timestamp
 			switch tx.txType {
@@ -392,7 +390,7 @@ func stateArrayFromTransactions(accountNameH core.Byte128, datasetName core.Stri
 			case dbTxTypeDel:
 				delete(stateMap, tx.data.(core.Byte128))
 			default:
-				panic(errors.New(fmt.Sprintf("%s is corrupt, invalid transaction type found: %x", filename, tx.txType)))
+				abort("%s is corrupt, invalid transaction type found: %x", filename, tx.txType)
 			}
 		}
 	}()
@@ -405,7 +403,7 @@ func stateArrayFromTransactions(accountNameH core.Byte128, datasetName core.Stri
 
 func writeDBFile(accountNameH core.Byte128, datasetName core.String, c *dbStateCollection) {
 	file, err := os.OpenFile(datasetFilename(accountNameH, string(datasetName))+dbFileExtensionDatabase, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
-	PanicOn(err)
+	abortOn(err)
 	defer file.Close()
 
 	header := dbFileHeader{filetype: dbFileTypeDatabase, version: dbVersion, datasetName: datasetName}
@@ -424,7 +422,7 @@ func readDBFile(accountNameH core.Byte128, datasetName core.String) *dbStateColl
 	var header dbFileHeader
 	header.Unserialize(file)
 	if header.version != dbVersion || header.filetype != dbFileTypeDatabase {
-		panic(errors.New(filename + " is not a valid db file"))
+		abort("%s is not a valid db file", filename)
 	}
 	var c dbStateCollection
 	c.Unserialize(file)
@@ -432,7 +430,7 @@ func readDBFile(accountNameH core.Byte128, datasetName core.String) *dbStateColl
 }
 func writeInfoFile(accountNameH core.Byte128, a AccountInfo) {
 	file, err := os.OpenFile(accountFilename(accountNameH)+".info", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
-	PanicOn(err)
+	abortOn(err)
 	defer file.Close()
 
 	a.AccountName.Serialize(file)
@@ -475,35 +473,35 @@ type BlockSource struct {
 func getDatasetNameFromFile(filename string) core.String {
 	// Open the file, read and check the file headers
 	fil, err := os.Open(filepath.Join(datDirectory, "account", filename))
-	PanicOn(err)
+	abortOn(err)
 	defer fil.Close()
 
 	var header dbFileHeader
 	header.Unserialize(fil)
 	if header.filetype != dbFileTypeTransaction {
-		panic(errors.New("File " + filename + " is not a valid transaction file"))
+		abort("File %s is not a valid transaction file", filename)
 	}
 
 	datasetName := header.datasetName
 	var datasetNameH core.Byte128
 	{
 		d, err := base64.RawURLEncoding.DecodeString(filename[23:45])
-		PanicOn(err)
+		abortOn(err)
 		datasetNameH.Set(d)
 	}
 	datasetHashB := core.Hash([]byte(datasetName))
 	if datasetHashB.Compare(datasetNameH) != 0 {
-		panic(errors.New("Header for " + filename + " does not contain the correct dataset name"))
+		abort("Header for %s does not contain the correct dataset name", filename)
 	}
 	return datasetName
 }
 func (handler *AccountHandler) CollectAllRootBlocks(skipInvalid bool) (rootBlocks []BlockSource) {
 	// Open each dataset and check the chains
 	dir, err := os.Open(filepath.Join(datDirectory, "account"))
-	PanicOn(err)
+	abortOn(err)
 	defer dir.Close()
 	dirlist, err := dir.Readdir(-1)
-	PanicOn(err)
+	abortOn(err)
 
 	for _, info := range dirlist {
 		name := info.Name()
@@ -513,7 +511,7 @@ func (handler *AccountHandler) CollectAllRootBlocks(skipInvalid bool) (rootBlock
 			var accountNameH core.Byte128
 			{
 				decoded, err := base64.RawURLEncoding.DecodeString(name[:22])
-				PanicOn(err)
+				abortOn(err)
 				accountNameH.Set(decoded)
 				info := readInfoFile(accountNameH)
 				if info != nil {
@@ -524,14 +522,14 @@ func (handler *AccountHandler) CollectAllRootBlocks(skipInvalid bool) (rootBlock
 			datasetName := getDatasetNameFromFile(name)
 			collection := readDBFile(accountNameH, datasetName)
 			if collection == nil {
-				panic("InvalidateDatasetState was called on a DB file which cannot be opened")
+				panic("CollectAllRootBlocks was called on a DB file which cannot be opened")
 			}
 			for _, e := range collection.States {
 				if e.StateFlags&core.StateFlagInvalid == core.StateFlagInvalid {
 					if skipInvalid {
 						core.Log(core.LogWarning, "All data referenced by %s.%s.%x will be marked for removal unless referenced elsewhere", accountName, datasetName, e.State.StateID[:])
 					} else {
-						panic(errors.New(fmt.Sprintf("Dataset %s.%s.%x is referencing data with a broken block chain", accountName, datasetName, e.State.StateID[:])))
+						abort("Dataset %s.%s.%x is referencing data with a broken block chain", accountName, datasetName, e.State.StateID[:])
 					}
 				} else {
 					rootBlocks = append(rootBlocks, BlockSource{BlockID: e.State.BlockID, StateID: e.State.StateID, DatasetName: datasetName, AccountNameH: accountNameH, AccountName: string(accountName)})
@@ -545,10 +543,10 @@ func (handler *AccountHandler) CollectAllRootBlocks(skipInvalid bool) (rootBlock
 func (handler *AccountHandler) RebuildAccountFiles() (rootBlocks []BlockSource) {
 	// Open each dataset and check the chains
 	dir, err := os.Open(filepath.Join(datDirectory, "account"))
-	PanicOn(err)
+	abortOn(err)
 	defer dir.Close()
 	dirlist, err := dir.Readdir(-1)
-	PanicOn(err)
+	abortOn(err)
 
 	for _, info := range dirlist { // Clear all cached dataset information from the info files
 		name := info.Name()
@@ -557,7 +555,7 @@ func (handler *AccountHandler) RebuildAccountFiles() (rootBlocks []BlockSource) 
 			var accountNameH core.Byte128
 			{
 				decoded, err := base64.RawURLEncoding.DecodeString(name[:22])
-				PanicOn(err)
+				abortOn(err)
 				accountNameH.Set(decoded)
 			}
 
@@ -577,7 +575,7 @@ func (handler *AccountHandler) RebuildAccountFiles() (rootBlocks []BlockSource) 
 			var accountNameH core.Byte128
 			{
 				decoded, err := base64.RawURLEncoding.DecodeString(name[:22])
-				PanicOn(err)
+				abortOn(err)
 				accountNameH.Set(decoded)
 				info := readInfoFile(accountNameH)
 				if info != nil {
