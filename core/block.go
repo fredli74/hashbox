@@ -68,24 +68,27 @@ func (b *HashboxBlock) Serialize(w io.Writer) (size int) {
 
 	return
 }
-func (b *HashboxBlock) Unserialize(r io.Reader) (size int) {
-	// Clear
-	b.Data.Truncate(0)
-	b.Links = nil
-
+func (b *HashboxBlock) UnserializeHeader(r io.Reader) (size int) {
 	size += b.BlockID.Unserialize(r)
-	var n uint32
-	size += ReadUint32(r, &n)
-	b.Links = make([]Byte128, n)
-	for i := 0; i < int(n); i++ {
+	var nLinks uint32
+	size += ReadUint32(r, &nLinks)
+	b.Links = make([]Byte128, nLinks)
+	for i := 0; i < int(nLinks); i++ {
 		size += b.Links[i].Unserialize(r)
 	}
 	size += ReadUint8(r, &b.DataType)
-	size += ReadUint32(r, &n) // Data length
-	size += CopyNOrPanic(&b.Data, r, int(n))
+	return
+}
+func (b *HashboxBlock) Unserialize(r io.Reader) (size int) {
+	size += b.UnserializeHeader(r)
+
+	var nBytes uint32
+	size += ReadUint32(r, &nBytes) // Data length
+	b.Data.Truncate(0)
+	size += CopyNOrPanic(&b.Data, r, int(nBytes))
 
 	b.Compressed = true
-	b.CompressedSize = int(n)
+	b.CompressedSize = int(nBytes)
 	b.UncompressedSize = -1
 	return
 }

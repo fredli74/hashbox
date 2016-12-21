@@ -393,12 +393,17 @@ func (e *storageDataEntry) Serialize(w io.Writer) (size int) {
 	return
 }
 
-// IMPORTANT Unserialize allocates memory that needs to be freed manually
-func (e *storageDataEntry) Unserialize(r io.Reader) (size int) {
+func (e *storageDataEntry) UnserializeHeader(r io.Reader) (size int) {
 	size += core.ReadUint32(r, &e.datamarker)
 	if e.datamarker != storageDataMarker {
 		abort("Incorrect datamarker %x (should be %x)", e.datamarker, storageDataMarker)
 	}
+	return
+}
+
+// IMPORTANT Unserialize allocates memory that needs to be freed manually
+func (e *storageDataEntry) Unserialize(r io.Reader) (size int) {
+	size += e.UnserializeHeader(r)
 	if e.block == nil {
 		e.block = &core.HashboxBlock{}
 	}
@@ -595,6 +600,17 @@ func (handler *StorageHandler) writeIXEntry(ixFileNumber int32, ixOffset int64, 
 	ixFile.Writer.Flush()
 	core.Log(core.LogTrace, "writeIXEntry %x:%x", ixFileNumber, ixOffset)
 }
+func (handler *StorageHandler) InvalidateIXEntry(blockID core.Byte128) {
+	core.Log(core.LogDebug, "InvalidateIXEntry %x", blockID[:])
+
+	e, f, o, err := handler.readIXEntry(blockID)
+	abortOn(err)
+
+	ASSERT(e != nil, e)
+	e.flags |= entryFlagInvalid
+	handler.writeIXEntry(f, o, e)
+}
+
 func (handler *StorageHandler) killMetaEntry(blockID core.Byte128, metaFileNumber int32, metaOffset int64) (size int64) {
 	entry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
 	abortOn(err)
