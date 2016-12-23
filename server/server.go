@@ -285,9 +285,9 @@ func run() (returnValue int) {
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
 	cmd.StringOption("data", "", "<path>", "Full path to dat files", &datDirectory, cmd.Standard)
 	cmd.StringOption("index", "", "<path>", "Full path to idx and meta files", &idxDirectory, cmd.Standard)
-	var loglvl int64 = int64(core.LogInfo)
-	cmd.IntOption("loglevel", "", "<level>", "Set log level (0=errors, 1=warnings, 2=info, 3=debug, 4=trace", &loglvl, cmd.Standard).OnChange(func() {
-		core.LogLevel = int(loglvl)
+	var optLogLevel int64 = int64(core.LogInfo)
+	cmd.IntOption("loglevel", "", "<level>", "Set log level (0=errors, 1=warnings, 2=info, 3=debug, 4=trace", &optLogLevel, cmd.Standard).OnChange(func() {
+		core.LogLevel = int(optLogLevel)
 	})
 
 	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers
@@ -387,115 +387,14 @@ func run() (returnValue int) {
 		core.Log(core.LogInfo, "User added")
 	})
 
-	var doRepair bool
-	var doRebuild bool
-	var skipData, skipMeta, skipIndex bool
-	cmd.BoolOption("repair", "check-storage", "Repair non-fatal errors", &doRepair, cmd.Standard)
-	cmd.BoolOption("rebuild", "check-storage", "Rebuild index and meta files from data", &doRebuild, cmd.Standard)
-	cmd.BoolOption("skipdata", "check-storage", "Skip checking data files", &skipData, cmd.Standard)
-	cmd.BoolOption("skipmeta", "check-storage", "Skip checking meta files", &skipMeta, cmd.Standard)
-	cmd.BoolOption("skipindex", "check-storage", "Skip checking index files", &skipIndex, cmd.Standard)
-	cmd.Command("check-storage", "", func() {
-		if doRebuild {
-			if len(cmd.Args) > 2 {
-				panic("Start and end file arguments are not valid in combination with rebuild")
-			}
-			doRepair = true
-		}
-
-		startfile := int32(0)
-		endfile := int32(-1)
-		if len(cmd.Args) > 2 {
-			i, err := strconv.ParseInt(cmd.Args[2], 0, 32)
-			if err != nil {
-				panic(err)
-			}
-			startfile = int32(i)
-			core.Log(core.LogInfo, "Starting from file #%d (%04x)", startfile, startfile)
-		}
-		if len(cmd.Args) > 3 {
-			i, err := strconv.ParseInt(cmd.Args[3], 0, 32)
-			if err != nil {
-				panic(err)
-			}
-			endfile = int32(i)
-			core.Log(core.LogInfo, "Stopping after file #%d (%04x)", endfile, endfile)
-		}
-
-		if doRepair {
-			if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
-				panic(err)
-			} else {
-				defer lock.Unlock()
-			}
-		}
-
-		start := time.Now()
-
-		if doRebuild {
-			core.Log(core.LogInfo, "Removing index files")
-			storageHandler.RemoveFiles(storageFileTypeIndex)
-			core.Log(core.LogInfo, "Removing meta files")
-			storageHandler.RemoveFiles(storageFileTypeMeta)
-		}
-
-		core.Log(core.LogInfo, "Checking all storage files")
-		repaired, critical := storageHandler.CheckFiles(doRepair)
-		if !skipData && (doRepair || critical == 0) {
-			core.Log(core.LogInfo, "Checking data files")
-			r, c := storageHandler.CheckData(doRepair, startfile, endfile)
-			repaired += r
-			critical += c
-		}
-		if !skipMeta && (doRepair || critical == 0) {
-			core.Log(core.LogInfo, "Checking meta files")
-			storageHandler.CheckMeta()
-		}
-
-		if !skipIndex && (doRepair || critical == 0) {
-			core.Log(core.LogInfo, "Checking index files")
-			storageHandler.CheckIndexes(doRepair)
-		}
-
-		if doRepair || critical == 0 {
-			core.Log(core.LogInfo, "Checking dataset transactions")
-			rootlist := accountHandler.RebuildAccountFiles()
-
-			core.Log(core.LogInfo, "Checking block chain integrity")
-			verified := make(map[core.Byte128]bool) // Keep track of verified blocks
-			for i, r := range rootlist {
-				tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
-				core.Log(core.LogDebug, "CheckChain on %s", tag)
-				c := storageHandler.CheckChain(r.BlockID, tag, verified)
-				if c > 0 {
-					accountHandler.InvalidateDatasetState(r.AccountNameH, r.DatasetName, r.StateID)
-				}
-				critical += c
-
-				p := int(i * 100 / len(rootlist))
-				fmt.Printf("%d%%\r", p)
-			}
-		}
-
-		if critical > 0 {
-			core.Log(core.LogError, "Detected %d critical errors, DO NOT start the server unless everything is repaired", critical)
-		}
-		if repaired > 0 {
-			core.Log(core.LogWarning, "Performed %d repairs, please run again to verify repairs", repaired)
-		}
-		if critical == 0 && repaired == 0 {
-			core.Log(core.LogInfo, "All checks completed successfully in %.1f minutes", time.Since(start).Minutes())
-		}
-	})
-
-	var doCompact bool
-	var deadSkip int64 = 5
-	var skipSweep bool
-	var doForce bool
-	cmd.BoolOption("compact", "gc", "Compact data files to free space", &doCompact, cmd.Standard)
-	cmd.BoolOption("skipsweep", "gc", "Skip sweeping indexes", &skipSweep, cmd.Standard)
-	cmd.BoolOption("force", "gc", "Ignore broken datasets and force a garbage collect", &doForce, cmd.Standard)
-	cmd.IntOption("threshold", "gc", "<percentage>", "Compact minimum dead space threshold", &deadSkip, cmd.Standard)
+	var optGcCompact bool
+	var optGcCompactOnly bool
+	var optGcDeadSkip int64 = 5
+	var optGcForce bool
+	cmd.BoolOption("compact", "gc", "Compact data files to free space", &optGcCompact, cmd.Standard)
+	cmd.BoolOption("compact-only", "gc", "Compact without sweeping indexes first", &optGcCompactOnly, cmd.Standard)
+	cmd.BoolOption("force", "gc", "Ignore invalid datasets and force a garbage collect", &optGcForce, cmd.Standard)
+	cmd.IntOption("threshold", "gc", "<percentage>", "Compact minimum dead space threshold", &optGcDeadSkip, cmd.Standard)
 	cmd.Command("gc", "", func() {
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			panic(err)
@@ -504,10 +403,10 @@ func run() (returnValue int) {
 		}
 
 		start := time.Now()
-		if !skipSweep {
+		if !optGcCompactOnly {
 			core.Log(core.LogInfo, "Marking index entries")
 			var roots []core.Byte128
-			for _, r := range accountHandler.CollectAllRootBlocks(doForce) {
+			for _, r := range accountHandler.CollectAllRootBlocks(optGcForce) {
 				roots = append(roots, r.BlockID)
 			}
 			storageHandler.MarkIndexes(roots, true)
@@ -515,12 +414,90 @@ func run() (returnValue int) {
 			core.Log(core.LogInfo, "Mark and sweep duration %.1f minutes", time.Since(start).Minutes())
 			storageHandler.ShowStorageDeadSpace()
 		}
-		if doCompact {
+		if optGcCompact || optGcCompactOnly {
 			storageHandler.CompactIndexes(true)
-			storageHandler.CompactAll(storageFileTypeMeta, int(deadSkip))
-			storageHandler.CompactAll(storageFileTypeData, int(deadSkip))
+			storageHandler.CompactAll(storageFileTypeMeta, int(optGcDeadSkip))
+			storageHandler.CompactAll(storageFileTypeData, int(optGcDeadSkip))
 		}
 		core.Log(core.LogInfo, "Garbage collection completed in %.1f minutes", time.Since(start).Minutes())
+	})
+
+	cmd.Command("recover", "[start file number] [end file number]", func() {
+		startfile := int32(0)
+		endfile := int32(-1)
+		if len(cmd.Args) > 2 {
+			i, err := strconv.ParseInt(cmd.Args[2], 0, 32)
+			if err != nil {
+				panic(err)
+			}
+			startfile = int32(i)
+			core.Log(core.LogInfo, "Starting from file #%d (%08x)", startfile, startfile)
+		}
+		if len(cmd.Args) > 3 {
+			i, err := strconv.ParseInt(cmd.Args[3], 0, 32)
+			if err != nil {
+				panic(err)
+			}
+			endfile = int32(i)
+			core.Log(core.LogInfo, "Stopping after file #%d (%08x)", endfile, endfile)
+		}
+
+		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
+			panic(err)
+		} else {
+			defer lock.Unlock()
+		}
+
+		start := time.Now()
+
+		core.Log(core.LogInfo, "Checking storage file headers")
+		if storageHandler.CheckStorageFiles() > 0 {
+			core.Log(core.LogError, "Recovery will not continue because errors where raised.")
+			returnValue = 1
+			return
+		}
+
+		core.Log(core.LogInfo, "Scanning data files")
+		repairCount := storageHandler.RecoverData(startfile, endfile)
+
+		if repairCount > 0 {
+			core.Log(core.LogInfo, "Performed %d repairs. Please run a verify.", repairCount, time.Since(start).Minutes())
+		} else {
+			core.Log(core.LogInfo, "Recover completed in %.1f minutes.", time.Since(start).Minutes())
+		}
+	})
+
+	optVerifyContent := false
+	cmd.BoolOption("content", "verify", "Uncompress and verifying block content", &optVerifyContent, cmd.Standard)
+	cmd.Command("verify", "", func() {
+		errorCount := 0
+		start := time.Now()
+
+		checkedBlocks := make(map[core.Byte128]bool) // Keep track of checkedBlocks blocks
+
+		core.Log(core.LogInfo, "Verifying dataset storage")
+		rootlist := accountHandler.RebuildAccountFiles()
+		for i, r := range rootlist {
+			tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
+			core.Log(core.LogDebug, "Verify data referenced by %s", tag)
+			errs := storageHandler.CheckBlockTree(r.BlockID, tag, checkedBlocks, optVerifyContent)
+			if errs > 0 {
+				core.Log(core.LogWarning, "Dataset %s is marked as invalid", tag)
+				accountHandler.InvalidateDatasetState(r.AccountNameH, r.DatasetName, r.StateID)
+			}
+			errorCount += errs
+
+			p := int(i * 100 / len(rootlist))
+			fmt.Printf("%d%%\r", p)
+		}
+
+		core.Log(core.LogInfo, "Verifying unreferenced index entries")
+		storageHandler.CheckIndexes(checkedBlocks, optVerifyContent)
+
+		core.Log(core.LogInfo, "Verify completed in %.1f minutes", time.Since(start).Minutes())
+		if errorCount > 0 {
+			core.Log(core.LogWarning, "Detected errors in %d datasets, please run a full recover or remove the datasets", errorCount)
+		}
 	})
 
 	err = cmd.Parse()
