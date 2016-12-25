@@ -461,10 +461,9 @@ func run() (returnValue int) {
 		repairCount := storageHandler.RecoverData(startfile, endfile)
 
 		if repairCount > 0 {
-			core.Log(core.LogInfo, "Performed %d repairs. Please run a verify.", repairCount, time.Since(start).Minutes())
-		} else {
-			core.Log(core.LogInfo, "Recover completed in %.1f minutes.", time.Since(start).Minutes())
+			core.Log(core.LogInfo, "Performed %d repairs. Please run a verify.", repairCount)
 		}
+		core.Log(core.LogInfo, "Recover completed in %.1f minutes.", time.Since(start).Minutes())
 	})
 
 	optVerifyContent := false
