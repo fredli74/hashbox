@@ -1160,7 +1160,7 @@ func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, ch
 
 	OrphanCount := 0
 	for _, r := range metaEntry.links {
-		if handler.CheckBlockTree(r, string(ixEntry.blockID[:]), checkedBlocks, fullVerify) > 0 {
+		if handler.CheckBlockTree(r, fmt.Sprintf("%x", ixEntry.blockID[:]), checkedBlocks, fullVerify) > 0 {
 			OrphanCount++
 		}
 	}
