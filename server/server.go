@@ -472,26 +472,25 @@ func run() (returnValue int) {
 		errorCount := 0
 		start := time.Now()
 
-		checkedBlocks := make(map[core.Byte128]bool) // Keep track of checkedBlocks blocks
+		verifiedBlocks := make(map[core.Byte128]bool) // Keep track of verifiedBlocks blocks
 
 		core.Log(core.LogInfo, "Verifying dataset storage")
 		rootlist := accountHandler.RebuildAccountFiles()
 		for i, r := range rootlist {
 			tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
 			core.Log(core.LogDebug, "Verify data referenced by %s", tag)
-			errs := storageHandler.CheckBlockTree(r.BlockID, tag, checkedBlocks, optVerifyContent)
-			if errs > 0 {
-				core.Log(core.LogWarning, "Dataset %s is marked as invalid", tag)
+			if err := storageHandler.CheckBlockTree(r.BlockID, verifiedBlocks, optVerifyContent); err != nil {
+				core.Log(core.LogWarning, "Dataset %s is marked as invalid: %v", tag, err)
 				accountHandler.InvalidateDatasetState(r.AccountNameH, r.DatasetName, r.StateID)
+				errorCount++
 			}
-			errorCount += errs
 
 			p := int(i * 100 / len(rootlist))
 			fmt.Printf("%d%%\r", p)
 		}
 
 		core.Log(core.LogInfo, "Verifying unreferenced index entries")
-		storageHandler.CheckIndexes(checkedBlocks, optVerifyContent)
+		storageHandler.CheckIndexes(verifiedBlocks, optVerifyContent)
 
 		core.Log(core.LogInfo, "Verify completed in %.1f minutes", time.Since(start).Minutes())
 		if errorCount > 0 {
