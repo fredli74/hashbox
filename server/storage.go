@@ -964,7 +964,7 @@ func forwardToDataMarker(reader *core.BufferedReader) (int64, error) {
 	return offset, nil
 }
 
-func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowestMove int) (compacted int64) {
+func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowestMove int) int64 {
 	var entry storageEntry
 	switch fileType {
 	case storageFileTypeMeta:
@@ -988,11 +988,12 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 	abortOn(err)
 
 	var lastProgress = -1
+	removed, moved := int64(0), int64(0)
 	offset, writeOffset := int64(storageFileHeaderSize), int64(storageFileHeaderSize)
 	for offset < fileSize {
 		// Check if there is a Cgap marker here and in that case, jump ahead of it
 		skip := skipDataGap(reader)
-		compacted += skip
+		removed += skip
 		offset += skip
 
 		readOffset := offset
@@ -1004,10 +1005,10 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 
 		if _, _, _, err = handler.readIXEntry(entryBlockID); err != nil {
 			core.Log(core.LogDebug, "Removed %x:%x block %x (%s)", fileNumber, readOffset, entryBlockID[:], err.Error())
-			compacted += int64(entrySize)
+			removed += int64(entrySize)
 		} else if !entry.VerifyLocation(handler, fileNumber, readOffset) {
 			core.Log(core.LogDebug, "Removed %x:%x block %x (obsolete entry)", fileNumber, readOffset, entryBlockID[:])
-			compacted += int64(entrySize)
+			removed += int64(entrySize)
 		} else {
 			// Keep the block
 			freeFileNum, freeOffset, freeFile := handler.FindFreeOffset(fileType, lowestMove)
@@ -1034,6 +1035,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 				written := int64(entry.Serialize(freeFile.Writer))
 				core.Log(core.LogDebug, "Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, freeFileNum, freeOffset)
 				freeFile.Writer.Flush()
+				moved += int64(entrySize)
 
 				if freeFileNum == fileNumber {
 					core.Log(core.LogTrace, "File %s, increased in size from %x to %x", freeFile.Path, fileSize, fileSize+written)
@@ -1046,7 +1048,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 
 		p := int(offset * 100 / fileSize)
 		if p > lastProgress {
-			fmt.Printf("%d (%d%%)\r", 0-compacted, p)
+			fmt.Printf("%d (%d%%)\r", 0-removed, p)
 		}
 	}
 	ASSERT(writeOffset <= offset, "compact made the file larger?")
@@ -1054,8 +1056,8 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 	file.Writer.File.Truncate(writeOffset)
 	handler.setDeadSpace(fileType, fileNumber, 0, false)
 
-	core.Log(core.LogInfo, "Removed %s from file %s", core.HumanSize(offset-writeOffset), file.Path)
-	return compacted
+	core.Log(core.LogInfo, "Removed %s (%s moved) from file %s", core.HumanSize(offset-writeOffset), core.HumanSize(moved), file.Path)
+	return removed
 }
 func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
 	var lowestMove int
