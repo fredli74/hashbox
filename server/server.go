@@ -225,7 +225,7 @@ func handleConnection(conn net.Conn) {
 							reply.Data = &core.MsgServerError{"Unable to verify blockID"}
 						}
 					default:
-						panic(errors.New("ASSERT: Well if we reach this point, we have not implemented everything correctly (missing " + incoming.String() + ")"))
+						ASSERT(false, incoming.String()) // Well if we reach this point, we have not implemented everything correctly
 					}
 				}
 			}
@@ -302,14 +302,14 @@ func run() (returnValue int) {
 		serverAddr := net.TCPAddr{nil, int(serverPort), ""}
 
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
-			panic(err)
+			abort("%v", err)
 		} else {
 			defer lock.Unlock()
 		}
 
 		var listener *net.TCPListener
 		if listener, err = net.ListenTCP("tcp", &serverAddr); err != nil {
-			panic(errors.New(fmt.Sprintf("Error listening: %v", err.Error())))
+			abort("Error listening: %v", err.Error())
 		}
 		core.Log(core.LogInfo, "%s is listening on %s", cmd.Title, listener.Addr().String())
 
@@ -357,17 +357,17 @@ func run() (returnValue int) {
 	// It should be an interface to an adminsitrative tool instead
 	cmd.Command("adduser", "<username> <password>", func() {
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
-			panic(err)
+			abort("%v", err)
 		} else {
 			defer lock.Unlock()
 		}
 
 		if len(cmd.Args) < 4 {
-			panic(errors.New("Missing argument to adduser command"))
+			abort("Missing argument to adduser command")
 		}
 
 		if (!accountHandler.SetInfo(AccountInfo{AccountName: core.String(cmd.Args[2]), AccessKey: core.GenerateAccessKey(cmd.Args[2], cmd.Args[3])})) {
-			panic(errors.New("Error creating account"))
+			abort("Error creating account")
 		}
 		accountNameH := core.Hash([]byte(cmd.Args[2]))
 		dataEncryptionKey := core.GenerateDataEncryptionKey()
@@ -378,7 +378,7 @@ func run() (returnValue int) {
 		blockData.Write(dataEncryptionKey[:])
 		block := core.NewHashboxBlock(core.BlockDataTypeRaw, blockData, nil)
 		if !storageHandler.writeBlock(block) {
-			panic(errors.New("Error writing key block"))
+			abort("Error writing key block")
 		}
 		err := accountHandler.AddDatasetState(accountNameH, core.String("\x07HASHBACK_DEK"), core.DatasetState{BlockID: block.BlockID})
 		abortOn(err)
@@ -397,7 +397,7 @@ func run() (returnValue int) {
 	cmd.IntOption("threshold", "gc", "<percentage>", "Compact minimum dead space threshold", &optGcDeadSkip, cmd.Standard)
 	cmd.Command("gc", "", func() {
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
-			panic(err)
+			abort("%v", err)
 		} else {
 			defer lock.Unlock()
 		}
@@ -427,23 +427,19 @@ func run() (returnValue int) {
 		endfile := int32(-1)
 		if len(cmd.Args) > 2 {
 			i, err := strconv.ParseInt(cmd.Args[2], 0, 32)
-			if err != nil {
-				panic(err)
-			}
+			abortOn(err)
 			startfile = int32(i)
 			core.Log(core.LogInfo, "Starting from file #%d (%08x)", startfile, startfile)
 		}
 		if len(cmd.Args) > 3 {
 			i, err := strconv.ParseInt(cmd.Args[3], 0, 32)
-			if err != nil {
-				panic(err)
-			}
+			abortOn(err)
 			endfile = int32(i)
 			core.Log(core.LogInfo, "Stopping after file #%d (%08x)", endfile, endfile)
 		}
 
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
-			panic(err)
+			abort("%v", err)
 		} else {
 			defer lock.Unlock()
 		}
@@ -467,22 +463,42 @@ func run() (returnValue int) {
 	})
 
 	optVerifyContent := false
+	optReadOnly := true
 	cmd.BoolOption("content", "verify", "Uncompress and verifying block content", &optVerifyContent, cmd.Standard)
+	cmd.BoolOption("readonly", "verify", "Do not invalidate broken block trees", &optReadOnly, cmd.Standard)
 	cmd.Command("verify", "", func() {
+		if !optReadOnly {
+			if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
+				abort("%v", err)
+			} else {
+				defer lock.Unlock()
+			}
+		}
+
 		errorCount := 0
 		start := time.Now()
 
-		verifiedBlocks := make(map[core.Byte128]bool) // Keep track of verifiedBlocks blocks
-
 		core.Log(core.LogInfo, "Verifying dataset storage")
-		rootlist := accountHandler.RebuildAccountFiles()
+
+		verifiedBlocks := make(map[core.Byte128]bool) // Keep track of verifiedBlocks blocks
+		rootlist := []BlockSource{}
+		if optReadOnly {
+			rootlist = accountHandler.CollectAllRootBlocks(false)
+		} else {
+			rootlist = accountHandler.RebuildAccountFiles()
+		}
+
 		for i, r := range rootlist {
 			tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
 			core.Log(core.LogDebug, "Verify data referenced by %s", tag)
-			if err := storageHandler.CheckBlockTree(r.BlockID, verifiedBlocks, optVerifyContent); err != nil {
-				core.Log(core.LogWarning, "Dataset %s is marked as invalid: %v", tag, err)
-				accountHandler.InvalidateDatasetState(r.AccountNameH, r.DatasetName, r.StateID)
-				errorCount++
+			if err := storageHandler.CheckBlockTree(r.BlockID, verifiedBlocks, optVerifyContent, optReadOnly); err != nil {
+				if optReadOnly {
+					abort("%v", err)
+				} else {
+					core.Log(core.LogWarning, "Dataset %s is marked as invalid: %v", tag, err)
+					accountHandler.InvalidateDatasetState(r.AccountNameH, r.DatasetName, r.StateID)
+					errorCount++
+				}
 			}
 
 			p := int(i * 100 / len(rootlist))
@@ -490,7 +506,7 @@ func run() (returnValue int) {
 		}
 
 		core.Log(core.LogInfo, "Verifying unreferenced index entries")
-		storageHandler.CheckIndexes(verifiedBlocks, optVerifyContent)
+		storageHandler.CheckIndexes(verifiedBlocks, optVerifyContent, optReadOnly)
 
 		core.Log(core.LogInfo, "Verify completed in %.1f minutes", time.Since(start).Minutes())
 		if errorCount > 0 {

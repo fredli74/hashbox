@@ -85,9 +85,7 @@ func (handler *StorageHandler) dispatcher() {
 				}
 			}()
 		case _, ok := <-handler.signal: // Signal is closed?
-			if ok {
-				panic(errors.New("We should not reach this point, it means someone outside this goroutine sent a signal on the channel"))
-			}
+			ASSERT(!ok, ok) // We should not reach this point with "ok", it means someone outside this goroutine sent a signal on the channel
 			return
 		}
 	}
@@ -99,12 +97,12 @@ func (handler *StorageHandler) doCommand(q ChannelCommand) interface{} {
 		select {
 		case err := <-handler.signal:
 			if err != nil {
-				panic(errors.New("StorageHandler panic: " + err.Error()))
+				abort("StorageHandler panic: %v", err.Error())
 			}
 		default:
 			switch t := r.(type) {
 			case error:
-				panic(errors.New("StorageHandler panic: " + t.Error()))
+				abort("StorageHandler panic: %v", t.Error())
 			}
 		}
 	}()
@@ -234,7 +232,7 @@ func (h *storageFileHeader) Unserialize(r io.Reader) (size int) {
 	size += core.ReadUint32(r, &h.filetype)
 	size += core.ReadUint32(r, &h.version)
 	if h.version != storageVersion {
-		panic(errors.New("Invalid version in dbFileHeader"))
+		abort("Invalid version in dbFileHeader")
 	}
 	size += core.ReadInt64(r, &h.deadspace)
 	return
@@ -462,7 +460,7 @@ func (handler *StorageHandler) getNumberedFile(fileType int, fileNumber int32, c
 		f, err := core.OpenBufferedFile(filename, storageFileTypeInfo[fileType].BufferSize, flag, 0666)
 		if err != nil {
 			if create {
-				panic(err)
+				abort("%v", err)
 			} else {
 				return nil
 			}
@@ -1028,7 +1026,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 				file.Writer.Flush()
 
 				entry.ChangeLocation(handler, fileNumber, newOffset)
-			} else if free, _ := core.FreeSpace(datDirectory); free < int64(entrySize)*2 {
+			} else if free, _ := core.FreeSpace(datDirectory); free < int64(entrySize)+MINIMUM_DAT_FREE {
 				core.Log(core.LogWarning, "Unable to move block %x (%d bytes) because there is not enough free space on data path", entryBlockID[:], entrySize)
 				writeOffset = offset // make sure we point the writer pointer after this block so we do not overwrite it
 			} else { // found space in a different file, move the block
@@ -1083,7 +1081,7 @@ func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
 	core.Log(core.LogInfo, "All %s files compacted, %s released", storageFileTypeInfo[fileType].Extension, core.HumanSize(compacted))
 }
 
-func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, verifiedBlocks map[core.Byte128]bool, fullVerify bool) error {
+func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, verifiedBlocks map[core.Byte128]bool, fullVerify bool, readOnly bool) error {
 	err := (func() error {
 		metaFileNumber, metaOffset := ixEntry.location.Get()
 		metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
@@ -1146,7 +1144,7 @@ func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, ve
 				if rIX.flags&entryFlagInvalid == entryFlagInvalid {
 					return errors.New(fmt.Sprintf("Error in block %x, link %x is invalid", ixEntry.blockID[:], r[:]))
 				}
-				if err := handler.checkBlockFromIXEntry(rIX, verifiedBlocks, fullVerify); err != nil {
+				if err := handler.checkBlockFromIXEntry(rIX, verifiedBlocks, fullVerify, readOnly); err != nil {
 					return err
 				}
 			} else if !v {
@@ -1159,21 +1157,25 @@ func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, ve
 		verifiedBlocks[ixEntry.blockID] = true
 	} else {
 		verifiedBlocks[ixEntry.blockID] = false
-		core.Log(core.LogDebug, "%v", err)
-		handler.InvalidateIXEntry(ixEntry.blockID)
+		if readOnly {
+			abort("%V", err)
+		} else {
+			core.Log(core.LogDebug, "%v", err)
+			handler.InvalidateIXEntry(ixEntry.blockID)
+		}
 	}
 	return err
 }
 
-func (handler *StorageHandler) CheckBlockTree(blockID core.Byte128, verifiedBlocks map[core.Byte128]bool, fullVerify bool) error {
+func (handler *StorageHandler) CheckBlockTree(blockID core.Byte128, verifiedBlocks map[core.Byte128]bool, fullVerify bool, readOnly bool) error {
 	ixEntry, _, _, err := handler.readIXEntry(blockID)
 	if err != nil {
 		return err
 	}
-	return handler.checkBlockFromIXEntry(ixEntry, verifiedBlocks, fullVerify)
+	return handler.checkBlockFromIXEntry(ixEntry, verifiedBlocks, fullVerify, readOnly)
 }
 
-func (handler *StorageHandler) CheckIndexes(verifiedBlocks map[core.Byte128]bool, fullVerify bool) {
+func (handler *StorageHandler) CheckIndexes(verifiedBlocks map[core.Byte128]bool, fullVerify bool, readOnly bool) {
 	var ixEntry storageIXEntry
 
 	for ixFileNumber := int32(0); ; ixFileNumber++ {
@@ -1208,7 +1210,7 @@ func (handler *StorageHandler) CheckIndexes(verifiedBlocks map[core.Byte128]bool
 
 				v, checked := verifiedBlocks[ixEntry.blockID]
 				if !checked {
-					if err := handler.checkBlockFromIXEntry(&ixEntry, verifiedBlocks, fullVerify); err != nil {
+					if err := handler.checkBlockFromIXEntry(&ixEntry, verifiedBlocks, fullVerify, readOnly); err != nil {
 						core.Log(core.LogWarning, "Block tree for %x was marked invalid: %v", ixEntry.blockID[:], err)
 					}
 				} else {

@@ -336,7 +336,7 @@ func appendDatasetTx(accountNameH core.Byte128, datasetName core.String, tx dbTx
 func updateInfoFile(accountNameH core.Byte128, datasetName core.String) {
 	collection := readDBFile(accountNameH, datasetName)
 	if collection == nil {
-		panic("updateInfoFile was called on a DB file which cannot be opened")
+		abort("updateInfoFile was called on a DB file which cannot be opened")
 	}
 
 	// Now also update account info
@@ -522,7 +522,7 @@ func (handler *AccountHandler) CollectAllRootBlocks(skipInvalid bool) (rootBlock
 			datasetName := getDatasetNameFromFile(name)
 			collection := readDBFile(accountNameH, datasetName)
 			if collection == nil {
-				panic("CollectAllRootBlocks was called on a DB file which cannot be opened")
+				abort("CollectAllRootBlocks was called on a DB file which cannot be opened")
 			}
 			for _, e := range collection.States {
 				if e.StateFlags&core.StateFlagInvalid == core.StateFlagInvalid {
@@ -603,7 +603,7 @@ func (handler *AccountHandler) RebuildAccountFiles() (rootBlocks []BlockSource) 
 func (handler *AccountHandler) InvalidateDatasetState(accountNameH core.Byte128, datasetName core.String, stateID core.Byte128) {
 	collection := readDBFile(accountNameH, datasetName)
 	if collection == nil {
-		panic("InvalidateDatasetState was called on a DB file which cannot be opened")
+		abort("InvalidateDatasetState was called on a DB file which cannot be opened")
 	}
 	for i, s := range collection.States {
 		if s.State.StateID.Compare(stateID) == 0 {
