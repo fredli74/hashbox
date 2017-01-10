@@ -1046,7 +1046,8 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 
 		p := int(offset * 100 / fileSize)
 		if p > lastProgress {
-			fmt.Printf("%d (%d%%)\r", 0-removed, p)
+			lastProgress = p
+			fmt.Printf("%d (%d%%)\r", 0-removed, lastProgress)
 		}
 	}
 	ASSERT(writeOffset <= offset, "compact made the file larger?")

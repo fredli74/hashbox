@@ -55,7 +55,7 @@ func ASSERT(ok bool, v ...interface{}) {
 	}
 }
 func abort(format string, a ...interface{}) {
-	panic(errors.New(fmt.Sprintf(format, a)))
+	panic(errors.New(fmt.Sprintf(format, a...)))
 }
 func abortOn(err error) {
 	if err != nil {
