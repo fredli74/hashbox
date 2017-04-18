@@ -41,23 +41,30 @@ Hashbox is a cross-platform derivate of a proprietary backup system (called BUP)
 
 **Start the server**
 
-`./hashbox-freebsd-amd64 [-port=<port>] [-data=<path>] [-index=<path>]`
+`./hashbox-freebsd-amd64 [-port=<port>] [-data=<path>] [-index=<path>] [-loglevel=<level>]`
 
-Optional arguments `data` and `index` will tell the server where to keep all data and index/metadata files. If possible, the index files should be placed on fast storage such as SSD as they are used in every single access. These files can also be recreated from the data files by running the -repair command.
+Optional arguments `-data` and `-index` will tell the server where to keep all data and index/metadata files. If possible, the index files should be placed on fast storage such as SSD as they are used in every single access. These files can also be recreated from the data files by running the recover command.
 
 
 **Run a garbage collect (GC)**
 
-`./hashbox-freebsd-amd64 gc [-compact]`
+`./hashbox-freebsd-amd64 gc [-compact] [-compact-only] [-force] [-threshold=<percentage>]`
 
-Optional argument `compact` will run the compact phase on data and meta files, freeing up unused space. After the sweep has completed, a report will be displayed on how much unused data (dead data) there is in each storage file. Running without the compact option will only sweep the index files (displaying the report, but not actually freeing any disk space).
+After the sweep has completed, a report will be displayed on how much unused data (dead data) there is in each storage file. Optional argument `-compact` will run the compact phase on data and meta files, freeing up unused space. Running without the compact option will only sweep the index files (displaying the report, but not actually freeing any disk space). Running with `-compact-only` will skip the sweep phase and only compact data and meta files. `-force` will ignore invalid datasets and force a garbage collect, resulting in all orphan data being removed. Use `-threshold` to set at which unused dead space threshold to compact a file.
 
 
 **Run a storage file check**
 
-`./hashbox-freebsd-amd64 check-storage [-repair] [-skipdata] [-skipmeta] [-skipindex]`
+`./hashbox-freebsd-amd64 verify [-content] [-readonly]`
 
-Optional arguments `skipdata`, `skipmeta` and `skipindex` can skip checks to speed up the procedure. If repair is specified it will recreate metadata and indexes from blocks found in data files. Bear in mind that doing this after an index GC will re-add the indexes as alive blocks again.
+Optional arguments `-content` will verify all data content. `-readonly` can be used to run a verify while the server is still up.
+
+
+**Run a storage recovery**
+
+`./hashbox-freebsd-amd64 recover [start file number] [end file number]`
+
+Recover will go through all data files and rebuild index and meta data. Optional arguments can be specified to restrict the recovery to only a range of data files.
 
 
 ## Hashbox Backup Client (Hashback) ##
