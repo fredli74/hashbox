@@ -374,7 +374,7 @@ func main() {
 				LocalStoragePath = filepath.Join(home, ".hashback")
 			}
 		}
-		err = os.MkdirAll(filepath.Dir(LocalStoragePath), 0700)
+		err = os.MkdirAll(LocalStoragePath, 0700)
 		PanicOn(err)
 	}
 
