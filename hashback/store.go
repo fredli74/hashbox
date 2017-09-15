@@ -408,10 +408,16 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 			}
 		}
 		if found >= 0 {
+			referenceBackup := binary.BigEndian.Uint64(list.States[found].State.StateID[:])
+			date := time.Unix(0, int64(referenceBackup))
+			session.Log("Starting differential backup with %x (%s) as reference.", list.States[found].State.StateID[:], date.Format(time.RFC3339))
 			session.reference.start(&list.States[found].State.BlockID)
 		} else {
+			session.Log("Starting new backup.")
 			session.reference.start(nil)
 		}
+	} else {
+		session.Log("Starting full backup.")
 	}
 
 	if virtualRootDir != nil {

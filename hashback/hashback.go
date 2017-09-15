@@ -303,15 +303,21 @@ func (session *BackupSession) Close(polite bool) {
 }
 
 func (session *BackupSession) Log(format string, a ...interface{}) {
-	session.Client.Paint("\n")
-	fmt.Printf(format, a...)
-	fmt.Println()
+	if session.Client != nil {
+		session.Client.Paint("\n")
+	}
+	core.Log(core.LogInfo, format, a...)
+	//	fmt.Printf(format, a...)
+	//	fmt.Println()
 }
 func (session *BackupSession) LogVerbose(format string, a ...interface{}) {
 	if session.Verbose {
-		session.Client.Paint("\n")
-		fmt.Printf(format, a...)
-		fmt.Println()
+		if session.Client != nil {
+			session.Client.Paint("\n")
+		}
+		core.Log(core.LogInfo, format, a...)
+		//		fmt.Printf(format, a...)
+		//		fmt.Println()
 	}
 }
 
@@ -434,6 +440,8 @@ func main() {
 	})
 
 	cmd.Command("info", "", func() {
+		session.Log(cmd.Title)
+
 		session.Connect()
 		defer session.Close(true)
 
@@ -471,6 +479,8 @@ func main() {
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))
 		}
+
+		session.Log(cmd.Title)
 
 		session.Connect()
 		defer session.Close(true)
@@ -579,6 +589,8 @@ func main() {
 			panic(errors.New("Missing source file or folder argument"))
 		}
 
+		session.Log(cmd.Title)
+
 		if pidName != "" {
 			var err error
 			if lockFile, err = lockfile.Lock(pidName); err != nil {
@@ -638,6 +650,8 @@ func main() {
 			panic(errors.New("Missing destination folder argument"))
 		}
 
+		session.Log(cmd.Title)
+
 		session.Connect()
 		defer session.Close(true)
 
@@ -682,6 +696,8 @@ func main() {
 			panic(errors.New("Missing destination folder argument"))
 		}
 
+		session.Log(cmd.Title)
+
 		session.Connect()
 		defer session.Close(true)
 
@@ -725,6 +741,8 @@ func main() {
 		if len(cmd.Args) < 4 {
 			panic(errors.New("Missing backup id"))
 		}
+
+		session.Log(cmd.Title)
 
 		session.Connect()
 		defer session.Close(true)
