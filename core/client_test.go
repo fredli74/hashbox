@@ -8,6 +8,7 @@ package core
 
 import (
 	_ "bytes"
+	"encoding/binary"
 	"encoding/hex"
 	_ "fmt"
 	"io"
@@ -41,7 +42,11 @@ func TestClientInit(t *testing.T) {
 	pr, pw := io.Pipe()
 	go func(w io.Writer) {
 		time.Sleep(2 * time.Second)
-		WriteMessage(w, &ProtocolMessage{Num: 0, Type: MsgTypeGreeting & MsgTypeServerMask, Data: &MsgServerGreeting{Hash([]byte("testing"))}})
+		var SessionNonce Byte128
+		binary.BigEndian.PutUint64(SessionNonce[0:], uint64(time.Now().UnixNano()))
+		binary.BigEndian.PutUint32(SessionNonce[8:], 0x01234567)
+		binary.BigEndian.PutUint32(SessionNonce[12:], 0x89abcdef)
+		WriteMessage(w, &ProtocolMessage{Num: 0, Type: MsgTypeGreeting & MsgTypeServerMask, Data: &MsgServerGreeting{SessionNonce}})
 		time.Sleep(2 * time.Second)
 		WriteMessage(w, &ProtocolMessage{Num: 1, Type: MsgTypeAuthenticate & MsgTypeServerMask})
 		time.Sleep(2 * time.Second)

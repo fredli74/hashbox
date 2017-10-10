@@ -84,10 +84,10 @@ func NewClient(conn net.Conn, account string, accesskey Byte128) *Client {
 		r := client.dispatchAndWait(MsgTypeGreeting, &MsgClientGreeting{Version: ProtocolVersion}).(*MsgServerGreeting)
 		clientTime := uint64(time.Now().Unix())
 		serverTime := binary.BigEndian.Uint64(r.SessionNonce[:]) / 1000000000
-		if clientTime < serverTime - 600 || clientTime > serverTime + 600 {
+		if clientTime < serverTime-600 || clientTime > serverTime+600 {
 			panic(errors.New("Connection refused, system time difference between client and server is more than 10 minutes."))
 		}
-		
+
 		client.SessionNonce = r.SessionNonce
 		client.GenerateSessionKey(client.AccessKey)
 	}
