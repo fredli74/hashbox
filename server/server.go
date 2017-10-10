@@ -47,7 +47,7 @@ var logLock sync.Mutex
 
 // ASSERTS should be removed on release
 // ASSERTS are not error handling
-// ASSERTS are IQ checks of developers
+// ASSERTS are tests of development errors
 func ASSERT(ok bool, v ...interface{}) {
 	if !ok {
 		_, file, line, _ := runtime.Caller(1)
