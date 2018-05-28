@@ -1,6 +1,6 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2016
+//	| # | |    Copyright 2015-2018
 //	+---+´
 
 // Hashbox core, version 0.1

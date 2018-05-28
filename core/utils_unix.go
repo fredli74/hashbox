@@ -1,6 +1,6 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2016
+//	| # | |    Copyright 2015-2018
 //	+---+´
 
 // +build darwin dragonfly freebsd linux nacl netbsd openbsd solaris
