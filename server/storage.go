@@ -1068,7 +1068,7 @@ func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
 		}
 		fileSize, deadSpace, err := handler.getNumberedFileSize(fileType, fileNumber)
 		abortOn(err)
-		if int(deadSpace*100/fileSize) >= threshold {
+		if fileSize < storageOffsetLimit/100 || int(deadSpace*100/fileSize) >= threshold {
 			compacted += handler.CompactFile(fileType, fileNumber, lowestMove)
 		} else {
 			core.Log(core.LogInfo, "Skipping compact on file %s, est. dead data %s is less than %d%%", file.Path, core.HumanSize(deadSpace), threshold)

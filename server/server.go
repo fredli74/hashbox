@@ -45,7 +45,7 @@ var done chan bool
 
 var logLock sync.Mutex
 
-// ASSERTS should be removed on release
+// ASSERTS should be disabled on release
 // ASSERTS are not error handling
 // ASSERTS are tests of development errors
 func ASSERT(ok bool, v ...interface{}) {
