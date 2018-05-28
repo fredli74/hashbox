@@ -793,7 +793,7 @@ func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
 }
 
 func (r *referenceEngine) Commit(rootID core.Byte128) {
-	cleanup := fmt.Sprintf("%s.*.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
+	cleanup := fmt.Sprintf("%s.*.cache*", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
 	filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
 		if match, _ := filepath.Match(cleanup, info.Name()); match {
 			os.Remove(path)
