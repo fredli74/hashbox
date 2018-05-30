@@ -7,9 +7,9 @@ rm "$GOPATH/bin/hashbox/"*.zip
 rm "$GOPATH/bin/hashbox/"*
 
 BuildAndZip () {
-	rm "$GOPATH/bin/hashbox/$2"
+	rm "$GOPATH/bin/hashbox/$2" >/dev/null 2>&1
 	go build -ldflags "-X main.Version=$revision" -o "$GOPATH/bin/hashbox/$2"
-	rm "$GOPATH/bin/hashbox/$1-$version.zip"
+	rm "$GOPATH/bin/hashbox/$1-$version.zip" >/dev/null 2>&1
 	zip -jD "$GOPATH/bin/hashbox/$1-$version.zip" "$GOPATH/bin/hashbox/$2"
 }
 
