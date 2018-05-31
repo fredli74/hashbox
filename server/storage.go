@@ -469,7 +469,7 @@ func (handler *StorageHandler) getNumberedFile(fileType int, fileNumber int32, c
 			header.filetype = storageFileTypeInfo[fileType].Type
 			header.version = storageVersion
 			header.Serialize(f.Writer)
-			f.Writer.Flush()
+			f.Sync()
 		} else {
 			header.Unserialize(f.Reader)
 			if header.filetype != storageFileTypeInfo[fileType].Type {
@@ -510,7 +510,7 @@ func (handler *StorageHandler) setDeadSpace(fileType int, fileNumber int32, size
 	}
 	file.Writer.Seek(0, os.SEEK_SET)
 	header.Serialize(file.Writer)
-	file.Writer.Flush()
+	file.Sync()
 }
 
 // calculateIXEntryOffset calculates a start position into the index file where the blockID could be found using the following formula:
@@ -614,11 +614,11 @@ func (handler *StorageHandler) writeIXEntry(ixFileNumber int32, ixOffset int64, 
 	finalFlags := entry.flags
 	entry.flags |= entryFlagInvalid // Write record as invalid first
 	entry.Serialize(ixFile.Writer)
-	ixFile.Writer.Flush()
+	ixFile.Sync()
 
 	ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
 	core.WriteUint16(ixFile.Writer, finalFlags) // Write correct flags
-	ixFile.Writer.Flush()
+	ixFile.Sync()
 	core.Log(core.LogTrace, "writeIXEntry %x:%x", ixFileNumber, ixOffset)
 }
 func (handler *StorageHandler) InvalidateIXEntry(blockID core.Byte128) {
@@ -662,7 +662,7 @@ func (handler *StorageHandler) writeMetaEntry(metaFileNumber int32, metaOffset i
 		metaFile.Writer.Seek(metaOffset, os.SEEK_SET)
 	}
 	data.WriteTo(metaFile.Writer)
-	metaFile.Writer.Flush()
+	metaFile.Sync()
 	core.Log(core.LogTrace, "writeMetaEntry %x:%x", metaFileNumber, metaOffset)
 
 	return metaFileNumber, metaOffset
@@ -705,7 +705,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	var data = new(bytes.Buffer)
 	dataEntry.Serialize(data)
 	data.WriteTo(datFile.Writer)
-	datFile.Writer.Flush()
+	datFile.Sync()
 
 	metaEntry := storageMetaEntry{blockID: block.BlockID, dataSize: uint32(block.Data.Len()), links: block.Links}
 	metaEntry.location.Set(datFileNumber, datOffset)
@@ -773,7 +773,7 @@ func (handler *StorageHandler) MarkIndexes(roots []core.Byte128, Paint bool) {
 
 			ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
 			core.WriteUint16(ixFile.Writer, entry.flags)
-			ixFile.Writer.Flush()
+			ixFile.Sync()
 
 			visited[blockID] = true // Mark that we do not need to check this block again
 		}
@@ -850,7 +850,7 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 				}
 				ixFile.Writer.Seek(offset, os.SEEK_SET)
 				core.WriteUint16(ixFile.Writer, entry.flags)
-				ixFile.Writer.Flush()
+				ixFile.Sync()
 			}
 
 			if ixSize > 0 {
@@ -896,7 +896,7 @@ func (handler *StorageHandler) CompactIndexes(Paint bool) {
 				clearedBlocks++
 				ixFile.Writer.Seek(offset, os.SEEK_SET)
 				blankEntry.Serialize(ixFile.Writer)
-				ixFile.Writer.Flush()
+				ixFile.Sync()
 				core.Log(core.LogDebug, "Cleared index at %x:%x", ixFileNumber, offset)
 			} else if entry.flags&entryFlagExists == entryFlagExists {
 				truncPoint = offset + storageIXEntrySize
@@ -1017,7 +1017,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 				core.Log(core.LogTrace, "Creating a free space marker (%d bytes skip) at %x:%x", readOffset-writeOffset, fileNumber, writeOffset)
 				core.WriteBytes(file.Writer, []byte("Cgap"))
 				core.WriteInt64(file.Writer, readOffset-writeOffset)
-				file.Writer.Flush()
+				file.Sync()
 
 				entry.ChangeLocation(handler, fileNumber, newOffset)
 			} else if free, _ := core.FreeSpace(datDirectory); free < int64(entrySize)+MINIMUM_DAT_FREE {
@@ -1026,7 +1026,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 			} else { // found space in a different file, move the block
 				written := int64(entry.Serialize(freeFile.Writer))
 				core.Log(core.LogDebug, "Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, freeFileNum, freeOffset)
-				freeFile.Writer.Flush()
+				freeFile.Sync()
 				moved += int64(entrySize)
 
 				if freeFileNum == fileNumber {
@@ -1329,7 +1329,7 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 				moveFileNum, moveOffset, moveFile := handler.findFreeOffset(storageFileTypeData)
 				core.Log(core.LogDebug, "Rewriting block %x at (%x:%x)", dataEntry.block.BlockID[:], moveFileNum, moveOffset)
 				dataEntry.Serialize(moveFile.Writer)
-				moveFile.Writer.Flush()
+				moveFile.Sync()
 
 				core.Log(core.LogTrace, "Creating new meta for block %x", dataEntry.block.BlockID[:])
 				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: uint32(dataEntry.block.Data.Len()), links: dataEntry.block.Links}
@@ -1349,7 +1349,7 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 				core.Log(core.LogTrace, "Creating a free space marker at %x:%x (skip %d bytes)", datFileNumber, brokenSpot, blockOffset-brokenSpot)
 				core.WriteBytes(datFile.Writer, []byte("Cgap"))
 				core.WriteInt64(datFile.Writer, blockOffset-brokenSpot)
-				datFile.Writer.Flush()
+				datFile.Sync()
 				brokenSpot = 0
 			}
 

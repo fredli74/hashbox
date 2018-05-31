@@ -102,3 +102,7 @@ func (b *BufferedFile) Close() (err error) {
 	}
 	return err
 }
+func (b *BufferedFile) Sync() (err error) {
+	b.Writer.Flush()
+	return b.Writer.File.Sync()
+}
