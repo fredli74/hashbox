@@ -35,9 +35,8 @@ type StorageHandler struct {
 	queue   chan ChannelCommand
 	wg      sync.WaitGroup
 
-	filepool          map[string]*core.BufferedFile
-	topDatFileNumber  int32
-	topMetaFileNumber int32
+	filepool      map[string]*core.BufferedFile
+	topFileNumber []int32
 }
 
 const (
@@ -124,10 +123,10 @@ func (handler *StorageHandler) Close() {
 }
 func NewStorageHandler() *StorageHandler {
 	handler := &StorageHandler{
-		queue:            make(chan ChannelCommand, 32),
-		signal:           make(chan error), // cannot be buffered
-		filepool:         make(map[string]*core.BufferedFile),
-		topDatFileNumber: -1,
+		queue:         make(chan ChannelCommand, 32),
+		signal:        make(chan error), // cannot be buffered
+		filepool:      make(map[string]*core.BufferedFile),
+		topFileNumber: []int32{-1, -1, -1},
 	}
 	handler.wg.Add(1)
 
@@ -578,6 +577,30 @@ OuterLoop:
 	}
 }
 
+func (handler *StorageHandler) findFreeOffset(fileType int) (freeFileNum int32, freeOffset int64, freeFile *core.BufferedFile) {
+	if handler.topFileNumber[fileType] < 0 {
+		// Fill new data at the end
+		handler.topFileNumber[fileType] = 0
+		for top := int32(1); ; top++ {
+			if topFile := handler.getNumberedFile(fileType, top, false); topFile == nil {
+				break
+			} else if topFile.Size() > storageFileHeaderSize { // this file contains data
+				handler.topFileNumber[fileType] = top
+			}
+		}
+	}
+
+	for {
+		freeFile = handler.getNumberedFile(fileType, handler.topFileNumber[fileType], true)
+		freeOffset, _ = freeFile.Writer.Seek(0, os.SEEK_END)
+		if freeOffset <= storageOffsetLimit {
+			break
+		}
+		handler.topFileNumber[fileType]++
+	}
+	return handler.topFileNumber[fileType], freeOffset, freeFile
+}
+
 func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (entry *storageIXEntry, ixFileNumber int32, ixOffset int64, err error) {
 	entry, ixFileNumber, ixOffset = handler.findIXOffset(blockID, false)
 	if entry == nil {
@@ -633,22 +656,14 @@ func (handler *StorageHandler) writeMetaEntry(metaFileNumber int32, metaOffset i
 
 	var metaFile *core.BufferedFile
 	if metaOffset == 0 { // Offset 0 does not exist as it is in the header
-		for {
-			metaFile = handler.getNumberedFile(storageFileTypeMeta, handler.topMetaFileNumber, true)
-			metaOffset, _ = metaFile.Writer.Seek(0, os.SEEK_END)
-			if metaOffset <= storageOffsetLimit {
-				break
-			}
-			handler.topMetaFileNumber++
-		}
-		metaFileNumber = handler.topMetaFileNumber
+		metaFileNumber, metaOffset, metaFile = handler.findFreeOffset(storageFileTypeMeta)
 	} else {
 		metaFile = handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
 		metaFile.Writer.Seek(metaOffset, os.SEEK_SET)
 	}
 	data.WriteTo(metaFile.Writer)
 	metaFile.Writer.Flush()
-	core.Log(core.LogTrace, "writeMetaEntry %x:%x", handler.topMetaFileNumber, metaOffset)
+	core.Log(core.LogTrace, "writeMetaEntry %x:%x", metaFileNumber, metaOffset)
 
 	return metaFileNumber, metaOffset
 }
@@ -684,28 +699,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 		}
 	}
 
-	// With age-shuffle compression, always fill new data at the end
-	if handler.topDatFileNumber < 0 {
-		handler.topDatFileNumber = 0
-		for top := int32(1); ; top++ {
-			if topFile := handler.getNumberedFile(storageFileTypeData, top, false); topFile == nil {
-				break
-			} else if topFile.Size() > storageFileHeaderSize { // this file contains data
-				handler.topDatFileNumber = top
-			}
-		}
-	}
-
-	var datFile *core.BufferedFile
-	var datOffset int64
-	for {
-		datFile = handler.getNumberedFile(storageFileTypeData, handler.topDatFileNumber, true)
-		datOffset, _ = datFile.Writer.Seek(0, os.SEEK_END)
-		if datOffset <= storageOffsetLimit {
-			break
-		}
-		handler.topDatFileNumber++
-	}
+	datFileNumber, datOffset, datFile := handler.findFreeOffset(storageFileTypeData)
 
 	dataEntry := storageDataEntry{block: block}
 	var data = new(bytes.Buffer)
@@ -714,7 +708,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	datFile.Writer.Flush()
 
 	metaEntry := storageMetaEntry{blockID: block.BlockID, dataSize: uint32(block.Data.Len()), links: block.Links}
-	metaEntry.location.Set(handler.topDatFileNumber, datOffset)
+	metaEntry.location.Set(datFileNumber, datOffset)
 	metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
 
 	ixEntry := storageIXEntry{flags: entryFlagExists, blockID: block.BlockID}
@@ -962,7 +956,7 @@ func forwardToDataMarker(reader *core.BufferedReader) (int64, error) {
 	return offset, nil
 }
 
-func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowestMove int) int64 {
+func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64 {
 	var entry storageEntry
 	switch fileType {
 	case storageFileTypeMeta:
@@ -1009,7 +1003,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 			removed += int64(entrySize)
 		} else {
 			// Keep the block
-			freeFileNum, freeOffset, freeFile := handler.FindFreeOffset(fileType, lowestMove)
+			freeFileNum, freeOffset, freeFile := handler.findFreeOffset(fileType)
 			if freeFileNum >= fileNumber && readOffset == writeOffset { // No space in earlier file let it be if possible
 				writeOffset += int64(entrySize)
 				core.Log(core.LogTrace, "No need to write, moving writeOffset to %x", writeOffset)
@@ -1059,7 +1053,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32, lowes
 	return removed
 }
 func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
-	var lowestMove int
+	handler.topFileNumber[fileType] = 0 // ignore data age-location, start at file 0
 	var compacted int64
 	for fileNumber := int32(0); ; fileNumber++ {
 		file := handler.getNumberedFile(fileType, fileNumber, false)
@@ -1069,10 +1063,12 @@ func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
 		fileSize, deadSpace, err := handler.getNumberedFileSize(fileType, fileNumber)
 		abortOn(err)
 		if fileSize < storageOffsetLimit/100 || int(deadSpace*100/fileSize) >= threshold {
-			compacted += handler.CompactFile(fileType, fileNumber, lowestMove)
+			compacted += handler.CompactFile(fileType, fileNumber)
+			if handler.topFileNumber[fileType] > fileNumber {
+				handler.topFileNumber[fileType] = fileNumber // file might have free space now
+			}
 		} else {
 			core.Log(core.LogInfo, "Skipping compact on file %s, est. dead data %s is less than %d%%", file.Path, core.HumanSize(deadSpace), threshold)
-			lowestMove = int(fileNumber)
 		}
 		if err != nil {
 			break // no more data files
@@ -1270,21 +1266,6 @@ func (handler *StorageHandler) CheckStorageFiles() (errorCount int) {
 	return errorCount
 }
 
-func (handler *StorageHandler) FindFreeOffset(fileType int, lowestNum int) (freeFileNum int32, freeOffset int64, freeFile *core.BufferedFile) {
-	var err error
-	freeFileNum = int32(lowestNum)
-	freeOffset = int64(0)
-	for {
-		freeFile = handler.getNumberedFile(fileType, freeFileNum, true)
-		freeOffset, err = freeFile.Writer.Seek(0, os.SEEK_END)
-		abortOn(err)
-		if freeOffset <= storageOffsetLimit {
-			return freeFileNum, freeOffset, freeFile
-		}
-		freeFileNum++
-	}
-}
-
 func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repairCount int) {
 	var dataEntry storageDataEntry
 	defer dataEntry.Release()
@@ -1345,7 +1326,7 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 			}
 			if brokenSpot > 0 && blockOffset-brokenSpot < 12 {
 				// Cannot fit a Cgap marker, so we need to move the block
-				moveFileNum, moveOffset, moveFile := handler.FindFreeOffset(storageFileTypeData, 0)
+				moveFileNum, moveOffset, moveFile := handler.findFreeOffset(storageFileTypeData)
 				core.Log(core.LogDebug, "Rewriting block %x at (%x:%x)", dataEntry.block.BlockID[:], moveFileNum, moveOffset)
 				dataEntry.Serialize(moveFile.Writer)
 				moveFile.Writer.Flush()
