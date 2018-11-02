@@ -699,11 +699,7 @@ func (r *referenceEngine) popReference() *FileEntry {
 	if len(r.queue) > 0 {
 		e = r.queue[0]
 		if e.ContentType == ContentTypeDirectory {
-			path := string(e.FileName)
-			if len(r.path) == 0 && r.virtualRoot != nil && r.virtualRoot[path] != "" {
-				path = r.virtualRoot[path]
-			}
-			r.path = append(r.path, path)
+			r.path = append(r.path, string(e.FileName))
 		} else if string(e.FileName) == "" { // EOD
 			r.path = r.path[:len(r.path)-1]
 		}
@@ -719,9 +715,6 @@ func (r *referenceEngine) joinPath(elem string) (path string) {
 		path = filepath.Join(path, p)
 	}
 	path = filepath.Join(path, elem)
-	if len(r.path) == 0 && r.virtualRoot != nil && r.virtualRoot[path] != "" {
-		return r.virtualRoot[path]
-	}
 	return
 }
 
@@ -744,6 +737,14 @@ func (r *referenceEngine) peekPath() (path string) {
 
 // findReference tries to find a specified path in the last backup structure
 func (r *referenceEngine) findReference(path string) *FileEntry {
+	// Convert absolute local path to virtual relative path
+	for rel, abs := range r.virtualRoot {
+		if (len(path) >= len(abs) && path[0:len(abs)] == abs) {
+			path = rel + path[len(abs):]
+			break;
+		}
+	}
+
 	for {
 		p := r.peekPath()
 		if pathLess(p, path) && r.popReference() != nil {
