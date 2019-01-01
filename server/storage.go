@@ -356,7 +356,8 @@ func (e *storageMetaEntry) ChangeLocation(handler *StorageHandler, fileNumber in
 	ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(e.blockID)
 	abortOn(err)
 	ixEntry.location.Set(fileNumber, fileOffset)
-	handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
+	// flush notice: tell writeIXEntry to flush on moves because old data might be overwritten next
+	handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, true)
 }
 func (e *storageMetaEntry) VerifyLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) bool {
 	ixEntry, _, _, err := handler.readIXEntry(e.blockID)
@@ -469,7 +470,6 @@ func (handler *StorageHandler) getNumberedFile(fileType int, fileNumber int32, c
 			header.filetype = storageFileTypeInfo[fileType].Type
 			header.version = storageVersion
 			header.Serialize(f.Writer)
-			f.Sync()
 		} else {
 			header.Unserialize(f.Reader)
 			if header.filetype != storageFileTypeInfo[fileType].Type {
@@ -510,7 +510,6 @@ func (handler *StorageHandler) setDeadSpace(fileType int, fileNumber int32, size
 	}
 	file.Writer.Seek(0, os.SEEK_SET)
 	header.Serialize(file.Writer)
-	file.Sync()
 }
 
 // calculateIXEntryOffset calculates a start position into the index file where the blockID could be found using the following formula:
@@ -608,17 +607,19 @@ func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (entry *storage
 	}
 	return
 }
-func (handler *StorageHandler) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *storageIXEntry) {
+
+func (handler *StorageHandler) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *storageIXEntry, forceFlush bool) {
 	var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, true)
 	ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
 	finalFlags := entry.flags
 	entry.flags |= entryFlagInvalid // Write record as invalid first
 	entry.Serialize(ixFile.Writer)
-	ixFile.Sync()
 
 	ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
 	core.WriteUint16(ixFile.Writer, finalFlags) // Write correct flags
-	ixFile.Sync()
+	if forceFlush == true {
+		ixFile.Sync()
+	}
 	core.Log(core.LogTrace, "writeIXEntry %x:%x", ixFileNumber, ixOffset)
 }
 func (handler *StorageHandler) InvalidateIXEntry(blockID core.Byte128) {
@@ -629,7 +630,8 @@ func (handler *StorageHandler) InvalidateIXEntry(blockID core.Byte128) {
 
 	ASSERT(e != nil, e)
 	e.flags |= entryFlagInvalid
-	handler.writeIXEntry(f, o, e)
+	// flush notice: no need to force flush index invalidation
+	handler.writeIXEntry(f, o, e, false)
 }
 
 func (handler *StorageHandler) killMetaEntry(blockID core.Byte128, metaFileNumber int32, metaOffset int64) (size int64) {
@@ -662,6 +664,7 @@ func (handler *StorageHandler) writeMetaEntry(metaFileNumber int32, metaOffset i
 		metaFile.Writer.Seek(metaOffset, os.SEEK_SET)
 	}
 	data.WriteTo(metaFile.Writer)
+	// flush notice: always force a flush because index will be updated next
 	metaFile.Sync()
 	core.Log(core.LogTrace, "writeMetaEntry %x:%x", metaFileNumber, metaOffset)
 
@@ -705,10 +708,12 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	var data = new(bytes.Buffer)
 	dataEntry.Serialize(data)
 	data.WriteTo(datFile.Writer)
+	// flush notice: manually flush datFile before creating the meta entry
 	datFile.Sync()
 
 	metaEntry := storageMetaEntry{blockID: block.BlockID, dataSize: uint32(block.Data.Len()), links: block.Links}
 	metaEntry.location.Set(datFileNumber, datOffset)
+	// flush notice: writeMetaEntry always flushes meta file
 	metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
 
 	ixEntry := storageIXEntry{flags: entryFlagExists, blockID: block.BlockID}
@@ -716,7 +721,8 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 		ixEntry.flags |= entryFlagNoLinks
 	}
 	ixEntry.location.Set(metaFileNumber, metaOffset)
-	handler.writeIXEntry(ixFileNumber, ixOffset, &ixEntry)
+	// flush notice: no need to force writeIXEntry to flush
+	handler.writeIXEntry(ixFileNumber, ixOffset, &ixEntry, false)
 	return true
 }
 
@@ -773,7 +779,6 @@ func (handler *StorageHandler) MarkIndexes(roots []core.Byte128, Paint bool) {
 
 			ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
 			core.WriteUint16(ixFile.Writer, entry.flags)
-			ixFile.Sync()
 
 			visited[blockID] = true // Mark that we do not need to check this block again
 		}
@@ -837,12 +842,14 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 						entry.flags |= entryFlagInvalid
 						core.Log(core.LogDebug, "Deleted obsolete block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
 					} else if eFileNumber < ixFileNumber {
-						handler.writeIXEntry(eFileNumber, eOffset, &entry) // move it to an earlier file
-						entry.flags |= entryFlagInvalid                    // delete old entry
+						// flush notice: force flushes on moves because next we invalidate the old record
+						handler.writeIXEntry(eFileNumber, eOffset, &entry, true) // move it to an earlier file
+						entry.flags |= entryFlagInvalid                          // delete old entry
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
 					} else if eFileNumber == ixFileNumber && eOffset < offset {
-						handler.writeIXEntry(eFileNumber, eOffset, &entry) // move it to an earlier position
-						entry.flags |= entryFlagInvalid                    // delete old entry
+						// flush notice: force flushes on moves because next we invalidate the old record
+						handler.writeIXEntry(eFileNumber, eOffset, &entry, true) // move it to an earlier position
+						entry.flags |= entryFlagInvalid                          // delete old entry
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x", entry.blockID[:], ixFileNumber, offset, eOffset)
 					} else {
 						abort("findIXOffset for %x (%x:%x) returned an invalid offset %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
@@ -850,7 +857,6 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 				}
 				ixFile.Writer.Seek(offset, os.SEEK_SET)
 				core.WriteUint16(ixFile.Writer, entry.flags)
-				ixFile.Sync()
 			}
 
 			if ixSize > 0 {
@@ -896,7 +902,6 @@ func (handler *StorageHandler) CompactIndexes(Paint bool) {
 				clearedBlocks++
 				ixFile.Writer.Seek(offset, os.SEEK_SET)
 				blankEntry.Serialize(ixFile.Writer)
-				ixFile.Sync()
 				core.Log(core.LogDebug, "Cleared index at %x:%x", ixFileNumber, offset)
 			} else if entry.flags&entryFlagExists == entryFlagExists {
 				truncPoint = offset + storageIXEntrySize
@@ -1017,8 +1022,8 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 				core.Log(core.LogTrace, "Creating a free space marker (%d bytes skip) at %x:%x", readOffset-writeOffset, fileNumber, writeOffset)
 				core.WriteBytes(file.Writer, []byte("Cgap"))
 				core.WriteInt64(file.Writer, readOffset-writeOffset)
+				// flush notice: force flush before changing location
 				file.Sync()
-
 				entry.ChangeLocation(handler, fileNumber, newOffset)
 			} else if free, _ := core.FreeSpace(datDirectory); free < int64(entrySize)+MINIMUM_DAT_FREE {
 				core.Log(core.LogWarning, "Unable to move block %x (%d bytes) because there is not enough free space on data path", entryBlockID[:], entrySize)
@@ -1026,14 +1031,14 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 			} else { // found space in a different file, move the block
 				written := int64(entry.Serialize(freeFile.Writer))
 				core.Log(core.LogDebug, "Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, freeFileNum, freeOffset)
-				freeFile.Sync()
 				moved += int64(entrySize)
 
 				if freeFileNum == fileNumber {
 					core.Log(core.LogTrace, "File %s, increased in size from %x to %x", freeFile.Path, fileSize, fileSize+written)
 					fileSize += written
 				}
-
+				// flush notice: force flush before changing location
+				freeFile.Sync()
 				entry.ChangeLocation(handler, freeFileNum, freeOffset)
 			}
 		}
@@ -1329,11 +1334,12 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 				moveFileNum, moveOffset, moveFile := handler.findFreeOffset(storageFileTypeData)
 				core.Log(core.LogDebug, "Rewriting block %x at (%x:%x)", dataEntry.block.BlockID[:], moveFileNum, moveOffset)
 				dataEntry.Serialize(moveFile.Writer)
-				moveFile.Sync()
 
 				core.Log(core.LogTrace, "Creating new meta for block %x", dataEntry.block.BlockID[:])
 				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: uint32(dataEntry.block.Data.Len()), links: dataEntry.block.Links}
 				metaEntry.location.Set(moveFileNum, moveOffset)
+				// flush notice: force flush before writing meta entry
+				moveFile.Sync()
 				metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
 
 				core.Log(core.LogTrace, "Creating new index for block %x", dataEntry.block.BlockID[:])
@@ -1342,14 +1348,14 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 					ixEntry = &storageIXEntry{flags: entryFlagExists, blockID: dataEntry.block.BlockID}
 				}
 				ixEntry.location.Set(metaFileNumber, metaOffset)
-				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
+				// flush notice: no need to force flushes during recovery
+				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
 				continue
 			} else if brokenSpot > 0 {
 				datFile.Writer.Seek(brokenSpot, os.SEEK_SET)
 				core.Log(core.LogTrace, "Creating a free space marker at %x:%x (skip %d bytes)", datFileNumber, brokenSpot, blockOffset-brokenSpot)
 				core.WriteBytes(datFile.Writer, []byte("Cgap"))
 				core.WriteInt64(datFile.Writer, blockOffset-brokenSpot)
-				datFile.Sync()
 				brokenSpot = 0
 			}
 
@@ -1415,7 +1421,8 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 
 				core.Log(core.LogTrace, "REPAIRING index for block %x", dataEntry.block.BlockID[:])
 				ixEntry.location.Set(metaFileNumber, metaOffset)
-				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry)
+				// flush notice: no need to force flushes during recovery
+				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
 				repairCount++
 			}
 
