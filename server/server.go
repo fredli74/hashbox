@@ -7,7 +7,6 @@ package main
 
 import (
 	//"github.com/davecheney/profile"
-	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"runtime"
@@ -258,21 +257,6 @@ func connectionListener(listener *net.TCPListener) {
 func run() (returnValue int) {
 	bytearray.EnableAutoGC(60, 74)
 
-	runtime.SetBlockProfileRate(1000)
-	go func() {
-		log.Println(http.ListenAndServe(":6060", nil))
-	}()
-
-	//defer profile.Start(&profile.Config{CPUProfile: false, MemProfile: true, ProfilePath: ".", NoShutdownHook: true}).Stop()
-
-	/*defer func() {
-		// Panic error handling
-		if r := recover(); r != nil {
-			fmt.Println(r)
-			return 1
-		}
-	}()*/
-
 	var err error
 
 	exeRoot, _ := osext.ExecutableFolder()
@@ -288,6 +272,13 @@ func run() (returnValue int) {
 	var optLogLevel int64 = int64(core.LogInfo)
 	cmd.IntOption("loglevel", "", "<level>", "Set log level (0=errors, 1=warnings, 2=info, 3=debug, 4=trace", &optLogLevel, cmd.Standard).OnChange(func() {
 		core.LogLevel = int(optLogLevel)
+
+		if optLogLevel >= 3 {
+			runtime.SetBlockProfileRate(1000)
+			go func() {
+				core.Log(core.LogInfo, "%v", http.ListenAndServe(":6060", nil))
+			}()
+		}
 	})
 
 	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers
