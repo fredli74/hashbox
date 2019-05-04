@@ -351,11 +351,6 @@ func main() {
 
 	var lockFile *lockfile.LockFile
 
-	runtime.SetBlockProfileRate(1000)
-	go func() {
-		core.Log(core.LogInfo, "%v", http.ListenAndServe(":6060", nil))
-	}()
-
 	defer func() {
 		// Panic error handling
 		if !DEBUG {
@@ -389,7 +384,14 @@ func main() {
 
 	cmd.OptionsFile = filepath.Join(LocalStoragePath, "options.json")
 
-	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden)
+	cmd.BoolOption("debug", "", "Debug output", &DEBUG, cmd.Hidden).OnChange(func() {
+		if DEBUG {
+			runtime.SetBlockProfileRate(1000)
+			go func() {
+				core.Log(core.LogInfo, "%v", http.ListenAndServe(":6060", nil))
+			}()
+		}
+	})
 
 	var queueSizeMB int64
 	cmd.IntOption("queuesize", "", "<MiB>", "Change sending queue size", &queueSizeMB, cmd.Hidden|cmd.Preference).OnChange(func() {

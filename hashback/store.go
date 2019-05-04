@@ -739,9 +739,9 @@ func (r *referenceEngine) peekPath() (path string) {
 func (r *referenceEngine) findReference(path string) *FileEntry {
 	// Convert absolute local path to virtual relative path
 	for rel, abs := range r.virtualRoot {
-		if (len(path) >= len(abs) && path[0:len(abs)] == abs) {
+		if len(path) >= len(abs) && path[0:len(abs)] == abs {
 			path = rel + path[len(abs):]
-			break;
+			break
 		}
 	}
 
