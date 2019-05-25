@@ -35,22 +35,25 @@ chmod +x /root/hashbox/hashbox-$platform
 /root/hashbox/hashbox-$platform -version
 echo Please start the hashbox server
 EOL
+
+# 3. Install dependencies and run the update script
+pkg install curl
 chmod +x /root/hashbox/update-hashbox.sh
 /root/hashbox/update-hashbox.sh
 
-# 3. Create start script
+# 4. Create start script
 cat >/etc/rc.local <<EOL
 /root/hashbox/hashbox-$platform -port=7411 >/root/hashbox/hashbox.log 2>&1  &
 EOL
 
-# 4. Add users
+# 5. Add users
 #
 # /root/hashbox/hashbox-$platform adduser <username> <password>
 #
 
-# 5. Restart the jail
+# 6. Restart the jail
 #
 
-# 6. Monitor the server
+# 7. Monitor the server
 #
 tail -F /root/hashbox/hashbox.log
