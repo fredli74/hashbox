@@ -110,6 +110,13 @@ func (handler *StorageHandler) doCommand(q ChannelCommand) interface{} {
 	return r
 }
 
+func (handler *StorageHandler) SyncAll() {
+	for s, f := range handler.filepool {
+		core.Log(core.LogDebug, "Syncing %s", s)
+		f.Sync()
+	}
+}
+
 func (handler *StorageHandler) Close() {
 	handler.closing = true
 	close(handler.signal)
@@ -126,7 +133,7 @@ func NewStorageHandler() *StorageHandler {
 		queue:         make(chan ChannelCommand, 32),
 		signal:        make(chan error), // cannot be buffered
 		filepool:      make(map[string]*core.BufferedFile),
-		topFileNumber: []int32{-1, -1, -1},
+		topFileNumber: []int32{0, 0, 0},
 	}
 	handler.wg.Add(1)
 
@@ -302,7 +309,6 @@ func (e *storageIXEntry) Unserialize(r io.Reader) (size int) {
 //******************************************************************************//
 type storageEntry interface {
 	BlockID() core.Byte128
-	ChangeLocation(handler *StorageHandler, fileNumber int32, fileOffset int64)
 	VerifyLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) bool
 	core.Serializer
 	core.Unserializer
@@ -352,13 +358,6 @@ func (e *storageMetaEntry) Unserialize(r io.Reader) (size int) {
 	}
 	return
 }
-func (e *storageMetaEntry) ChangeLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) {
-	ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(e.blockID)
-	abortOn(err)
-	ixEntry.location.Set(fileNumber, fileOffset)
-	// flush notice: tell writeIXEntry to flush on moves because old data might be overwritten next
-	handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, true)
-}
 func (e *storageMetaEntry) VerifyLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) bool {
 	ixEntry, _, _, err := handler.readIXEntry(e.blockID)
 	abortOn(err)
@@ -406,17 +405,6 @@ func (e *storageDataEntry) Unserialize(r io.Reader) (size int) {
 	}
 	size += e.block.Unserialize(r)
 	return
-}
-func (e *storageDataEntry) ChangeLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) {
-	ixEntry, _, _, err := handler.readIXEntry(e.block.BlockID)
-	abortOn(err)
-
-	metaFileNumber, metaOffset := ixEntry.location.Get()
-	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-	abortOn(err)
-
-	metaEntry.location.Set(fileNumber, fileOffset)
-	handler.writeMetaEntry(metaFileNumber, metaOffset, metaEntry)
 }
 func (e *storageDataEntry) VerifyLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) bool {
 	ixEntry, _, _, err := handler.readIXEntry(e.block.BlockID)
@@ -576,24 +564,14 @@ OuterLoop:
 	}
 }
 
-func (handler *StorageHandler) findFreeOffset(fileType int) (freeFileNum int32, freeOffset int64, freeFile *core.BufferedFile) {
-	if handler.topFileNumber[fileType] < 0 {
-		// Fill new data at the end
-		handler.topFileNumber[fileType] = 0
-		for top := int32(1); ; top++ {
-			if topFile := handler.getNumberedFile(fileType, top, false); topFile == nil {
-				break
-			} else if topFile.Size() > storageFileHeaderSize { // this file contains data
-				handler.topFileNumber[fileType] = top
-			}
-		}
-	}
-
+func (handler *StorageHandler) findFreeOffset(fileType int, ignore int32) (freeFileNum int32, freeOffset int64, freeFile *core.BufferedFile) {
 	for {
-		freeFile = handler.getNumberedFile(fileType, handler.topFileNumber[fileType], true)
-		freeOffset, _ = freeFile.Writer.Seek(0, os.SEEK_END)
-		if freeOffset <= storageOffsetLimit {
-			break
+		if handler.topFileNumber[fileType] != ignore {
+			freeFile = handler.getNumberedFile(fileType, handler.topFileNumber[fileType], true)
+			freeOffset, _ = freeFile.Writer.Seek(0, os.SEEK_END)
+			if freeOffset <= storageOffsetLimit {
+				break
+			}
 		}
 		handler.topFileNumber[fileType]++
 	}
@@ -658,13 +636,13 @@ func (handler *StorageHandler) writeMetaEntry(metaFileNumber int32, metaOffset i
 
 	var metaFile *core.BufferedFile
 	if metaOffset == 0 { // Offset 0 does not exist as it is in the header
-		metaFileNumber, metaOffset, metaFile = handler.findFreeOffset(storageFileTypeMeta)
+		metaFileNumber, metaOffset, metaFile = handler.findFreeOffset(storageFileTypeMeta, -1)
 	} else {
 		metaFile = handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
 		metaFile.Writer.Seek(metaOffset, os.SEEK_SET)
 	}
 	data.WriteTo(metaFile.Writer)
-	// flush notice: always force a flush because index will be updated next
+	// flush notice: always force a flush because index will be updated next and it must point to something
 	metaFile.Sync()
 	core.Log(core.LogTrace, "writeMetaEntry %x:%x", metaFileNumber, metaOffset)
 
@@ -702,7 +680,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 		}
 	}
 
-	datFileNumber, datOffset, datFile := handler.findFreeOffset(storageFileTypeData)
+	datFileNumber, datOffset, datFile := handler.findFreeOffset(storageFileTypeData, -1)
 
 	dataEntry := storageDataEntry{block: block}
 	var data = new(bytes.Buffer)
@@ -842,14 +820,14 @@ func (handler *StorageHandler) SweepIndexes(Paint bool) {
 						entry.flags |= entryFlagInvalid
 						core.Log(core.LogDebug, "Deleted obsolete block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
 					} else if eFileNumber < ixFileNumber {
-						// flush notice: force flushes on moves because next we invalidate the old record
-						handler.writeIXEntry(eFileNumber, eOffset, &entry, true) // move it to an earlier file
-						entry.flags |= entryFlagInvalid                          // delete old entry
+						// flush notice: only force flush when ix, meta and data needs to sync
+						handler.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier file
+						entry.flags |= entryFlagInvalid                           // delete old entry
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
 					} else if eFileNumber == ixFileNumber && eOffset < offset {
-						// flush notice: force flushes on moves because next we invalidate the old record
-						handler.writeIXEntry(eFileNumber, eOffset, &entry, true) // move it to an earlier position
-						entry.flags |= entryFlagInvalid                          // delete old entry
+						// flush notice: only force flush when ix, meta and data needs to sync
+						handler.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier position
+						entry.flags |= entryFlagInvalid                           // delete old entry
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x", entry.blockID[:], ixFileNumber, offset, eOffset)
 					} else {
 						abort("findIXOffset for %x (%x:%x) returned an invalid offset %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
@@ -961,6 +939,25 @@ func forwardToDataMarker(reader *core.BufferedReader) (int64, error) {
 	return offset, nil
 }
 
+func (handler *StorageHandler) changeDataLocation(blockID core.Byte128, fileNumber int32, fileOffset int64) {
+	ixEntry, _, _, err := handler.readIXEntry(blockID)
+	abortOn(err)
+
+	metaFileNumber, metaOffset := ixEntry.location.Get()
+	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+	abortOn(err)
+
+	metaEntry.location.Set(fileNumber, fileOffset)
+	handler.writeMetaEntry(metaFileNumber, metaOffset, metaEntry)
+}
+func (handler *StorageHandler) changeMetaLocation(blockID core.Byte128, fileNumber int32, fileOffset int64) {
+	ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(blockID)
+	abortOn(err)
+	ixEntry.location.Set(fileNumber, fileOffset)
+	// flush notice: no need to flush, changeMetaLocation is only used during compacting and compact flushes between files
+	handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
+}
+
 func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64 {
 	var entry storageEntry
 	switch fileType {
@@ -983,6 +980,17 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 	abortOn(err)
 	_, err = reader.Seek(storageFileHeaderSize, os.SEEK_SET)
 	abortOn(err)
+
+	// Keep a list of entries that should move
+	type relocation struct {
+		blockID    core.Byte128
+		fileNumber int32
+		fileOffset int64
+	}
+	relocations := []relocation{}
+
+	// Reset top file number
+	handler.topFileNumber[fileType] = 0
 
 	var lastProgress = -1
 	removed, moved := int64(0), int64(0)
@@ -1008,38 +1016,24 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 			removed += int64(entrySize)
 		} else {
 			// Keep the block
-			freeFileNum, freeOffset, freeFile := handler.findFreeOffset(fileType)
+			freeFileNum, freeOffset, freeFile := handler.findFreeOffset(fileType, fileNumber)
 			if freeFileNum >= fileNumber && readOffset == writeOffset { // No space in earlier file let it be if possible
 				writeOffset += int64(entrySize)
 				core.Log(core.LogTrace, "No need to write, moving writeOffset to %x", writeOffset)
-			} else if freeFileNum >= fileNumber && readOffset-writeOffset >= int64(entrySize)+12 { // No space in earlier file, but it can be shifted inside the same file
-				newOffset := writeOffset
-				file.Writer.Seek(writeOffset, os.SEEK_SET)
-				written := int64(entry.Serialize(file.Writer))
-				writeOffset += written
-				core.Log(core.LogDebug, "Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, fileNumber, newOffset)
-
-				core.Log(core.LogTrace, "Creating a free space marker (%d bytes skip) at %x:%x", readOffset-writeOffset, fileNumber, writeOffset)
-				core.WriteBytes(file.Writer, []byte("Cgap"))
-				core.WriteInt64(file.Writer, readOffset-writeOffset)
-				// flush notice: force flush before changing location
-				file.Sync()
-				entry.ChangeLocation(handler, fileNumber, newOffset)
 			} else if free, _ := core.FreeSpace(datDirectory); free < int64(entrySize)+MINIMUM_DAT_FREE {
 				core.Log(core.LogWarning, "Unable to move block %x (%d bytes) because there is not enough free space on data path", entryBlockID[:], entrySize)
 				writeOffset = offset // make sure we point the writer pointer after this block so we do not overwrite it
 			} else { // found space in a different file, move the block
 				written := int64(entry.Serialize(freeFile.Writer))
-				core.Log(core.LogDebug, "Moved block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, freeFileNum, freeOffset)
+				core.Log(core.LogDebug, "Copied block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, freeFileNum, freeOffset)
 				moved += int64(entrySize)
 
 				if freeFileNum == fileNumber {
 					core.Log(core.LogTrace, "File %s, increased in size from %x to %x", freeFile.Path, fileSize, fileSize+written)
 					fileSize += written
 				}
-				// flush notice: force flush before changing location
-				freeFile.Sync()
-				entry.ChangeLocation(handler, freeFileNum, freeOffset)
+
+				relocations = append(relocations, relocation{blockID: entryBlockID, fileNumber: freeFileNum, fileOffset: freeOffset})
 			}
 		}
 
@@ -1049,7 +1043,22 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 			fmt.Printf("%d (%d%%)\r", 0-removed, lastProgress)
 		}
 	}
-	ASSERT(writeOffset <= offset, "compact made the file larger?")
+
+	if len(relocations) > 0 {
+		// Flush all files to prepare for relocations
+		handler.SyncAll()
+		for n := 0; n < len(relocations); n++ {
+			core.Log(core.LogDebug, "Relocate block %x to %x:%x", relocations[n].blockID[:], relocations[n].fileNumber, relocations[n].fileOffset)
+			switch fileType {
+			case storageFileTypeMeta:
+				handler.changeMetaLocation(relocations[n].blockID, relocations[n].fileNumber, relocations[n].fileOffset)
+			case storageFileTypeData:
+				handler.changeDataLocation(relocations[n].blockID, relocations[n].fileNumber, relocations[n].fileOffset)
+			}
+		}
+		// Flush all files after relocations
+		handler.SyncAll()
+	}
 
 	file.Writer.File.Truncate(writeOffset)
 	handler.setDeadSpace(fileType, fileNumber, 0, false)
@@ -1058,7 +1067,6 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 	return removed
 }
 func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
-	handler.topFileNumber[fileType] = 0 // ignore data age-location, start at file 0
 	var compacted int64
 	for fileNumber := int32(0); ; fileNumber++ {
 		file := handler.getNumberedFile(fileType, fileNumber, false)
@@ -1069,9 +1077,6 @@ func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
 		abortOn(err)
 		if fileSize < storageOffsetLimit/100 || int(deadSpace*100/fileSize) >= threshold {
 			compacted += handler.CompactFile(fileType, fileNumber)
-			if handler.topFileNumber[fileType] > fileNumber {
-				handler.topFileNumber[fileType] = fileNumber // file might have free space now
-			}
 		} else {
 			core.Log(core.LogInfo, "Skipping compact on file %s, est. dead data %s is less than %d%%", file.Path, core.HumanSize(deadSpace), threshold)
 		}
@@ -1331,7 +1336,7 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 			}
 			if brokenSpot > 0 && blockOffset-brokenSpot < 12 {
 				// Cannot fit a Cgap marker, so we need to move the block
-				moveFileNum, moveOffset, moveFile := handler.findFreeOffset(storageFileTypeData)
+				moveFileNum, moveOffset, moveFile := handler.findFreeOffset(storageFileTypeData, -1)
 				core.Log(core.LogDebug, "Rewriting block %x at (%x:%x)", dataEntry.block.BlockID[:], moveFileNum, moveOffset)
 				dataEntry.Serialize(moveFile.Writer)
 
@@ -1421,7 +1426,7 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 
 				core.Log(core.LogTrace, "REPAIRING index for block %x", dataEntry.block.BlockID[:])
 				ixEntry.location.Set(metaFileNumber, metaOffset)
-				// flush notice: no need to force flushes during recovery
+				// flush notice: no need to force flush during recovery
 				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
 				repairCount++
 			}
