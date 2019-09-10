@@ -551,16 +551,15 @@ func (r *referenceEngine) cacheFilePathName(rootID core.Byte128) string {
 }
 
 // Start reference loader and resume if possible
-func (r *referenceEngine) start(rootBlockID *core.Byte128) {
+func (r *referenceEngine) resume(filename string) {
 	treedepth := 0
-
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				Debug("Non-fatal error encountered while resuming backup %v", r)
+				Debug("Non-fatal error encountered while resuming backup %s : %v", filename, r)
 			}
 		}()
-		cacheRecover, _ := os.Open(filepath.Join(LocalStoragePath, r.cacheName("partial")))
+		cacheRecover, _ := os.Open(filepath.Join(LocalStoragePath, filename))
 		if cacheRecover != nil {
 			defer cacheRecover.Close()
 			Debug("Opened resume cache %s", cacheRecover.Name())
@@ -614,8 +613,25 @@ func (r *referenceEngine) start(rootBlockID *core.Byte128) {
 	for ; treedepth > 0; treedepth-- {
 		r.queue = append(r.queue, entryEOD)
 	}
-
 	r.loadpoint = len(r.queue)
+}
+
+// Start reference loader and resume if possible
+func (r *referenceEngine) start(rootBlockID *core.Byte128) {
+
+	var filelist []os.FileInfo
+	recoverMatch := fmt.Sprintf("%s.partial.*.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
+	filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+		if match, _ := filepath.Match(recoverMatch, info.Name()); match {
+			filelist = append(filelist, info)
+		}
+		return nil
+	})
+	sort.Sort(FileInfoSlice(filelist))
+
+	for i := len(filelist) - 1; i >= 0; i-- {
+		r.resume(filelist[i].Name())
+	}
 
 	if rootBlockID != nil {
 		r.load(*rootBlockID)
@@ -781,8 +797,8 @@ func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
 		PanicOn(err)
 		entry.Serialize(r.cacheCurrent)
 		return l
-	} 
-		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
+	}
+	panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
 }
 
 func (r *referenceEngine) storeReference(entry *FileEntry) {
@@ -826,19 +842,23 @@ func (r *referenceEngine) Close() {
 	// If not commited, we need to close and save the current cache
 	if r.cacheCurrent != nil {
 		currentName := r.cacheCurrent.Name()
-		currentInfo, _ := r.cacheCurrent.Stat()
 		r.cacheCurrent.Close()
 		r.cacheCurrent = nil
 
-		partialName := filepath.Join(LocalStoragePath, r.cacheName("partial"))
-		partialInfo, _ := os.Stat(partialName)
-		if currentInfo != nil && currentInfo.Size() > 0 && (partialInfo == nil || partialInfo.Size() < currentInfo.Size()) {
-			Debug("Saving %s as recovery cache %s", currentName, partialName)
-			os.Rename(currentName, partialName)
-		} else {
-			Debug("Erasing temporary cache %s", currentName)
-			os.Remove(currentName)
-		}
+		partialName := (func() string {
+			number := time.Now().Unix()
+			for {
+				name := filepath.Join(LocalStoragePath, r.cacheName(fmt.Sprintf("partial.%08x", number)))
+				info, _ := os.Stat(name)
+				if info == nil {
+					return name
+				}
+				number++
+			}
+		})()
+
+		Debug("Saving %s as recovery cache %s", currentName, partialName)
+		os.Rename(currentName, partialName)
 	}
 }
 func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *referenceEngine {
@@ -848,7 +868,7 @@ func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *refe
 	}
 
 	var err error
-	r.cacheCurrent, err = ioutil.TempFile(LocalStoragePath, r.cacheName("temp"))
+	r.cacheCurrent, err = ioutil.TempFile(LocalStoragePath, r.cacheName("temp.*"))
 	PanicOn(err)
 
 	return r
