@@ -146,27 +146,24 @@ func (handler *StorageHandler) doesBlockExist(BlockID core.Byte128) bool {
 	r := handler.doCommand(q)
 	if r != nil {
 		return r.(bool)
-	} else {
-		return false
 	}
+	return false
 }
 func (handler *StorageHandler) readBlock(BlockID core.Byte128) *core.HashboxBlock {
 	q := ChannelCommand{storagehandler_readBlock, BlockID, make(chan interface{}, 1)}
 	r := handler.doCommand(q)
 	if r != nil {
 		return r.(*core.HashboxBlock)
-	} else {
-		return nil
 	}
+	return nil
 }
 func (handler *StorageHandler) writeBlock(Block *core.HashboxBlock) bool {
 	q := ChannelCommand{storagehandler_writeBlock, Block, make(chan interface{}, 1)}
 	r := handler.doCommand(q)
 	if r != nil {
 		return r.(bool)
-	} else {
-		return false
 	}
+	return false
 }
 
 const MINIMUM_IX_FREE = int64(storageIXFileSize + storageIXFileSize/20) // 105% of an IX file because we must be able to create a new one
@@ -474,7 +471,7 @@ func (handler *StorageHandler) getNumberedFile(fileType int, fileNumber int32, c
 func (handler *StorageHandler) getNumberedFileSize(fileType int, fileNumber int32) (size int64, deadspace int64, err error) {
 	file := handler.getNumberedFile(fileType, fileNumber, false)
 	if file == nil {
-		return 0, 0, errors.New(fmt.Sprintf("Trying to read free space from %.8X%s which does not exist", fileNumber, storageFileTypeInfo[fileType].Extension))
+		return 0, 0, fmt.Errorf("Trying to read free space from %.8X%s which does not exist", fileNumber, storageFileTypeInfo[fileType].Extension)
 	}
 	file.Reader.Seek(0, os.SEEK_SET)
 	var header storageFileHeader
@@ -559,9 +556,8 @@ OuterLoop:
 	}
 	if foundFree {
 		return nil, freeFileNumber, freeOffset
-	} else {
-		return nil, ixFileNumber, ixOffset
 	}
+	return nil, ixFileNumber, ixOffset
 }
 
 func (handler *StorageHandler) findFreeOffset(fileType int, ignore int32) (freeFileNum int32, freeOffset int64, freeFile *core.BufferedFile) {
@@ -581,7 +577,7 @@ func (handler *StorageHandler) findFreeOffset(fileType int, ignore int32) (freeF
 func (handler *StorageHandler) readIXEntry(blockID core.Byte128) (entry *storageIXEntry, ixFileNumber int32, ixOffset int64, err error) {
 	entry, ixFileNumber, ixOffset = handler.findIXOffset(blockID, false)
 	if entry == nil {
-		err = errors.New(fmt.Sprintf("Block index entry not found for %x", blockID[:]))
+		err = fmt.Errorf("Block index entry not found for %x", blockID[:])
 	}
 	return
 }
@@ -658,7 +654,7 @@ func (handler *StorageHandler) readMetaEntry(metaFileNumber int32, metaOffset in
 
 	metaFile := handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
 	if metaFile == nil {
-		return nil, errors.New(fmt.Sprintf("Error reading metadata cache from file %x, file does not exist", metaFileNumber))
+		return nil, fmt.Errorf("Error reading metadata cache from file %x, file does not exist", metaFileNumber)
 	}
 	metaFile.Reader.Seek(metaOffset, os.SEEK_SET)
 
@@ -928,15 +924,12 @@ func forwardToDataMarker(reader *core.BufferedReader) (int64, error) {
 			return offset, err
 		}
 		if uint32(peek[3])|uint32(peek[2])<<8|uint32(peek[1])<<16|uint32(peek[0])<<24 == storageDataMarker {
+			core.Log(core.LogDebug, "Jumped %d bytes to next data marker in %s", offset, reader.File.Name())
 			return offset, nil
 		}
 		reader.Discard(1)
 		offset++
 	}
-	if offset > 0 {
-		core.Log(core.LogDebug, "Jumped %d bytes to next data marker in %s", offset, reader.File.Name())
-	}
-	return offset, nil
 }
 
 func (handler *StorageHandler) changeDataLocation(blockID core.Byte128, fileNumber int32, fileOffset int64) {
@@ -1099,7 +1092,7 @@ func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, ve
 		dataFileNumber, dataOffset := metaEntry.location.Get()
 		dataFile := handler.getNumberedFile(storageFileTypeData, dataFileNumber, false)
 		if dataFile == nil {
-			return errors.New(fmt.Sprintf("Error reading block from file %x, file does not exist", dataFileNumber))
+			return fmt.Errorf("Error reading block from file %x, file does not exist", dataFileNumber)
 		}
 
 		var dataEntry storageDataEntry
@@ -1111,7 +1104,7 @@ func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, ve
 			dataEntry.Unserialize(dataFile.Reader)
 			dataEntry.block.UncompressData()
 			if !dataEntry.block.VerifyBlock() {
-				return errors.New(fmt.Sprintf("Error reading block %x, content verification failed"))
+				return fmt.Errorf("Error reading block %x, content verification failed", ixEntry.blockID[:])
 			}
 			core.Log(core.LogTrace, "Block %x location %x:%x and content verified (%s, %.0f%% compr)", ixEntry.blockID[:], dataFileNumber, dataOffset, core.HumanSize(int64(dataEntry.block.CompressedSize)), float64(100.0*float64(dataEntry.block.UncompressedSize-dataEntry.block.CompressedSize)/float64(dataEntry.block.UncompressedSize)))
 		} else {
@@ -1121,23 +1114,23 @@ func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, ve
 			}
 			dataEntry.block.UnserializeHeader(dataFile.Reader)
 			if dataEntry.block.BlockID.Compare(ixEntry.blockID) != 0 {
-				return errors.New(fmt.Sprintf("Error reading block %x, metadata cache is pointing to block %x", ixEntry.blockID[:], dataEntry.block.BlockID[:]))
+				return fmt.Errorf("Error reading block %x, metadata cache is pointing to block %x", ixEntry.blockID[:], dataEntry.block.BlockID[:])
 			}
 			core.Log(core.LogTrace, "Block %x location %x:%x verified", ixEntry.blockID[:], dataFileNumber, dataOffset)
 		}
 
 		if len(metaEntry.links) > 0 && ixEntry.flags&entryFlagNoLinks == entryFlagNoLinks {
-			return errors.New(fmt.Sprintf("Error reading block %x, index is marked having no links but the metadata cache has %d links", ixEntry.blockID[:], len(metaEntry.links)))
+			return fmt.Errorf("Error reading block %x, index is marked having no links but the metadata cache has %d links", ixEntry.blockID[:], len(metaEntry.links))
 		}
 		if len(metaEntry.links) == 0 && ixEntry.flags&entryFlagNoLinks == 0 {
-			return errors.New(fmt.Sprintf("Error reading block %x, index is marked having links but the metadata cache has 0 links", ixEntry.blockID[:]))
+			return fmt.Errorf("Error reading block %x, index is marked having links but the metadata cache has 0 links", ixEntry.blockID[:])
 		}
 		if len(metaEntry.links) != len(dataEntry.block.Links) {
-			return errors.New(fmt.Sprintf("Error reading block %x, metadata cache links mismatch", ixEntry.blockID[:]))
+			return fmt.Errorf("Error reading block %x, metadata cache links mismatch", ixEntry.blockID[:])
 		}
 		for i := range metaEntry.links {
 			if metaEntry.links[i].Compare(dataEntry.block.Links[i]) != 0 {
-				return errors.New(fmt.Sprintf("Error reading block %x, metadata cache links mismatch", ixEntry.blockID[:]))
+				return fmt.Errorf("Error reading block %x, metadata cache links mismatch", ixEntry.blockID[:])
 			}
 		}
 
@@ -1146,16 +1139,16 @@ func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, ve
 			if !checked {
 				rIX, _, _, err := handler.readIXEntry(r)
 				if err != nil {
-					return errors.New(fmt.Sprintf("Error in block %x, link %x does not exist", ixEntry.blockID[:], r[:]))
+					return fmt.Errorf("Error in block %x, link %x does not exist", ixEntry.blockID[:], r[:])
 				}
 				if rIX.flags&entryFlagInvalid == entryFlagInvalid {
-					return errors.New(fmt.Sprintf("Error in block %x, link %x is invalid", ixEntry.blockID[:], r[:]))
+					return fmt.Errorf("Error in block %x, link %x is invalid", ixEntry.blockID[:], r[:])
 				}
 				if err := handler.checkBlockFromIXEntry(rIX, verifiedBlocks, fullVerify, readOnly); err != nil {
 					return err
 				}
 			} else if !v {
-				return errors.New(fmt.Sprintf("Error in block %x, link %x is invalid", ixEntry.blockID[:], r[:]))
+				return fmt.Errorf("Error in block %x, link %x is invalid", ixEntry.blockID[:], r[:])
 			}
 		}
 		return nil
@@ -1165,7 +1158,7 @@ func (handler *StorageHandler) checkBlockFromIXEntry(ixEntry *storageIXEntry, ve
 	} else {
 		verifiedBlocks[ixEntry.blockID] = false
 		if readOnly {
-			abort("%V", err)
+			abort("%v", err)
 		} else {
 			core.Log(core.LogDebug, "%v", err)
 			handler.InvalidateIXEntry(ixEntry.blockID)
@@ -1303,7 +1296,7 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 
 			skipToNextBlock := false
 			if err := Try(func() { offset += int64(dataEntry.Unserialize(datFile.Reader)) }); err != nil {
-				err := errors.New(fmt.Sprintf("Error reading dataEntry at %x:%x (%s)", datFileNumber, blockOffset, err))
+				err := fmt.Errorf("Error reading dataEntry at %x:%x (%s)", datFileNumber, blockOffset, err)
 				core.Log(core.LogError, "%v", err)
 				skipToNextBlock = true
 			} else if err := Try(func() {
@@ -1311,7 +1304,7 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 					panic(errors.New("Content verification failed"))
 				}
 			}); err != nil {
-				err := errors.New(fmt.Sprintf("Error verifying block %x (type %d, size %d) at %x:%x (%s)", dataEntry.block.BlockID, dataEntry.block.DataType, dataEntry.block.Data.Len(), datFileNumber, blockOffset, err))
+				err := fmt.Errorf("Error verifying block %x (type %d, size %d) at %x:%x (%s)", dataEntry.block.BlockID, dataEntry.block.DataType, dataEntry.block.Data.Len(), datFileNumber, blockOffset, err)
 				core.Log(core.LogError, "%v", err)
 				skipToNextBlock = true
 			}

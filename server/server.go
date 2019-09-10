@@ -18,7 +18,6 @@ import (
 
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"github.com/kardianos/osext"
 	"math/rand"
@@ -50,11 +49,11 @@ var logLock sync.Mutex
 func ASSERT(ok bool, v ...interface{}) {
 	if !ok {
 		_, file, line, _ := runtime.Caller(1)
-		panic(errors.New(fmt.Sprintf("ASSERT raised by line %v:%v %v", file, line, v)))
+		panic(fmt.Errorf("ASSERT raised by line %v:%v %v", file, line, v))
 	}
 }
 func abort(format string, a ...interface{}) {
-	panic(errors.New(fmt.Sprintf(format, a...)))
+	panic(fmt.Errorf(format, a...))
 }
 func abortOn(err error) {
 	if err != nil {
@@ -103,21 +102,21 @@ func handleConnection(conn net.Conn) {
 			switch incoming.Type {
 			case core.MsgTypeOldGreeting:
 				reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-				reply.Data = &core.MsgServerError{"Client uses an outdated protocol version"}
+				reply.Data = &core.MsgServerError{ErrorMessage: "Client uses an outdated protocol version"}
 			case core.MsgTypeGreeting:
 				c := incoming.Data.(*core.MsgClientGreeting)
 				if c.Version < core.ProtocolVersion {
 					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-					reply.Data = &core.MsgServerError{"Client uses an outdated protocol version"}
+					reply.Data = &core.MsgServerError{ErrorMessage: "Client uses an outdated protocol version"}
 				} else if c.Version > core.ProtocolVersion {
 					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-					reply.Data = &core.MsgServerError{"Server uses an outdated protocol version"}
+					reply.Data = &core.MsgServerError{ErrorMessage: "Server uses an outdated protocol version"}
 				} else {
 					// Create server nonce using  64-bit time and 64-bit random
 					binary.BigEndian.PutUint64(clientSession.SessionNonce[0:], uint64(time.Now().UnixNano()))
 					binary.BigEndian.PutUint32(clientSession.SessionNonce[8:], rand.Uint32())
 					binary.BigEndian.PutUint32(clientSession.SessionNonce[12:], rand.Uint32())
-					reply.Data = &core.MsgServerGreeting{clientSession.SessionNonce}
+					reply.Data = &core.MsgServerGreeting{SessionNonce: clientSession.SessionNonce}
 				}
 			case core.MsgTypeAuthenticate:
 				c := incoming.Data.(*core.MsgClientAuthenticate)
@@ -141,7 +140,7 @@ func handleConnection(conn net.Conn) {
 						if !unauthorized {
 							if !storageHandler.doesBlockExist(c.State.BlockID) {
 								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-								reply.Data = &core.MsgServerError{"Dataset pointing to a non existent block"}
+								reply.Data = &core.MsgServerError{ErrorMessage: "Dataset pointing to a non existent block"}
 							} else {
 								accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State)
 								// No need to set any data in reply
@@ -177,7 +176,7 @@ func handleConnection(conn net.Conn) {
 								reply.Data = &core.MsgServerAccountInfo{DatasetList: account.Datasets}
 							} else {
 								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-								reply.Data = &core.MsgServerError{"Cannot find account information"}
+								reply.Data = &core.MsgServerError{ErrorMessage: "Cannot find account information"}
 							}
 						}
 					case core.MsgTypeAllocateBlock:
@@ -194,7 +193,7 @@ func handleConnection(conn net.Conn) {
 						block := storageHandler.readBlock(c.BlockID)
 						if block == nil {
 							reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-							reply.Data = &core.MsgServerError{"Invalid blockID"}
+							reply.Data = &core.MsgServerError{ErrorMessage: "Invalid blockID"}
 							keepAlive = false
 						} else {
 							reply.Type = core.MsgTypeWriteBlock & core.MsgTypeServerMask
@@ -206,13 +205,13 @@ func handleConnection(conn net.Conn) {
 							for _, l := range c.Block.Links {
 								if !storageHandler.doesBlockExist(l) {
 									reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-									reply.Data = &core.MsgServerError{"Linked to non existant block"}
+									reply.Data = &core.MsgServerError{ErrorMessage: "Linked to non existant block"}
 									break
 								}
 							}
 							if !storageHandler.checkFree(int64(c.Block.Data.Len())) {
 								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-								reply.Data = &core.MsgServerError{"Write permission is denied because the server is out of space"}
+								reply.Data = &core.MsgServerError{ErrorMessage: "Write permission is denied because the server is out of space"}
 							}
 							if reply.Data == nil {
 								storageHandler.writeBlock(c.Block)
@@ -221,7 +220,7 @@ func handleConnection(conn net.Conn) {
 							}
 						} else {
 							reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-							reply.Data = &core.MsgServerError{"Unable to verify blockID"}
+							reply.Data = &core.MsgServerError{ErrorMessage: "Unable to verify blockID"}
 						}
 					default:
 						ASSERT(false, incoming.String()) // Well if we reach this point, we have not implemented everything correctly
@@ -233,7 +232,7 @@ func handleConnection(conn net.Conn) {
 				// Invalid authentication
 				// TODO: Add to server auth.log
 				reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-				reply.Data = &core.MsgServerError{"Invalid authentication"}
+				reply.Data = &core.MsgServerError{ErrorMessage: "Invalid authentication"}
 				keepAlive = false
 			}
 			core.Log(core.LogInfo, "%s > %s %s", remoteID, reply.String(), reply.Details())
@@ -290,7 +289,7 @@ func run() (returnValue int) {
 	defer storageHandler.Close()
 
 	cmd.Command("", "", func() { // Default
-		serverAddr := net.TCPAddr{nil, int(serverPort), ""}
+		serverAddr := net.TCPAddr{IP: nil, Port: int(serverPort), Zone: ""}
 
 		if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 			abort("%v", err)

@@ -62,7 +62,7 @@ func (b *HashboxBlock) Serialize(w io.Writer) (size int) {
 	size += WriteUint32(w, uint32(b.Data.Len()))
 	l := CopyOrPanic(w, &b.Data)
 	if l != b.Data.Len() {
-		panic(errors.New(fmt.Sprintf("ASSERT! Writing block %x with data length %d bytes, but wrote %d bytes")))
+		panic(fmt.Errorf("ASSERT! Writing block %x with data length %d bytes, but wrote %d bytes", b.BlockID[:], b.Data.Len(), l))
 	}
 	size += l
 

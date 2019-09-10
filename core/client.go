@@ -85,7 +85,7 @@ func NewClient(conn net.Conn, account string, accesskey Byte128) *Client {
 		clientTime := uint64(time.Now().Unix())
 		serverTime := binary.BigEndian.Uint64(r.SessionNonce[:]) / 1000000000
 		if clientTime < serverTime-600 || clientTime > serverTime+600 {
-			panic(errors.New("Connection refused, system time difference between client and server is more than 10 minutes."))
+			panic(errors.New("Connection refused, system time difference between client and server is more than 10 minutes"))
 		}
 
 		client.SessionNonce = r.SessionNonce
@@ -375,7 +375,6 @@ func (c *Client) VerifyBlock(blockID Byte128) bool {
 	default:
 		panic(errors.New("Unknown response from server"))
 	}
-	return false
 }
 
 func (c *Client) StoreData(dataType byte, data bytearray.ByteArray, links []Byte128) Byte128 {

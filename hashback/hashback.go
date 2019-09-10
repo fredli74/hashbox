@@ -148,7 +148,7 @@ func (e *FileEntry) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadUint32(r, &check)
 	if check != 0x66656E74 { // "fent"
-		panic(errors.New("Corrupted FileEntry!"))
+		panic(errors.New("Corrupted FileEntry"))
 	}
 	size += e.FileName.Unserialize(r)
 	size += core.ReadInt64(r, &e.FileSize)
@@ -188,7 +188,7 @@ func (b *FileChainBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadUint32(r, &check)
 	if check != 0x6663686E { // "fchn"
-		panic(errors.New("Corrupted FileChainBlock!"))
+		panic(errors.New("Corrupted FileChainBlock"))
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
@@ -217,7 +217,7 @@ func (b *DirectoryBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadUint32(r, &check)
 	if check != 0x64626C6B { // "dblk"
-		panic(errors.New("Corrupted DirectoryBlock!"))
+		panic(errors.New("Corrupted DirectoryBlock"))
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
@@ -320,11 +320,11 @@ func (session *BackupSession) LogVerbose(format string, a ...interface{}) {
 	}
 }
 
-func (backup *BackupSession) findPathMatch(rootBlockID core.Byte128, path string) ([]*FileEntry, error) {
+func (session *BackupSession) findPathMatch(rootBlockID core.Byte128, path string) ([]*FileEntry, error) {
 	//var fileList []*FileEntry
 
 	pathList := core.SplitPath(path)
-	dir, unmatched, err := backup.changeDir(rootBlockID, pathList)
+	dir, unmatched, err := session.changeDir(rootBlockID, pathList)
 	if unmatched == 1 {
 		filtered := dir.File[:0]
 		for _, x := range dir.File {
@@ -334,9 +334,9 @@ func (backup *BackupSession) findPathMatch(rootBlockID core.Byte128, path string
 		}
 		if len(filtered) > 0 {
 			return filtered, nil
-		} else {
-			return nil, errors.New(fmt.Sprintf("No match found on \"%s\"", path))
 		}
+		return nil, fmt.Errorf("No match found on \"%s\"", path)
+
 	} else if unmatched > 0 {
 		return nil, err
 	} else {
@@ -569,7 +569,7 @@ func main() {
 				continue
 			}
 			if _, err := filepath.Match(ignore.match, "ignore"); err != nil {
-				panic(errors.New(fmt.Sprintf("Invalid ignore pattern %s", ignore.pattern)))
+				panic(fmt.Errorf("Invalid ignore pattern %s", ignore.pattern))
 			}
 
 			if os.IsPathSeparator(ignore.match[len(ignore.match)-1]) {

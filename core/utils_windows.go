@@ -29,9 +29,8 @@ func FreeSpace(path string) (int64, error) {
 		uintptr(unsafe.Pointer(&lpFreeBytesAvailable)), 0, 0, 0, 0); r1 == 0 {
 		if e1 != 0 {
 			return 0, error(e1)
-		} else {
-			return 0, syscall.EINVAL
 		}
+		return 0, syscall.EINVAL
 	}
 	return lpFreeBytesAvailable, nil
 }

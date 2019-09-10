@@ -187,18 +187,16 @@ func (handler *AccountHandler) AddDatasetState(a core.Byte128, set core.String, 
 	r := handler.doCommand(q)
 	if r != nil {
 		return r.(error)
-	} else {
-		return nil
 	}
+	return nil
 }
 func (handler *AccountHandler) RemoveDatasetState(a core.Byte128, set core.String, stateID core.Byte128) error {
 	q := ChannelQuery{accounthandler_removeset, queryRemoveDatasetState{a, set, stateID}, make(chan interface{}, 1)}
 	r := handler.doCommand(q)
 	if r != nil {
 		return r.(error)
-	} else {
-		return nil
 	}
+	return nil
 }
 func (handler *AccountHandler) GetInfo(a core.Byte128) *AccountInfo {
 	q := ChannelQuery{accounthandler_getinfo, a, make(chan interface{}, 1)}

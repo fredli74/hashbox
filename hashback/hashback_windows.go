@@ -60,7 +60,6 @@ func userHomeFolder() string {
 	path := os.Getenv("HOMEPATH")
 	if drive == "" || path == "" {
 		return os.Getenv("USERPROFILE")
-	} else {
-		return drive + path
 	}
+	return drive + path
 }

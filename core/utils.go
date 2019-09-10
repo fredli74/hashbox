@@ -156,10 +156,9 @@ func ExpandEnv(s string) string {
 	return os.Expand(s, func(key string) string {
 		if key == "$" {
 			return key
-		} else {
-			v, _ := syscall.Getenv(key)
-			return v
 		}
+		v, _ := syscall.Getenv(key)
+		return v
 	})
 }
 func SplitPath(path string) []string {

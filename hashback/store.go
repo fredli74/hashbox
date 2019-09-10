@@ -368,7 +368,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	var err error
 
 	// Setup the reference backup engine
-	session.reference = NewReferenceEngine(session, core.Hash([]byte(datasetName)))
+	session.reference = newReferenceEngine(session, core.Hash([]byte(datasetName)))
 	defer session.reference.Close()
 
 	// Convert relative paths to absolute paths
@@ -428,7 +428,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 			if err != nil {
 				panic(err)
 			} else if entry == nil {
-				panic(errors.New(fmt.Sprintf("Unable to store %s", s)))
+				panic(fmt.Errorf("Unable to store %s", s))
 			} else if virtualRootDir != nil {
 				virtualRootDir.File = append(virtualRootDir.File, entry)
 				if entry.ContentType != ContentTypeEmpty {
@@ -781,9 +781,8 @@ func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
 		PanicOn(err)
 		entry.Serialize(r.cacheCurrent)
 		return l
-	} else {
+	} 
 		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
-	}
 }
 
 func (r *referenceEngine) storeReference(entry *FileEntry) {
@@ -842,7 +841,7 @@ func (r *referenceEngine) Close() {
 		}
 	}
 }
-func NewReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *referenceEngine {
+func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *referenceEngine {
 	r := &referenceEngine{
 		session:      session,
 		datasetNameH: datasetNameH,

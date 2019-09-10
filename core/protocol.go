@@ -244,7 +244,7 @@ func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
 		m.Data = new(MsgServerError)
 	default:
 		// return nil instead if needed, then the type will not match anything reasonable for the caller
-		panic(fmt.Errorf("Invalid protocol message received \"%x\" (connection corrupted?)", m.Type));
+		panic(fmt.Errorf("Invalid protocol message received \"%x\" (connection corrupted?)", m.Type))
 	}
 
 	if m.Data != nil {
@@ -309,7 +309,6 @@ func (m ProtocolMessage) Details() string {
 	default:
 		panic(errors.New("ASSERT: Panic much! Should not reach here"))
 	}
-	return ""
 }
 func (m *ProtocolMessage) Release() {
 	switch b := m.Data.(type) {

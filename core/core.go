@@ -165,11 +165,11 @@ func (d DatasetState) Serialize(w io.Writer) (size int) {
 	size += WriteInt64(w, d.UniqueSize)
 	return
 }
-func (m *DatasetState) Unserialize(r io.Reader) (size int) {
-	size += m.StateID.Unserialize(r)
-	size += m.BlockID.Unserialize(r)
-	size += ReadInt64(r, &m.Size)
-	size += ReadInt64(r, &m.UniqueSize)
+func (d *DatasetState) Unserialize(r io.Reader) (size int) {
+	size += d.StateID.Unserialize(r)
+	size += d.BlockID.Unserialize(r)
+	size += ReadInt64(r, &d.Size)
+	size += ReadInt64(r, &d.UniqueSize)
 	return
 }
 
