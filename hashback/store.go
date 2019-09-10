@@ -532,6 +532,7 @@ type referenceEngine struct {
 
 	loaded    bool       // indicates that a reference backup was loaded (or started to load)
 	loadpoint int        // current point in the queue where to load in new information, we do this so we do not have to sort the list after each insert
+	loaderror error      // download goroutine encountered an error
 	lock      sync.Mutex // used to lockdown loadpoint, because downloading and verifying are concurrent goprocesses
 
 	virtualRoot  map[string]string
@@ -644,6 +645,14 @@ func (r *referenceEngine) load(rootBlockID core.Byte128) {
 		Debug("Downloading block %x to local cache", rootBlockID)
 		r.downloadReference(rootBlockID)
 		go func() {
+			defer func() {
+				if err := recover(); err != nil {
+					Debug("Error: Panic raised in reference downloader process (%v)", err)
+					r.lock.Lock()
+					r.loaderror = fmt.Errorf("Panic raised in reference downloader process (%v)", err)
+					r.lock.Unlock()
+				}
+			}()
 			for {
 				r.lock.Lock()
 				if r.loadpoint >= len(r.queue) { // We are done
@@ -682,6 +691,8 @@ func (r *referenceEngine) downloadReference(referenceBlockID core.Byte128) {
 
 	r.lock.Lock()
 	defer r.lock.Unlock()
+	PanicOn(r.loaderror)
+
 	r.loadpoint++
 	if r.loadpoint > len(r.queue) {
 		r.loadpoint = len(r.queue)
@@ -694,6 +705,7 @@ func (r *referenceEngine) downloadReference(referenceBlockID core.Byte128) {
 func (r *referenceEngine) popReference() *FileEntry {
 	r.lock.Lock()
 	defer r.lock.Unlock()
+	PanicOn(r.loaderror)
 
 	var e *FileEntry
 	if len(r.queue) > 0 {
@@ -722,8 +734,10 @@ func (r *referenceEngine) joinPath(elem string) (path string) {
 func (r *referenceEngine) peekPath() (path string) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
+	PanicOn(r.loaderror)
 
 	for len(r.queue) > 0 && r.loadpoint < 1 { // wait for loadpoint if needed
+		PanicOn(r.loaderror)
 		r.lock.Unlock()
 		time.Sleep(10 * time.Millisecond)
 		r.lock.Lock()
@@ -769,7 +783,6 @@ func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
 		return l
 	} else {
 		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
-		return
 	}
 }
 
