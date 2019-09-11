@@ -830,9 +830,16 @@ func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
 }
 
 func (r *referenceEngine) Commit(rootID core.Byte128) {
+	if r.cacheCurrent == nil {
+		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
+	}
+
+	tempPath := r.cacheCurrent.Name()
+	newCachePath := r.cacheFilePathName(rootID)
+
 	cleanup := fmt.Sprintf("%s.*.cache*", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
 	filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
-		if r.cacheCurrent != nil && path == r.cacheFilePathName(rootID) {
+		if path == tempPath {
 			// Current temp cache, do not delete it
 			return nil
 		}
@@ -841,14 +848,9 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 		}
 		return nil
 	})
-
-	if r.cacheCurrent != nil {
-		r.cacheCurrent.Close()
-		os.Rename(r.cacheCurrent.Name(), r.cacheFilePathName(rootID))
-		r.cacheCurrent = nil
-	} else {
-		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
-	}
+	r.cacheCurrent.Close()
+	os.Rename(tempPath, newCachePath)
+	r.cacheCurrent = nil
 }
 func (r *referenceEngine) Close() {
 	// If not commited, we need to close and save the current cache
