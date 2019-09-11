@@ -39,7 +39,11 @@ const MIN_BLOCK_SIZE int = 64 * 1024       // 64kb minimum blocksize (before spl
 
 var SendingQueueSize int64 = 48 * 1024 * 1024 // 48 MiB max memory (will use up to CPU*MAX_BLOCK_SIZE more when compressing)
 
-var DefaultIgnoreList []string // Default ignore list, populated by init() function from each platform
+// DefaultIgnoreList populated by init() function from each platform
+var DefaultIgnoreList []string
+
+// CustomIgnoreList populated by argument or options.json file
+var CustomIgnoreList []string
 
 // TODO: do we need this when we do not follow symlinks?
 // const MAX_DEPTH int = 512 // Safety limit to avoid cyclic symbolic links and such
@@ -557,12 +561,15 @@ func main() {
 	var retainDays int64 = 0
 	var intervalBackup int64 = 0
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
-	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &DefaultIgnoreList, cmd.Standard|cmd.Preference)
+	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &CustomIgnoreList, cmd.Standard|cmd.Preference)
 	cmd.IntOption("interval", "store", "<minutes>", "Keep running backups every <minutes> until interrupted", &intervalBackup, cmd.Standard)
 	cmd.IntOption("retaindays", "store", "<days>", "Remove backups older than 24h but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard|cmd.Preference)
 	cmd.IntOption("retainweeks", "store", "<weeks>", "Remove backups older than 24h but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard|cmd.Preference)
 	cmd.Command("store", "<dataset> (<folder> | <file>)...", func() {
-		for _, d := range DefaultIgnoreList {
+		ignoreList := append(DefaultIgnoreList, CustomIgnoreList...)
+		ignoreList = append(ignoreList, filepath.Join(LocalStoragePath, "*.cache*"))
+
+		for _, d := range ignoreList {
 			ignore := ignoreEntry{pattern: d, match: core.ExpandEnv(d)} // Expand ignore patterns
 
 			if ignore.match == "" {
