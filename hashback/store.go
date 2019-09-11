@@ -52,15 +52,23 @@ func (session *BackupSession) PrintRecoverProgress(progress float64, interval ti
 	}
 }
 
+func minorError(r interface{}) error {
+	e, ok := r.(*os.PathError)
+	if ok && ((runtime.GOOS == "windows" && (e.Err == syscall.Errno(32) || // ERROR_SHARING_VIOLATION
+		e.Err == syscall.Errno(33))) || // ERROR_LOCK_VIOLATION
+		e.Err == syscall.EBADF) { // "bad file descriptor" while reading some files on OSX
+		return e
+	}
+	return nil
+}
 func (session *BackupSession) storeFile(path string, entry *FileEntry) (err error) {
 	defer func() {
 		// Panic error handling
 		if r := recover(); r != nil {
-			// we need this because some obscure files on OSX does open but then generates "bad file descriptor" on read
-			if e, ok := r.(*os.PathError); ok && e.Err == syscall.EBADF {
-				err = e.Err
+			if e := minorError(r); e != nil {
+				err = e
 			} else {
-				panic(r) // Any other error is not normal and should panic
+				panic(r) // Any other error while reading is not normal and should panic
 			}
 		}
 	}()
@@ -316,8 +324,8 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			if entry.FileSize > 0 {
 				session.LogVerbose("%s", path)
 				if err = session.storeFile(path, entry); err != nil {
-					if e, ok := err.(*os.PathError); ok && runtime.GOOS == "windows" && e.Err == syscall.Errno(0x20) { // Windows ERROR_SHARING_VIOLATION
-						return refEntry, err // Returning refEntry here in case this file existed and could be opened in a previous backup
+					if e := minorError(err); e != nil {
+						return refEntry, e // Returning refEntry here in case this file existed and could be opened in a previous backup
 					}
 					return nil, err
 				}
@@ -824,6 +832,10 @@ func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
 func (r *referenceEngine) Commit(rootID core.Byte128) {
 	cleanup := fmt.Sprintf("%s.*.cache*", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
 	filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+		if r.cacheCurrent != nil && path == r.cacheFilePathName(rootID) {
+			// Current temp cache, do not delete it
+			return nil
+		}
 		if match, _ := filepath.Match(cleanup, info.Name()); match {
 			os.Remove(path)
 		}
