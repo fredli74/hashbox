@@ -356,15 +356,13 @@ func main() {
 	var lockFile *lockfile.LockFile
 
 	defer func() {
-		// Panic error handling
-		if !DEBUG {
-			if r := recover(); r != nil {
-				fmt.Println(r)
-				if lockFile != nil {
-					lockFile.Unlock()
-				}
-				os.Exit(1)
+		if r := recover(); r != nil {
+			fmt.Println(r)
+			if lockFile != nil {
+				lockFile.Unlock()
 			}
+			panic(r)
+			os.Exit(1)
 		}
 	}()
 
