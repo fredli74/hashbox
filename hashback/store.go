@@ -273,7 +273,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		entry.FileLink = core.String(sym)
 
 		refEntry := session.reference.findReference(path)
-		if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime && refEntry.FileLink == entry.FileLink {
+		if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileMode == entry.FileMode && refEntry.ModTime/1e9 == entry.ModTime/1e9 && refEntry.FileLink == entry.FileLink { // compare with second precision because of Dropbox Online Only files
 			// It's the same!
 			entry = refEntry
 			if entry.ReferenceID.Compare(session.State.StateID) != 0 {
@@ -304,7 +304,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		session.Directories++
 	} else {
 		refEntry := session.reference.findReference(path)
-		if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize && refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime {
+		if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize && refEntry.FileMode == entry.FileMode && refEntry.ModTime/1e9 == entry.ModTime/1e9 { // compare with second precision because of Dropbox Online Only files
 			// It's the same!
 			entry = refEntry
 
@@ -571,7 +571,6 @@ func (r *referenceEngine) resume(filename string) {
 		if cacheRecover != nil {
 			defer cacheRecover.Close()
 			Debug("Opened resume cache %s", cacheRecover.Name())
-			r.session.Log("Resuming last backup attempt")
 
 			info, err := cacheRecover.Stat()
 			PanicOn(err)
@@ -637,8 +636,11 @@ func (r *referenceEngine) start(rootBlockID *core.Byte128) {
 	})
 	sort.Sort(FileInfoSlice(filelist))
 
-	for i := len(filelist) - 1; i >= 0; i-- {
-		r.resume(filelist[i].Name())
+	if len(filelist) > 0 {
+		r.session.Log("Resuming last backup attempt")
+		for i := len(filelist) - 1; i >= 0; i-- {
+			r.resume(filelist[i].Name())
+		}
 	}
 
 	if rootBlockID != nil {

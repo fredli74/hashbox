@@ -322,7 +322,7 @@ func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, e
 				session.Log("%s local permissions %s and remote %s are different", localname, localinfo.Mode(), os.FileMode(e.FileMode))
 				same = false
 			}
-			if e.ModTime != localinfo.ModTime().UnixNano() {
+			if e.ModTime/1e9 != localinfo.ModTime().UnixNano()/1e9 { // compare with second precision because of Dropbox Online Only files
 				session.Log("%s local modification time %s and remote %s are different", localname, localinfo.ModTime().Format(time.RFC3339), time.Unix(0, int64(e.ModTime)).Format(time.RFC3339))
 				same = false
 			}
