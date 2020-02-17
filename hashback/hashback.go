@@ -362,7 +362,7 @@ func main() {
 				lockFile.Unlock()
 			}
 			panic(r)
-			os.Exit(1)
+			// os.Exit(1)
 		}
 	}()
 

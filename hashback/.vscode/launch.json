@@ -12,10 +12,9 @@
             "program": "${fileDirname}",
             "env": {},
             "args": [
-                "-debug",
+                "-paint",
                 "-verbose",
                 "-progress",
-                "-paint",
                 "store",
                 "Fredriks-MacBook-Pro",
                 "/Users/fredrik/"

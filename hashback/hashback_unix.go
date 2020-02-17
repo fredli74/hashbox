@@ -9,6 +9,7 @@ package main
 
 import (
 	"os"
+	"syscall"
 )
 
 func addUnixIgnore() {
@@ -45,4 +46,11 @@ func platformSafeFilename(src string) (dst string) {
 
 func userHomeFolder() string {
 	return os.Getenv("HOME")
+}
+
+// Special detection for Dropbox Smart Sync placeholder files
+// compare with second precision because of Dropbox Online Only files
+func isOfflineFile(fileInfo os.FileInfo) bool {
+	sys := fileInfo.Sys().(*syscall.Stat_t)
+	return sys != nil && sys.Size > 0 && sys.Blocks == 0
 }

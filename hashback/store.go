@@ -273,7 +273,10 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		entry.FileLink = core.String(sym)
 
 		refEntry := session.reference.findReference(path)
-		if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileMode == entry.FileMode && refEntry.ModTime/1e9 == entry.ModTime/1e9 && refEntry.FileLink == entry.FileLink { // compare with second precision because of Dropbox Online Only files
+		if refEntry != nil && refEntry.FileLink == entry.FileLink &&
+			refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize &&
+			((refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime) ||
+				(isOfflineFile(info) && refEntry.ModTime/1e9 == entry.ModTime/1e9)) { // compare with second precision because of Dropbox Online Only files
 			// It's the same!
 			entry = refEntry
 			if entry.ReferenceID.Compare(session.State.StateID) != 0 {
@@ -304,7 +307,10 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		session.Directories++
 	} else {
 		refEntry := session.reference.findReference(path)
-		if refEntry != nil && refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize && refEntry.FileMode == entry.FileMode && refEntry.ModTime/1e9 == entry.ModTime/1e9 { // compare with second precision because of Dropbox Online Only files
+		if refEntry != nil &&
+			refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize &&
+			((refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime) ||
+				(isOfflineFile(info) && refEntry.ModTime/1e9 == entry.ModTime/1e9)) { // compare with second precision because of Dropbox Online Only files
 			// It's the same!
 			entry = refEntry
 

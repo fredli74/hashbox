@@ -10,6 +10,7 @@ package main
 import (
 	"os"
 	"strings"
+	"syscall"
 )
 
 func addWindowsIgnore() {
@@ -62,4 +63,13 @@ func userHomeFolder() string {
 		return os.Getenv("USERPROFILE")
 	}
 	return drive + path
+}
+
+// Special detection for Dropbox Smart Sync placeholder files
+// compare with second precision because of Dropbox Online Only files
+const FILE_ATTRIBUTE_OFFLINE = 0x1000
+
+func isOfflineFile(fileInfo os.FileInfo) bool {
+	sys := fileInfo.Sys().(*syscall.Win32FileAttributeData)
+	return sys != nil && sys.FileAttributes&FILE_ATTRIBUTE_OFFLINE == FILE_ATTRIBUTE_OFFLINE
 }
