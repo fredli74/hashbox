@@ -37,12 +37,13 @@ func (s *Session) GenerateSessionKey(AccessKey Byte128) {
 //
 
 const (
-	ProtocolVersion Uint32 = 1
+	ProtocolVersion Uint32 = 2
 
 	MsgTypeOldGreeting  uint32 = 0x686F6C61 // = "hola"
 	MsgTypeGreeting     uint32 = 0x68616C6F // = "halo"
 	MsgTypeAuthenticate uint32 = 0x61757468 // = "auth"
 	MsgTypeGoodbye      uint32 = 0x71756974 // = "quit"
+	MsgTypePing         uint32 = 0x70696e67 // = "ping"
 
 	MsgTypeAllocateBlock    uint32 = 0x616C6C6F // = "allo"
 	MsgTypeReadBlock        uint32 = 0x72656164 // = "read"
@@ -208,6 +209,7 @@ func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
 	case MsgTypeAuthenticate | MsgTypeClientMask:
 		m.Data = new(MsgClientAuthenticate)
 	case MsgTypeGoodbye | MsgTypeClientMask: // no data
+	case MsgTypePing | MsgTypeClientMask: // no data
 	case MsgTypeOldGreeting | MsgTypeClientMask: // no data
 	case MsgTypeGreeting | MsgTypeClientMask:
 		m.Data = new(MsgClientGreeting)
@@ -226,6 +228,7 @@ func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
 
 	case MsgTypeAuthenticate & MsgTypeServerMask:
 	case MsgTypeGoodbye & MsgTypeServerMask: // no data
+	case MsgTypePing & MsgTypeServerMask: // no data
 	case MsgTypeGreeting & MsgTypeServerMask:
 		m.Data = new(MsgServerGreeting)
 	case MsgTypeAcknowledgeBlock & MsgTypeServerMask:
