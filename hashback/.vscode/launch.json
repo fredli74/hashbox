@@ -8,8 +8,8 @@
             "name": "Launch",
             "type": "go",
             "request": "launch",
-            "mode": "auto",
-            "program": "${fileDirname}",
+            "mode": "debug",
+            "program": "${workspaceFolder}",
             "env": {},
             "args": [
                 "-paint",
@@ -19,6 +19,7 @@
                 "Fredriks-MacBook-Pro",
                 "/Users/fredrik/"
             ]
+            "showLog": true,
         }
     ]
 }

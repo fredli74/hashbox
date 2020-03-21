@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -283,12 +282,7 @@ func (session *BackupSession) Connect() *core.Client {
 	// fmt.Printf("%x\n", *session.BackupKey)
 
 	Debug("Connecting to %s", session.ServerString)
-	conn, err := net.Dial("tcp", session.ServerString)
-	if err != nil {
-		panic(err)
-	}
-
-	client := core.NewClient(conn, session.User, *session.AccessKey)
+	client := core.NewClient(session.ServerString, session.User, *session.AccessKey)
 	client.QueueMax = SendingQueueSize
 	client.EnablePaint = session.Paint
 	session.Client = client

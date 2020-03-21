@@ -7,6 +7,8 @@
 package core
 
 import (
+	"io"
+
 	"github.com/fredli74/bytearray"
 
 	"encoding/binary"
@@ -39,7 +41,9 @@ type Client struct {
 	Session
 	AccessKey Byte128 // = hmac^20000( AccountName "*ACCESS*KEY*PAD*", md5( password ))
 
-	conn        *TimeoutConn
+	ServerAddress string
+	connection    *TimeoutConn
+
 	wg          sync.WaitGroup
 	EnablePaint bool
 
@@ -61,11 +65,11 @@ type Client struct {
 	storeChannel    chan *messageDispatch
 }
 
-func NewClient(conn net.Conn, account string, accesskey Byte128) *Client {
+func NewClient(address string, account string, accesskey Byte128) *Client {
 
 	client := &Client{
-		conn:      NewTimeoutConn(conn, DEFAULT_CONNECTION_TIMEOUT),
-		AccessKey: accesskey,
+		ServerAddress: address,
+		AccessKey:     accesskey,
 		Session: Session{
 			AccountNameH: Hash([]byte(account)),
 		},
@@ -76,28 +80,11 @@ func NewClient(conn net.Conn, account string, accesskey Byte128) *Client {
 		dispatchChannel: make(chan *messageDispatch, 1024),
 		storeChannel:    make(chan *messageDispatch, 1),
 	}
+
+	client.Connect()
 	client.handlerErrorSignal = make(chan error, 1)
 	client.wg.Add(1)
 	go client.ioHandler()
-
-	{ // Say hello
-		r := client.dispatchAndWait(MsgTypeGreeting, &MsgClientGreeting{Version: ProtocolVersion}).(*MsgServerGreeting)
-		clientTime := uint64(time.Now().Unix())
-		serverTime := binary.BigEndian.Uint64(r.SessionNonce[:]) / 1000000000
-		if clientTime < serverTime-600 || clientTime > serverTime+600 {
-			panic(errors.New("Connection refused, system time difference between client and server is more than 10 minutes"))
-		}
-
-		client.SessionNonce = r.SessionNonce
-		client.GenerateSessionKey(client.AccessKey)
-	}
-
-	{ // Authenticate
-		client.dispatchAndWait(MsgTypeAuthenticate, &MsgClientAuthenticate{
-			AccountNameH:    client.AccountNameH,
-			AuthenticationH: DeepHmac(1, client.AccountNameH[:], client.SessionKey),
-		})
-	}
 
 	return client
 }
@@ -124,7 +111,9 @@ func (c *Client) Close(polite bool) {
 	}
 	c.dispatchMutex.Unlock()
 
-	c.conn.Close() // This will cancel a blocking IO-read if we have one
+	if connection := c.connection; connection != nil {
+		connection.Close() // This will cancel a blocking IO-read if we have one
+	}
 	c.wg.Wait()
 }
 
@@ -199,7 +188,7 @@ func (c *Client) sendQueue(what Byte128) {
 							atomic.AddInt64(&c.WriteDataCompressed, int64(workItem.block.CompressedSize))
 							atomic.AddInt32(&c.transmittedBlocks, 1) //	c.transmittedBlocks++
 							c.Paint("*")
-							msg := &ProtocolMessage{Num: uint16(atomic.AddUint32(&c.msgNum, 1) - 1), Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: workItem.block}}
+							msg := &ProtocolMessage{Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: workItem.block}}
 							c.storeChannel <- &messageDispatch{msg: msg}
 							atomic.AddInt32(&workItem.state, 1)
 						default:
@@ -214,14 +203,50 @@ func (c *Client) sendQueue(what Byte128) {
 	}
 }
 
-func (c *Client) singleExchange(outgoing *messageDispatch) *ProtocolMessage {
+func (c *Client) Connect() {
+	c.connection = nil // Drop previous connection object
+
+	conn, err := net.Dial("tcp", c.ServerAddress)
+	if err != nil {
+		panic(err)
+	}
+	newConnection := NewTimeoutConn(conn, DEFAULT_CONNECTION_TIMEOUT)
+
+	{ // Say hello
+		data := c.singleExchange(newConnection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeGreeting, Data: &MsgClientGreeting{Version: ProtocolVersion}}}).Data
+		if data == nil {
+			panic(errors.New("Server did not respond correctly to handshake"))
+		}
+		r := data.(*MsgServerGreeting)
+		clientTime := uint64(time.Now().Unix())
+		serverTime := binary.BigEndian.Uint64(r.SessionNonce[:]) / 1000000000
+		if clientTime < serverTime-600 || clientTime > serverTime+600 {
+			panic(errors.New("Connection refused, system time difference between client and server is more than 10 minutes"))
+		}
+
+		c.SessionNonce = r.SessionNonce
+		c.GenerateSessionKey(c.AccessKey)
+	}
+
+	{ // Authenticate
+		r := c.singleExchange(newConnection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeAuthenticate, Data: &MsgClientAuthenticate{
+			AccountNameH:    c.AccountNameH,
+			AuthenticationH: DeepHmac(1, c.AccountNameH[:], c.SessionKey),
+		}}})
+	}
+
+	// If we reached here, we're all good
+	c.connection = newConnection
+}
+func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispatch) *ProtocolMessage {
 	// Send an outgoing message
-	WriteMessage(c.conn, outgoing.msg)
+	outgoing.msg.Num = uint16(atomic.AddUint32(&c.msgNum, 1) - 1)
+	WriteMessage(connection, outgoing.msg)
 
 	// Wait for the reply
-	incoming := ReadMessage(c.conn)
+	incoming := ReadMessage(connection)
 	if incoming.Num != outgoing.msg.Num {
-		panic(errors.New("ASSERT! Jag kan inte programmera"))
+		panic(errors.New("ASSERT! This should never happen unless the server is coded wrong"))
 	}
 	if outgoing.returnChannel != nil {
 		outgoing.returnChannel <- incoming
@@ -260,10 +285,54 @@ func (c *Client) singleExchange(outgoing *messageDispatch) *ProtocolMessage {
 	return incoming
 }
 
+func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage) {
+	for ever := true; ever; {
+		ever = func() (retry bool) {
+			retry = true
+
+			defer func() {
+				err := recover()
+				if err == nil {
+					return
+				}
+
+				c.connection = nil
+				switch e := err.(type) {
+				case net.Error:
+					Log(LogError, e.Error())
+					return // Network error, retry and retry again
+				case error:
+					if e == io.EOF {
+						Log(LogError, "Lost connection with server (%v)", e.Error())
+						return // Network stream closed, non fatal
+					}
+					Log(LogError, e.Error())
+					Log(LogError, fmt.Sprint(e))
+				default:
+					Log(LogError, "Unknown error in client communication")
+					Log(LogError, fmt.Sprint(e))
+				}
+				panic(err)
+			}()
+
+			if c.connection == nil {
+				Log(LogInfo, "Retrying connection in 15 seconds")
+				time.Sleep(15 * time.Second)
+				Log(LogInfo, "Reconnecting to server")
+				c.Connect()
+			} else {
+				r = c.singleExchange(c.connection, outgoing)
+				retry = false
+			}
+			return
+		}()
+	}
+	return r
+}
+
 func (c *Client) ioHandler() {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised inside the goroutine
-			//			fmt.Println("ioHandler error:", r)
 			c.handlerErrorSignal <- r.(error)
 			close(c.handlerErrorSignal)
 		}
@@ -283,16 +352,18 @@ func (c *Client) ioHandler() {
 		select {
 		case outgoing, ok := <-c.storeChannel:
 			if !ok {
+				// Channel is closed
 				return
 			}
-			c.singleExchange(outgoing)
+			c.retryingExchange(outgoing)
 		default:
 			select {
 			case outgoing, ok := <-c.dispatchChannel:
 				if !ok {
+					// Channel is closed
 					return
 				}
-				c.singleExchange(outgoing)
+				c.retryingExchange(outgoing)
 			default:
 				continue
 			}
@@ -314,8 +385,7 @@ func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChan
 	}()
 
 	if !c.closing {
-		msg := &ProtocolMessage{Num: uint16(atomic.AddUint32(&c.msgNum, 1) - 1), Type: msgType, Data: msgData}
-		c.dispatchChannel <- &messageDispatch{msg: msg, returnChannel: returnChannel}
+		c.dispatchChannel <- &messageDispatch{msg: &ProtocolMessage{Type: msgType, Data: msgData}, returnChannel: returnChannel}
 	} else {
 		if returnChannel != nil {
 			close(returnChannel)
