@@ -130,8 +130,6 @@ func handleConnection(conn net.Conn) {
 				unauthorized = !sessionAuthenticated
 			case core.MsgTypeGoodbye:
 				keepAlive = false
-			case core.MsgTypePing:
-				reply.Type = core.MsgTypePing & core.MsgTypeServerMask
 			default:
 				unauthorized = !sessionAuthenticated
 				if !unauthorized {

@@ -279,9 +279,6 @@ func (c *Client) ioHandler() {
 		c.wg.Done()
 	}()
 
-	heartbeat := time.NewTicker(10 * time.Second)
-	defer heartbeat.Stop()
-
 	for {
 		select {
 		case outgoing, ok := <-c.storeChannel:
@@ -296,8 +293,6 @@ func (c *Client) ioHandler() {
 					return
 				}
 				c.singleExchange(outgoing)
-			case <-heartbeat.C:
-				c.dispatchMessage(MsgTypePing, nil, nil)
 			default:
 				continue
 			}
