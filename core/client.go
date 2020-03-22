@@ -81,7 +81,9 @@ func NewClient(address string, account string, accesskey Byte128) *Client {
 		storeChannel:    make(chan *messageDispatch, 1),
 	}
 
-	client.Connect()
+	if address != "" {
+		client.Connect()
+	}
 	client.handlerErrorSignal = make(chan error, 1)
 	client.wg.Add(1)
 	go client.ioHandler()
@@ -203,17 +205,9 @@ func (c *Client) sendQueue(what Byte128) {
 	}
 }
 
-func (c *Client) Connect() {
-	c.connection = nil // Drop previous connection object
-
-	conn, err := net.Dial("tcp", c.ServerAddress)
-	if err != nil {
-		panic(err)
-	}
-	newConnection := NewTimeoutConn(conn, DEFAULT_CONNECTION_TIMEOUT)
-
+func (c *Client) Authorize(connection *TimeoutConn) {
 	{ // Say hello
-		data := c.singleExchange(newConnection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeGreeting, Data: &MsgClientGreeting{Version: ProtocolVersion}}}).Data
+		data := c.singleExchange(connection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeGreeting, Data: &MsgClientGreeting{Version: ProtocolVersion}}}).Data
 		if data == nil {
 			panic(errors.New("Server did not respond correctly to handshake"))
 		}
@@ -229,11 +223,22 @@ func (c *Client) Connect() {
 	}
 
 	{ // Authenticate
-		c.singleExchange(newConnection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeAuthenticate, Data: &MsgClientAuthenticate{
+		c.singleExchange(connection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeAuthenticate, Data: &MsgClientAuthenticate{
 			AccountNameH:    c.AccountNameH,
 			AuthenticationH: DeepHmac(1, c.AccountNameH[:], c.SessionKey),
 		}}})
 	}
+}
+func (c *Client) Connect() {
+	c.connection = nil // Drop previous connection object
+
+	conn, err := net.Dial("tcp", c.ServerAddress)
+	if err != nil {
+		panic(err)
+	}
+	newConnection := NewTimeoutConn(conn, DEFAULT_CONNECTION_TIMEOUT)
+
+	c.Authorize(newConnection)
 
 	// If we reached here, we're all good
 	c.connection = newConnection
@@ -290,30 +295,32 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 		ever = func() (retry bool) {
 			retry = true
 
-			defer func() {
-				err := recover()
-				if err == nil {
-					return
-				}
-
-				c.connection = nil
-				switch e := err.(type) {
-				case net.Error:
-					Log(LogError, e.Error())
-					return // Network error, retry and retry again
-				case error:
-					if e == io.EOF {
-						Log(LogError, "Lost connection with server (%v)", e.Error())
-						return // Network stream closed, non fatal
+			if c.ServerAddress != "" {
+				defer func() {
+					err := recover()
+					if err == nil {
+						return
 					}
-					Log(LogError, e.Error())
-					Log(LogError, fmt.Sprint(e))
-				default:
-					Log(LogError, "Unknown error in client communication")
-					Log(LogError, fmt.Sprint(e))
-				}
-				panic(err)
-			}()
+
+					c.connection = nil
+					switch e := err.(type) {
+					case net.Error:
+						Log(LogError, e.Error())
+						return // Network error, retry and retry again
+					case error:
+						if e == io.EOF {
+							Log(LogError, "Lost connection with server (%v)", e.Error())
+							return // Network stream closed, non fatal
+						}
+						Log(LogError, e.Error())
+						Log(LogError, fmt.Sprint(e))
+					default:
+						Log(LogError, "Unknown error in client communication")
+						Log(LogError, fmt.Sprint(e))
+					}
+					panic(err)
+				}()
+			}
 
 			if c.connection == nil {
 				Log(LogInfo, "Retrying connection in 15 seconds")
