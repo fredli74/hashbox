@@ -229,7 +229,7 @@ func (c *Client) Connect() {
 	}
 
 	{ // Authenticate
-		r := c.singleExchange(newConnection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeAuthenticate, Data: &MsgClientAuthenticate{
+		c.singleExchange(newConnection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeAuthenticate, Data: &MsgClientAuthenticate{
 			AccountNameH:    c.AccountNameH,
 			AuthenticationH: DeepHmac(1, c.AccountNameH[:], c.SessionKey),
 		}}})
@@ -286,7 +286,7 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 }
 
 func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage) {
-	for ever := true; ever; {
+	for ever := true; ever && !c.closing; {
 		ever = func() (retry bool) {
 			retry = true
 
