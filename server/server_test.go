@@ -20,7 +20,6 @@ import (
 	"os"
 	"reflect"
 	"testing"
-	"time"
 )
 
 type FauxServer struct {
@@ -88,15 +87,7 @@ func TestServerTestAccount(t *testing.T) {
 }
 
 func TestClientServerAuthentication(t *testing.T) {
-	var err error
-
-	conn, err := net.Dial("tcp", "127.0.0.1:1248")
-	if err != nil {
-		panic(err)
-	}
-
-	conn.SetDeadline(time.Now().Add(15 * time.Second))
-	client := core.NewClient(conn, "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
+	client := core.NewClient("127.0.0.1:1248", "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
 	defer client.Close(true)
 }
 
@@ -108,15 +99,7 @@ func randomByte128() (b core.Byte128) {
 }
 
 func TestClientServerDataset(t *testing.T) {
-	var err error
-
-	conn, err := net.Dial("tcp", "127.0.0.1:1248")
-	if err != nil {
-		panic(err)
-	}
-
-	conn.SetDeadline(time.Now().Add(10 * time.Minute))
-	client := core.NewClient(conn, "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
+	client := core.NewClient("127.0.0.1:1248", "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
 	defer client.Close(true)
 
 	// First make sure there is some data to reference
@@ -185,15 +168,7 @@ func TestClientServerDataset(t *testing.T) {
 }
 
 func TestClientServerHashboxBlocks(t *testing.T) {
-	var err error
-
-	conn, err := net.Dial("tcp", "127.0.0.1:1248")
-	if err != nil {
-		panic(err)
-	}
-
-	conn.SetDeadline(time.Now().Add(10 * time.Minute))
-	client := core.NewClient(conn, "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
+	client := core.NewClient("127.0.0.1:1248", "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
 	defer client.Close(true)
 
 	{
