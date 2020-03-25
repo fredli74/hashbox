@@ -15,6 +15,7 @@
                 "-paint",
                 "-verbose",
                 "-progress",
+                "-debug=false",
                 "store",
                 "Fredriks-MacBook-Pro",
                 "/Users/fredrik/"

@@ -383,7 +383,10 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 
 	// Setup the reference backup engine
 	session.reference = newReferenceEngine(session, core.Hash([]byte(datasetName)))
-	defer session.reference.Close()
+	defer func() {
+		session.reference.Close()
+		session.reference = nil
+	}()
 
 	// Convert relative paths to absolute paths
 	for i := 0; i < len(path); i++ {
