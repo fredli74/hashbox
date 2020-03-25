@@ -724,6 +724,10 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 		})
 		for i := len(resumeFileList) - 1; i >= 0; i-- {
 			r.loadResumeFile(resumeFileList[i].Name())
+			// Remove the resume file after it is consumed. Yes I know we could lose the last n* cached entries
+			// if process is aborted. But it is not that important, it's better to clean up to avoid downward
+			// spirals of making resume file after resume file after resume file
+			os.Remove(resumeFileList[i].Name())
 		}
 	}
 
