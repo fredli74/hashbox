@@ -572,11 +572,11 @@ func (r *referenceEngine) cacheFilePathName(rootID core.Byte128) string {
 
 // Stop reference loader
 func (r *referenceEngine) stop() {
-	if r.stopChannel == nil {
-		panic(errors.New("ASSERT, r.stopChannel == nil, we called stop without a start"))
+	if r.stopChannel != nil {
+		close(r.stopChannel)
+		r.wg.Wait()
+		r.stopChannel = nil
 	}
-	close(r.stopChannel)
-	r.wg.Wait()
 }
 
 // Start reference loader

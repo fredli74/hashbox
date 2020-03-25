@@ -291,9 +291,11 @@ func (session *BackupSession) Connect() *core.Client {
 func (session *BackupSession) Close(polite bool) {
 	if session.reference != nil {
 		session.reference.Close()
+		session.reference = nil
 	}
 	if session.Client != nil {
 		session.Client.Close(polite)
+		session.Client = nil
 	}
 
 	Debug("Disconnected from %s", session.ServerString)
