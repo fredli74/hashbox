@@ -544,13 +544,16 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 type referenceEngine struct {
 	session *BackupSession
 
-	path  []string     // path hierarchy, used for traversing up and down subdirectories without having to save full path for each queue entry
-	queue []*FileEntry // last backup structure, sorted
+	path      []string   // path hierarchy, used for traversing up and down subdirectories without having to save full path for each queue entry
+	nextEntry *FileEntry // next entry from entryChannel
 
-	loaded    bool       // indicates that a reference backup was loaded (or started to load)
-	loadpoint int        // current point in the queue where to load in new information, we do this so we do not have to sort the list after each insert
-	loaderror error      // download goroutine encountered an error
-	lock      sync.Mutex // used to lockdown loadpoint, because downloading and verifying are concurrent goprocesses
+	loaded bool // indicates that a reference backup was loaded (or started to load)
+
+	wg           sync.WaitGroup
+	entryChannel chan *FileEntry // output from goroutine; last backup and recovery structure, sorted queue
+	errorChannel chan error      // output from goroutine; reference loading goroutine encountered an error
+	stopChannel  chan struct{}   // input to goroutine; signals that the loader should quit
+	stopped      bool
 
 	virtualRoot  map[string]string
 	datasetNameH core.Byte128
@@ -567,13 +570,69 @@ func (r *referenceEngine) cacheFilePathName(rootID core.Byte128) string {
 	return filepath.Join(LocalStoragePath, r.cacheName(base64.RawURLEncoding.EncodeToString(rootID[:])))
 }
 
-// Start reference loader and resume if possible
-func (r *referenceEngine) resume(filename string) {
+// Stop reference loader
+func (r *referenceEngine) stop() {
+	if r.stopChannel == nil {
+		panic(errors.New("ASSERT, r.stopChannel == nil, we called stop without a start"))
+	}
+	close(r.stopChannel)
+	r.wg.Wait()
+}
+
+// Start reference loader
+func (r *referenceEngine) start(rootBlockID *core.Byte128) {
+	if r.stopChannel != nil {
+		panic(errors.New("ASSERT, r.stopChannel != nil, we called start twice"))
+	}
+
+	// Create new channels and start a new worker goroutine
+	r.stopChannel = make(chan struct{})
+	r.errorChannel = make(chan error, 1)
+	r.entryChannel = make(chan *FileEntry, 100)
+
+	go r.loader(rootBlockID)
+}
+
+func (r *referenceEngine) pushChannelEntry(entry *FileEntry) {
+	if r.stopped {
+		panic(errors.New("ASSERT, pushChannelEntry was called after reference engine was signalled to stop"))
+	}
+	select {
+	case <-r.stopChannel:
+		Debug("Reference loader received stop signal")
+		r.stopped = true
+		panic(errors.New("Reference loader was stopped"))
+	case r.entryChannel <- entry:
+		// Dispatched next reference entry
+		return
+	}
+}
+
+// downloadReference adds a subdir structure at the current loadpoint
+func (r *referenceEngine) downloadReference(referenceBlockID core.Byte128) {
+	var refdir DirectoryBlock
+
+	blockData := r.session.Client.ReadBlock(referenceBlockID).Data
+	refdir.Unserialize(&blockData)
+	blockData.Release()
+
+	for _, e := range refdir.File {
+		r.pushChannelEntry(e)
+		if e.ContentType == ContentTypeDirectory {
+			r.downloadReference(e.ContentBlockID)
+		}
+	}
+	r.pushChannelEntry(entryEOD)
+}
+
+func (r *referenceEngine) loadResumeFile(filename string) {
 	treedepth := 0
 	func() {
 		defer func() {
-			if r := recover(); r != nil {
-				Debug("Non-fatal error encountered while resuming backup %s : %v", filename, r)
+			if !r.stopped {
+				if r := recover(); r != nil {
+					Debug("Non-fatal error encountered while resuming backup %s : %v", filename, r)
+				}
 			}
 		}()
 		cacheRecover, _ := os.Open(filepath.Join(LocalStoragePath, filename))
@@ -591,8 +650,6 @@ func (r *referenceEngine) resume(filename string) {
 				var entry FileEntry
 				Debug("Read cache entry at %x", offset)
 				offset += int64(entry.Unserialize(reader))
-
-				r.session.PrintRecoverProgress(99.0*(float64(offset)/float64(cacheSize)), PROGRESS_INTERVAL_SECS)
 
 				if entry.FileName == "" { // EOD
 					treedepth--
@@ -620,140 +677,117 @@ func (r *referenceEngine) resume(filename string) {
 					}
 					entry.ReferenceID = r.session.State.StateID // self reference
 				}
-				r.queue = append(r.queue, &entry)
+				r.pushChannelEntry(&entry)
 			}
 		}
 	}()
 
 	// Insert any missing EOD marker into queue
 	for ; treedepth > 0; treedepth-- {
-		r.queue = append(r.queue, entryEOD)
-	}
-	r.loadpoint = len(r.queue)
-}
-
-// Start reference loader and resume if possible
-func (r *referenceEngine) start(rootBlockID *core.Byte128) {
-
-	var filelist []os.FileInfo
-	recoverMatch := fmt.Sprintf("%s.partial.*.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
-	filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
-		if match, _ := filepath.Match(recoverMatch, info.Name()); match {
-			filelist = append(filelist, info)
-		}
-		return nil
-	})
-	sort.Sort(FileInfoSlice(filelist))
-
-	if len(filelist) > 0 {
-		r.session.Log("Resuming last backup attempt")
-		for i := len(filelist) - 1; i >= 0; i-- {
-			r.resume(filelist[i].Name())
-		}
-	}
-
-	if rootBlockID != nil {
-		r.load(*rootBlockID)
+		r.pushChannelEntry(entryEOD)
 	}
 }
 
-// Download worker is a separate goprocess to let it download the last backup structure in the background
-func (r *referenceEngine) load(rootBlockID core.Byte128) {
-	// Check if we have last backup cached on disk
-	cacheLast, _ := os.Open(r.cacheFilePathName(rootBlockID))
-	if cacheLast != nil {
-		defer cacheLast.Close()
-		Debug("Opened local cache %s", cacheLast.Name())
+func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
+	r.wg.Add(1)
+	defer func() {
+		if err := recover(); err != nil {
+			if r.stopped {
+				Debug("Reference loader stopped gracefully")
+			} else {
+				Debug("Error: Panic raised in reference loader process (%v)", err)
 
-		info, err := cacheLast.Stat()
-		PanicOn(err)
-		cacheSize := info.Size()
-		reader := bufio.NewReader(cacheLast)
-		for offset := int64(0); offset < cacheSize; {
-			var entry FileEntry
-			Debug("Read cache entry at %x", offset)
-			offset += int64(entry.Unserialize(reader))
-			r.queue = append(r.queue, &entry)
-		}
-		r.loadpoint = len(r.queue)
-	} else {
-		Debug("Downloading block %x to local cache", rootBlockID)
-		r.downloadReference(rootBlockID)
-		go func() {
-			defer func() {
-				if err := recover(); err != nil {
-					Debug("Error: Panic raised in reference downloader process (%v)", err)
-					r.lock.Lock()
-					r.loaderror = fmt.Errorf("Panic raised in reference downloader process (%v)", err)
-					r.lock.Unlock()
+				select {
+				case r.errorChannel <- fmt.Errorf("Panic raised in reference loader process (%v)", err):
+					Debug("Reference loader sent error on error channel")
+				default:
+					Debug("Reference loader error channel buffer is full, no message sent")
 				}
-			}()
-			for {
-				r.lock.Lock()
-				if r.loadpoint >= len(r.queue) { // We are done
-					r.lock.Unlock()
-					break
-				} else {
-					e := r.queue[r.loadpoint]
-					if e.ContentType == ContentTypeDirectory {
-						r.lock.Unlock()
-						r.downloadReference(e.ContentBlockID)
-					} else {
-						r.loadpoint++
-						r.lock.Unlock()
-					}
-				}
-				runtime.Gosched()
 			}
-		}()
+		}
+		close(r.entryChannel)
+		r.wg.Done()
+	}()
+
+	// Load partial cache files from previous backup attempt (newest first)
+	{
+		var resumeFileList []os.FileInfo
+		recoverMatch := fmt.Sprintf("%s.partial.*.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
+		filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+			if match, _ := filepath.Match(recoverMatch, info.Name()); match {
+				resumeFileList = append(resumeFileList, info)
+			}
+			return nil
+		})
+		sort.Slice(resumeFileList, func(i, j int) bool {
+			return resumeFileList[i].ModTime().Before(resumeFileList[j].ModTime())
+		})
+		for i := len(resumeFileList) - 1; i >= 0; i-- {
+			r.loadResumeFile(resumeFileList[i].Name())
+		}
 	}
-	r.loaded = true
+
+	// Load previous completed backup
+	if rootBlockID != nil {
+		r.loaded = true
+		// Check if we have last backup cached on disk
+		cacheLast, _ := os.Open(r.cacheFilePathName(*rootBlockID))
+		if cacheLast != nil {
+			defer cacheLast.Close()
+			Debug("Opened local cache %s", cacheLast.Name())
+
+			info, err := cacheLast.Stat()
+			PanicOn(err)
+			cacheSize := info.Size()
+			reader := bufio.NewReader(cacheLast)
+			for offset := int64(0); offset < cacheSize; {
+				var entry FileEntry
+				Debug("Read cache entry at %x", offset)
+				offset += int64(entry.Unserialize(reader))
+				r.pushChannelEntry(&entry)
+			}
+		} else {
+			Debug("Downloading block %x to local cache", rootBlockID)
+			r.downloadReference(*rootBlockID)
+		}
+	}
+	return
 }
 
-// downloadReference adds a subdir structure at the current loadpoint
-func (r *referenceEngine) downloadReference(referenceBlockID core.Byte128) {
-	var refdir DirectoryBlock
-
-	blockData := r.session.Client.ReadBlock(referenceBlockID).Data
-	refdir.Unserialize(&blockData)
-	blockData.Release()
-
-	var list []*FileEntry
-	for _, e := range refdir.File {
-		list = append(list, e)
+func (r *referenceEngine) popChannelEntry() *FileEntry {
+	select {
+	case e := <-r.entryChannel:
+		return e
 	}
-	list = append(list, entryEOD)
-
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	PanicOn(r.loaderror)
-
-	r.loadpoint++
-	if r.loadpoint > len(r.queue) {
-		r.loadpoint = len(r.queue)
-	}
-	list = append(list, r.queue[r.loadpoint:]...)
-	r.queue = append(r.queue[:r.loadpoint], list...)
 }
 
 // popReference pops the first queue entry and sets the path hierarchy correctly
 func (r *referenceEngine) popReference() *FileEntry {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	PanicOn(r.loaderror)
+	e := r.nextEntry
+	if e == nil {
+		e = r.popChannelEntry()
+	}
+	r.nextEntry = nil
 
-	var e *FileEntry
-	if len(r.queue) > 0 {
-		e = r.queue[0]
+	if e != nil {
 		if e.ContentType == ContentTypeDirectory {
 			r.path = append(r.path, string(e.FileName))
 		} else if string(e.FileName) == "" { // EOD
 			r.path = r.path[:len(r.path)-1]
 		}
-		r.queue = r.queue[1:]
-		r.loadpoint--
 	}
 	return e
+}
+
+// peekPath returns the full path of the next queue entry
+func (r *referenceEngine) peekPath() (path string) {
+	if r.nextEntry == nil {
+		r.nextEntry = r.popChannelEntry()
+	}
+	if r.nextEntry != nil {
+		path = r.joinPath(string(r.nextEntry.FileName))
+	}
+	return
 }
 
 // joinPath puts the path hierarchy list together to a slash separated path string
@@ -762,25 +796,6 @@ func (r *referenceEngine) joinPath(elem string) (path string) {
 		path = filepath.Join(path, p)
 	}
 	path = filepath.Join(path, elem)
-	return
-}
-
-// peekPath returns the full path of the next queue entry
-func (r *referenceEngine) peekPath() (path string) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	PanicOn(r.loaderror)
-
-	for len(r.queue) > 0 && r.loadpoint < 1 { // wait for loadpoint if needed
-		PanicOn(r.loaderror)
-		r.lock.Unlock()
-		time.Sleep(10 * time.Millisecond)
-		r.lock.Lock()
-	}
-
-	if len(r.queue) > 0 {
-		path = r.joinPath(string(r.queue[0].FileName))
-	}
 	return
 }
 
@@ -864,6 +879,8 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 	r.cacheCurrent = nil
 }
 func (r *referenceEngine) Close() {
+	r.stop()
+
 	// If not commited, we need to close and save the current cache
 	if r.cacheCurrent != nil {
 		currentName := r.cacheCurrent.Name()
