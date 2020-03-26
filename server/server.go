@@ -10,6 +10,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"runtime"
+	"runtime/debug"
 
 	"github.com/fredli74/bytearray"
 	cmd "github.com/fredli74/cmdparser"
@@ -19,7 +20,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/kardianos/osext"
 	"math/rand"
 	"net"
 	"os"
@@ -28,6 +28,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/kardianos/osext"
 )
 
 var Version = "(dev-build)"
@@ -77,6 +79,7 @@ func handleConnection(conn net.Conn) {
 	defer func() {
 		if err := recover(); err != nil {
 			core.Log(core.LogError, "%s - %v", remoteID, err)
+			core.Log(core.LogInfo, "%s - Stacktrace from panic: %v", remoteID, debug.Stack())
 		}
 
 		core.Log(core.LogInfo, "%s - Connection closed", remoteID)

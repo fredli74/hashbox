@@ -8,6 +8,7 @@ package core
 
 import (
 	"io"
+	"runtime/debug"
 
 	"github.com/fredli74/bytearray"
 
@@ -310,7 +311,8 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 					case error:
 						if e == io.EOF {
 							Log(LogError, "Lost connection with server (%v)", e.Error())
-							return // Network stream closed, non fatal
+							Log(LogInfo, "Stacktrace from panic: %v", debug.Stack())
+							// return // Network stream closed, non fatal
 						}
 						Log(LogError, e.Error())
 						Log(LogError, fmt.Sprint(e))
