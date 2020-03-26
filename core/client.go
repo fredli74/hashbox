@@ -296,39 +296,44 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 		ever = func() (retry bool) {
 			retry = outgoing.msg.Type != MsgTypeGreeting && outgoing.msg.Type != MsgTypeGoodbye && outgoing.msg.Type != MsgTypeAuthenticate
 
-			if c.ServerAddress != "" {
-				defer func() {
-					err := recover()
-					if err == nil {
-						return
-					}
-
-					c.connection = nil
-					switch e := err.(type) {
-					case net.Error:
-						Log(LogError, e.Error())
-						return // Network error, retry and retry again
-					case error:
-						if e == io.EOF {
-							Log(LogError, "Lost connection with server (%v)", e.Error())
-							Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
-							// return // Network stream closed, non fatal
-						}
-						Log(LogError, e.Error())
-						Log(LogError, fmt.Sprint(e))
-					default:
-						Log(LogError, "Unknown error in client communication")
-						Log(LogError, fmt.Sprint(e))
-					}
-					panic(err)
-				}()
+			if c.ServerAddress == "" {
+				panic(errors.New("ASSERT! Somehow we lost the ServerAddress inside the ioHandler"))
 			}
 
+			defer func() {
+				err := recover()
+				if err == nil {
+					return
+				}
+
+				c.connection = nil
+				switch e := err.(type) {
+				case net.Error:
+					Log(LogError, e.Error())
+					Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
+					return // Network error, retry and retry again
+				case error:
+					if e == io.EOF {
+						Log(LogError, "Lost connection with server (%v)", e.Error())
+						Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
+						return // Network stream closed, non fatal
+					}
+					Log(LogError, e.Error())
+					Log(LogError, fmt.Sprint(e))
+				default:
+					Log(LogError, "Unknown error in client communication")
+					Log(LogError, fmt.Sprint(e))
+				}
+				panic(err)
+			}()
+
 			if c.connection == nil {
-				Log(LogInfo, "Retrying connection in 15 seconds")
-				time.Sleep(15 * time.Second)
-				Log(LogInfo, "Reconnecting to server")
-				c.Connect()
+				if retry {
+					Log(LogInfo, "Retrying connection in 15 seconds")
+					time.Sleep(15 * time.Second)
+					Log(LogInfo, "Reconnecting to server")
+					c.Connect()
+				}
 			} else {
 				r = c.singleExchange(c.connection, outgoing)
 				retry = false
