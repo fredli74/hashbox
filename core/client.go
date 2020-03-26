@@ -102,19 +102,13 @@ func (c *Client) Paint(what string) {
 }
 
 func (c *Client) Close(polite bool) {
-	c.dispatchMutex.Lock()
-	closing := c.closing
-	if !closing {
-		c.closing = true
-	}
-	c.dispatchMutex.Unlock()
-
 	if polite {
 		c.dispatchAndWait(MsgTypeGoodbye, nil)
 	}
 
 	c.dispatchMutex.Lock()
-	if !closing {
+	if !c.closing {
+		c.closing = true
 		close(c.dispatchChannel)
 		close(c.storeChannel)
 	}
@@ -300,7 +294,7 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage) {
 	for ever := true; ever && !c.closing; {
 		ever = func() (retry bool) {
-			retry = true
+			retry = outgoing.msg.Type != MsgTypeGreeting && outgoing.msg.Type != MsgTypeGoodbye && outgoing.msg.Type != MsgTypeAuthenticate
 
 			if c.ServerAddress != "" {
 				defer func() {
@@ -351,15 +345,6 @@ func (c *Client) ioHandler() {
 			c.handlerErrorSignal <- r.(error)
 			close(c.handlerErrorSignal)
 		}
-
-		c.dispatchMutex.Lock()
-		if !c.closing {
-			c.closing = true
-			close(c.dispatchChannel)
-			close(c.storeChannel)
-		}
-		c.dispatchMutex.Unlock()
-
 		c.wg.Done()
 	}()
 
