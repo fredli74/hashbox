@@ -102,13 +102,19 @@ func (c *Client) Paint(what string) {
 }
 
 func (c *Client) Close(polite bool) {
+	c.dispatchMutex.Lock()
+	closing := c.closing
+	if !closing {
+		c.closing = true
+	}
+	c.dispatchMutex.Unlock()
+
 	if polite {
 		c.dispatchAndWait(MsgTypeGoodbye, nil)
 	}
 
 	c.dispatchMutex.Lock()
-	if !c.closing {
-		c.closing = true
+	if !closing {
 		close(c.dispatchChannel)
 		close(c.storeChannel)
 	}
