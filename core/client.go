@@ -311,7 +311,7 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 					case error:
 						if e == io.EOF {
 							Log(LogError, "Lost connection with server (%v)", e.Error())
-							Log(LogInfo, "Stacktrace from panic: %v", debug.Stack())
+							Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
 							// return // Network stream closed, non fatal
 						}
 						Log(LogError, e.Error())

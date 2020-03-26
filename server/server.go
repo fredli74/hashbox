@@ -79,7 +79,7 @@ func handleConnection(conn net.Conn) {
 	defer func() {
 		if err := recover(); err != nil {
 			core.Log(core.LogError, "%s - %v", remoteID, err)
-			core.Log(core.LogInfo, "%s - Stacktrace from panic: %v", remoteID, debug.Stack())
+			core.Log(core.LogInfo, "%s - Stacktrace from panic: %s", remoteID, debug.Stack())
 		}
 
 		core.Log(core.LogInfo, "%s - Connection closed", remoteID)
