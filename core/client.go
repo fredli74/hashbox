@@ -292,13 +292,14 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 }
 
 func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage) {
+	if c.ServerAddress == "" {
+		// Only used in unit testing
+		return c.singleExchange(c.connection, outgoing)
+	}
+
 	for ever := true; ever && !c.closing; {
 		ever = func() (retry bool) {
 			retry = outgoing.msg.Type != MsgTypeGreeting && outgoing.msg.Type != MsgTypeGoodbye && outgoing.msg.Type != MsgTypeAuthenticate
-
-			if c.ServerAddress == "" {
-				panic(errors.New("ASSERT! Somehow we lost the ServerAddress inside the ioHandler"))
-			}
 
 			defer func() {
 				err := recover()
