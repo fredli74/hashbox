@@ -646,10 +646,15 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 			reader := bufio.NewReader(cacheRecover)
 
 			skipcheck := 0
+			var resumeID core.Byte128
 			for offset := int64(0); offset < cacheSize; {
 				var entry FileEntry
 				Debug("Read cache entry at %x", offset)
 				offset += int64(entry.Unserialize(reader))
+				if resumeID.Compare(entry.ReferenceID) < 0 {
+					// We're guessing the resume referenceID just to make changedFiles count a little better
+					resumeID.Set(entry.ReferenceID[:])
+				}
 
 				if entry.FileName == "" { // EOD
 					treedepth--
@@ -675,7 +680,10 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 						Debug("Unable to verify %s against server", entry.FileName)
 						continue
 					}
-					entry.ReferenceID = r.session.State.StateID // self reference
+
+					if entry.ReferenceID.Compare(resumeID) == 0 {
+						entry.ReferenceID = r.session.State.StateID // self reference
+					}
 				}
 				r.pushChannelEntry(&entry)
 			}
