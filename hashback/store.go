@@ -61,6 +61,34 @@ func minorError(r interface{}) error {
 	}
 	return nil
 }
+
+func compareEntries(fileInfo os.FileInfo, new *FileEntry, old *FileEntry) bool {
+	if old.FileName != new.FileName {
+		Debug("FileName is different: %s != %s", new.FileName, old.FileName)
+		return false
+	}
+	if old.FileSize != new.FileSize {
+		Debug("FileSize is different: %d != %d", new.FileSize, old.FileSize)
+		return false
+	}
+	if isOfflineFile(fileInfo) {
+		if old.ModTime/1e9 != new.ModTime/1e9 {
+			// compare with second precision because of Dropbox Online Only files
+			Debug("ModTime is different (OFFLINE FILE): %d != %d", new.ModTime, old.ModTime)
+			return false
+		}
+	} else {
+		if old.FileMode != new.FileMode {
+			Debug("FileMode is different: %d != %d", new.FileMode, old.FileMode)
+			return false
+		}
+		if old.ModTime != new.ModTime {
+			Debug("ModTime is different: %d != %d", new.ModTime, old.ModTime)
+		}
+	}
+	return true
+}
+
 func (session *BackupSession) storeFile(path string, entry *FileEntry) (err error) {
 	defer func() {
 		// Panic error handling
@@ -216,6 +244,16 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) (id core.B
 	return
 }
 
+func (session *BackupSession) entryFromFileInfo(fileInfo os.FileInfo) *FileEntry {
+	return &FileEntry{
+		FileName:    core.String(fileInfo.Name()),
+		FileSize:    int64(fileInfo.Size()),
+		FileMode:    uint32(fileInfo.Mode()),
+		ModTime:     fileInfo.ModTime().UnixNano(),
+		ReferenceID: session.State.StateID,
+	}
+}
+
 func (session *BackupSession) storePath(path string, toplevel bool) (entry *FileEntry, err error) {
 	session.PrintStoreProgress(PROGRESS_INTERVAL_SECS)
 
@@ -231,8 +269,10 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			info, err = os.Lstat(path) // At all other levels we do not
 		}
 		if info != nil {
+			Debug("%+v", info)
 			isDir = info.IsDir() // Check ignore even if we cannot open the file (to avoid output errors on files we already ignore)
 		}
+
 		if match, pattern := session.ignoreMatch(path, isDir); match {
 			session.LogVerbose("Skipping (ignore %s) %s", pattern, path)
 			return nil, nil
@@ -242,14 +282,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		}
 	}
 
-	entry = &FileEntry{
-		FileName:    core.String(info.Name()),
-		FileSize:    int64(info.Size()),
-		FileMode:    uint32(info.Mode()),
-		ModTime:     info.ModTime().UnixNano(),
-		ReferenceID: session.State.StateID,
-	}
-
+	entry = session.entryFromFileInfo(info)
 	if entry.FileMode&uint32(os.ModeTemporary) > 0 {
 		session.LogVerbose("Skipping (temporary file) %s", path)
 		return nil, nil
@@ -273,10 +306,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		entry.FileLink = core.String(sym)
 
 		refEntry := session.reference.findReference(path)
-		if refEntry != nil && refEntry.FileLink == entry.FileLink &&
-			refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize &&
-			((refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime) ||
-				(isOfflineFile(info) && refEntry.ModTime/1e9 == entry.ModTime/1e9)) { // compare with second precision because of Dropbox Online Only files
+		if refEntry != nil && refEntry.FileLink == entry.FileLink && compareEntries(info, entry, refEntry) {
 			// It's the same!
 			entry = refEntry
 			if entry.ReferenceID.Compare(session.State.StateID) != 0 {
@@ -307,10 +337,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		session.Directories++
 	} else {
 		refEntry := session.reference.findReference(path)
-		if refEntry != nil &&
-			refEntry.FileName == entry.FileName && refEntry.FileSize == entry.FileSize &&
-			((refEntry.FileMode == entry.FileMode && refEntry.ModTime == entry.ModTime) ||
-				(isOfflineFile(info) && refEntry.ModTime/1e9 == entry.ModTime/1e9)) { // compare with second precision because of Dropbox Online Only files
+		if refEntry != nil && compareEntries(info, entry, refEntry) {
 			// It's the same!
 			entry = refEntry
 
@@ -334,6 +361,31 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 						return refEntry, e // Returning refEntry here in case this file existed and could be opened in a previous backup
 					}
 					return nil, err
+				}
+				if isOfflineFile(info) {
+					var updatedInfo os.FileInfo
+					if toplevel {
+						updatedInfo, err = os.Stat(path) // At top level we follow symbolic links
+					} else {
+						updatedInfo, err = os.Lstat(path) // At all other levels we do not
+					}
+					if updatedInfo != nil {
+						Debug("%+v", updatedInfo)
+						updated := session.entryFromFileInfo(updatedInfo)
+
+						if entry.ModTime != updated.ModTime {
+							session.LogVerbose("%s changed ModTime (%d != %d) during backup", path, updated.ModTime, entry.ModTime)
+							entry.ModTime = updated.ModTime
+						}
+						if entry.FileSize != updated.FileSize {
+							session.LogVerbose("%s changed FileSize (%d != %d) during backup", path, updated.FileSize, entry.FileSize)
+							entry.FileSize = updated.FileSize
+						}
+						if entry.FileMode != updated.FileMode {
+							session.LogVerbose("%s changed FileMode (%d != %d) during backup", path, updated.FileMode, entry.FileMode)
+							entry.FileMode = updated.FileMode
+						}
+					}
 				}
 				// TODO: UniqueSize is a here calculated by the backup routine, it should be calculated by the server?
 				session.State.UniqueSize += entry.FileSize
