@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -100,7 +101,11 @@ const (
 var LogLevel int = LogInfo
 var logMarks []string = []string{"!", "*", ".", "(", "?"}
 
+var LogMutex sync.Mutex
+
 func Log(level int, format string, a ...interface{}) {
+	LogMutex.Lock()
+	defer LogMutex.Unlock()
 	if level <= LogLevel {
 		fmt.Printf("%s %s "+format+"\n", append([]interface{}{time.Now().UTC().Format(LOGTIMEFORMAT), logMarks[level]}, a...)...)
 	}

@@ -64,26 +64,26 @@ func minorError(r interface{}) error {
 
 func compareEntries(fileInfo os.FileInfo, new *FileEntry, old *FileEntry) bool {
 	if old.FileName != new.FileName {
-		Debug("FileName is different: %s != %s", new.FileName, old.FileName)
+		core.Log(core.LogTrace, "FileName is different: %s != %s", new.FileName, old.FileName)
 		return false
 	}
 	if old.FileSize != new.FileSize {
-		Debug("FileSize is different: %d != %d", new.FileSize, old.FileSize)
+		core.Log(core.LogTrace, "FileSize is different: %d != %d", new.FileSize, old.FileSize)
 		return false
 	}
 	if isOfflineFile(fileInfo) {
 		if old.ModTime/1e9 != new.ModTime/1e9 {
 			// compare with second precision because of Dropbox Online Only files
-			Debug("ModTime is different (OFFLINE FILE): %d != %d", new.ModTime, old.ModTime)
+			core.Log(core.LogTrace, "ModTime is different (OFFLINE FILE): %d != %d", new.ModTime, old.ModTime)
 			return false
 		}
 	} else {
 		if old.FileMode != new.FileMode {
-			Debug("FileMode is different: %d != %d", new.FileMode, old.FileMode)
+			core.Log(core.LogTrace, "FileMode is different: %d != %d", new.FileMode, old.FileMode)
 			return false
 		}
 		if old.ModTime != new.ModTime {
-			Debug("ModTime is different: %d != %d", new.ModTime, old.ModTime)
+			core.Log(core.LogTrace, "ModTime is different: %d != %d", new.ModTime, old.ModTime)
 		}
 	}
 	return true
@@ -118,7 +118,7 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 	defer fileData.Release()
 
 	for offset := int64(0); offset < int64(entry.FileSize); {
-		Debug("storeFile(%s) offset %d", path, offset)
+		core.Log(core.LogTrace, "storeFile(%s) offset %d", path, offset)
 
 		session.PrintStoreProgress(PROGRESS_INTERVAL_SECS)
 
@@ -172,7 +172,7 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 			}
 		}
 
-		// Split an swap
+		// Split and swap
 		right := fileData.Split(splitPosition)
 		blockData = fileData
 		fileData = right
@@ -184,6 +184,8 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 		var datakey core.Byte128
 
 		id := session.Client.StoreData(core.BlockDataTypeZlib, blockData, nil)
+		core.Log(core.LogTrace, "split at %d, store %d bytes as %x", offset, blockData.Len(), id)
+
 		links = append(links, id)
 		chain.ChainBlocks = append(chain.ChainBlocks, id)
 		chain.DecryptKeys = append(chain.DecryptKeys, datakey)
@@ -257,7 +259,7 @@ func (session *BackupSession) entryFromFileInfo(fileInfo os.FileInfo) *FileEntry
 func (session *BackupSession) storePath(path string, toplevel bool) (entry *FileEntry, err error) {
 	session.PrintStoreProgress(PROGRESS_INTERVAL_SECS)
 
-	Debug("storePath %s", path)
+	core.Log(core.LogDebug, "storePath %s", path)
 	// Get file info from disk
 	var info os.FileInfo
 	{
@@ -269,7 +271,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			info, err = os.Lstat(path) // At all other levels we do not
 		}
 		if info != nil {
-			Debug("%+v", info)
+			core.Log(core.LogTrace, "%+v", info)
 			isDir = info.IsDir() // Check ignore even if we cannot open the file (to avoid output errors on files we already ignore)
 		}
 
@@ -370,7 +372,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 						updatedInfo, err = os.Lstat(path) // At all other levels we do not
 					}
 					if updatedInfo != nil {
-						Debug("%+v", updatedInfo)
+						core.Log(core.LogTrace, "%+v", updatedInfo)
 						updated := session.entryFromFileInfo(updatedInfo)
 
 						if entry.ModTime != updated.ModTime {
@@ -581,7 +583,7 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 			session.Log("Removing backup %s (%s)", date.Format(time.RFC3339), reason)
 			session.Client.RemoveDatasetState(datasetName, e.State.StateID)
 		} else {
-			Debug("Keeping backup %s", date.Format(time.RFC3339))
+			core.Log(core.LogDebug, "Keeping backup %s", date.Format(time.RFC3339))
 			lastbackup = timestamp
 		}
 	}
@@ -651,7 +653,7 @@ func (r *referenceEngine) pushChannelEntry(entry *FileEntry) {
 	}
 	select {
 	case <-r.stopChannel:
-		Debug("Reference loader received stop signal")
+		core.Log(core.LogDebug, "Reference loader received stop signal")
 		r.stopped = true
 		panic(errors.New("Reference loader was stopped"))
 	case r.entryChannel <- entry:
@@ -683,14 +685,14 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 		defer func() {
 			if !r.stopped {
 				if r := recover(); r != nil {
-					Debug("Non-fatal error encountered while resuming backup %s : %v", filename, r)
+					core.Log(core.LogDebug, "Non-fatal error encountered while resuming backup %s : %v", filename, r)
 				}
 			}
 		}()
 		cacheRecover, _ := os.Open(filepath.Join(LocalStoragePath, filename))
 		if cacheRecover != nil {
 			defer cacheRecover.Close()
-			Debug("Opened resume cache %s", cacheRecover.Name())
+			core.Log(core.LogDebug, "Opened resume cache %s", cacheRecover.Name())
 
 			info, err := cacheRecover.Stat()
 			PanicOn(err)
@@ -701,7 +703,7 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 			var resumeID core.Byte128
 			for offset := int64(0); offset < cacheSize; {
 				var entry FileEntry
-				Debug("Read cache entry at %x", offset)
+				core.Log(core.LogTrace, "Read cache entry at %x", offset)
 				offset += int64(entry.Unserialize(reader))
 				if resumeID.Compare(entry.ReferenceID) < 0 {
 					// We're guessing the resume referenceID just to make changedFiles count a little better
@@ -719,17 +721,17 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 						if skipcheck > 0 {
 							skipcheck++
 						} else if r.session.Client.VerifyBlock(entry.ContentBlockID) {
-							Debug("Cache entry for %s verified against server", entry.FileName)
+							core.Log(core.LogTrace, "Cache entry for %s verified against server", entry.FileName)
 							skipcheck = 1
 						}
 					} else if skipcheck > 0 {
-						Debug("Skipping cache verification for %s as parent is already verified", entry.FileName)
+						core.Log(core.LogTrace, "Skipping cache verification for %s as parent is already verified", entry.FileName)
 					} else if !entry.HasContentBlockID() {
-						Debug("Cache entry for %s has no content to verify", entry.FileName)
+						core.Log(core.LogTrace, "Cache entry for %s has no content to verify", entry.FileName)
 					} else if r.session.Client.VerifyBlock(entry.ContentBlockID) {
-						Debug("Cache entry for %s verified against server", entry.FileName)
+						core.Log(core.LogTrace, "Cache entry for %s verified against server", entry.FileName)
 					} else {
-						Debug("Unable to verify %s against server", entry.FileName)
+						core.Log(core.LogTrace, "Unable to verify %s against server", entry.FileName)
 						continue
 					}
 
@@ -753,15 +755,15 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 	defer func() {
 		if err := recover(); err != nil {
 			if r.stopped {
-				Debug("Reference loader stopped gracefully")
+				core.Log(core.LogDebug, "Reference loader stopped gracefully")
 			} else {
-				Debug("Error: Panic raised in reference loader process (%v)", err)
+				core.Log(core.LogDebug, "Error: Panic raised in reference loader process (%v)", err)
 
 				select {
 				case r.errorChannel <- fmt.Errorf("Panic raised in reference loader process (%v)", err):
-					Debug("Reference loader sent error on error channel")
+					core.Log(core.LogDebug, "Reference loader sent error on error channel")
 				default:
-					Debug("Reference loader error channel buffer is full, no message sent")
+					core.Log(core.LogDebug, "Reference loader error channel buffer is full, no message sent")
 				}
 			}
 		}
@@ -798,7 +800,7 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 		cacheLast, _ := os.Open(r.cacheFilePathName(*rootBlockID))
 		if cacheLast != nil {
 			defer cacheLast.Close()
-			Debug("Opened local cache %s", cacheLast.Name())
+			core.Log(core.LogDebug, "Opened local cache %s", cacheLast.Name())
 
 			info, err := cacheLast.Stat()
 			PanicOn(err)
@@ -806,12 +808,12 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 			reader := bufio.NewReader(cacheLast)
 			for offset := int64(0); offset < cacheSize; {
 				var entry FileEntry
-				Debug("Read cache entry at %x", offset)
+				core.Log(core.LogTrace, "Read cache entry at %x", offset)
 				offset += int64(entry.Unserialize(reader))
 				r.pushChannelEntry(&entry)
 			}
 		} else {
-			Debug("Downloading block %x to local cache", rootBlockID)
+			core.Log(core.LogTrace, "Downloading block %x to local cache", rootBlockID)
 			r.downloadReference(*rootBlockID)
 		}
 	}
@@ -876,13 +878,13 @@ func (r *referenceEngine) findReference(path string) *FileEntry {
 	for {
 		p := r.peekPath()
 		if pathLess(p, path) && r.popReference() != nil {
-			Debug("Reference %s < %s, roll forward", p, path)
+			core.Log(core.LogTrace, "Reference %s < %s, roll forward", p, path)
 			continue
 		} else if p == path {
-			Debug("Reference %s == %s", p, path)
+			core.Log(core.LogTrace, "Reference %s == %s", p, path)
 			return r.popReference()
 		} else {
-			Debug("Reference %s > %s", p, path)
+			core.Log(core.LogTrace, "Reference %s > %s", p, path)
 			break
 		}
 	}
@@ -963,7 +965,7 @@ func (r *referenceEngine) Close() {
 			}
 		})()
 
-		Debug("Saving %s as recovery cache %s", currentName, partialName)
+		core.Log(core.LogDebug, "Saving %s as recovery cache %s", currentName, partialName)
 		os.Rename(currentName, partialName)
 	}
 }

@@ -36,7 +36,7 @@ const PROGRESS_INTERVAL_SECS = 10 * time.Second
 const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MiB max blocksize
 const MIN_BLOCK_SIZE int = 64 * 1024       // 64kb minimum blocksize (before splitting it)
 
-var SendingQueueSize int64 = 48 * 1024 * 1024 // 48 MiB max memory (will use up to CPU*MAX_BLOCK_SIZE more when compressing)
+var SendingQueueSize int64 = 48 * 1024 * 1024 // Try to keep queue to 48 MiB (can use more for directory blocks and will use up to an additional CPU*MAX_BLOCK_SIZE when compressing)
 
 // DefaultIgnoreList populated by init() function from each platform
 var DefaultIgnoreList []string
@@ -52,14 +52,6 @@ var DEBUG bool = false
 func PanicOn(err error) {
 	if err != nil {
 		panic(err)
-	}
-}
-
-func Debug(format string, a ...interface{}) {
-	if DEBUG {
-		fmt.Print("DEBUG: ")
-		fmt.Printf(format, a...)
-		fmt.Println()
 	}
 }
 
@@ -281,7 +273,7 @@ func (session *BackupSession) Connect() *core.Client {
 	// fmt.Printf("%x\n", *session.AccessKey)
 	// fmt.Printf("%x\n", *session.BackupKey)
 
-	Debug("Connecting to %s", session.ServerString)
+	core.Log(core.LogTrace, "Connecting to %s", session.ServerString)
 	client := core.NewClient(session.ServerString, session.User, *session.AccessKey)
 	client.QueueMax = SendingQueueSize
 	client.EnablePaint = session.Paint
@@ -298,7 +290,7 @@ func (session *BackupSession) Close(polite bool) {
 		session.Client = nil
 	}
 
-	Debug("Disconnected from %s", session.ServerString)
+	core.Log(core.LogTrace, "Disconnected from %s", session.ServerString)
 }
 
 func (session *BackupSession) Log(format string, a ...interface{}) {
@@ -388,6 +380,7 @@ func main() {
 			go func() {
 				core.Log(core.LogInfo, "%v", http.ListenAndServe(":6060", nil))
 			}()
+			core.LogLevel = core.LogTrace
 		}
 	})
 

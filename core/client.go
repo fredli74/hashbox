@@ -467,15 +467,13 @@ func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 		if c.closing {
 			c.dispatchMutex.Unlock()
 			panic(errors.New("Connection closed"))
-		} else if c.blockqueuesize+bytearray.ChunkQuantize(int64(block.UncompressedSize))*2 < c.QueueMax {
-			if c.blockbuffer[block.BlockID] == nil {
-				c.blockbuffer[block.BlockID] = block
-				c.blockqueuesize += bytearray.ChunkQuantize(int64(block.UncompressedSize))
-			} else {
-				block.Release()
-				c.dispatchMutex.Unlock()
-				return block.BlockID
-			}
+		} else if c.blockbuffer[block.BlockID] != nil {
+			block.Release()
+			c.dispatchMutex.Unlock()
+			return block.BlockID
+		} else if c.blockqueuesize == 0 || c.blockqueuesize+bytearray.ChunkQuantize(int64(block.UncompressedSize))*2 < c.QueueMax {
+			c.blockbuffer[block.BlockID] = block
+			c.blockqueuesize += bytearray.ChunkQuantize(int64(block.UncompressedSize))
 			full = false
 		}
 		c.dispatchMutex.Unlock()
