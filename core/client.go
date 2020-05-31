@@ -48,7 +48,8 @@ type Client struct {
 	wg          sync.WaitGroup
 	EnablePaint bool
 
-	QueueMax int64 // max size of the outgoing block queue (in bytes)
+	QueueMax  int64 // max size of the outgoing block queue (in bytes)
+	ThreadMax int32 // maximum number of goroutines started by send queue (defaults to runtime.NumCPU)
 
 	sendMutex sync.Mutex // protects from two threads sending at the same time
 
@@ -76,7 +77,8 @@ func NewClient(address string, account string, accesskey Byte128) *Client {
 		},
 		blockbuffer: make(map[Byte128]*HashboxBlock),
 
-		QueueMax: DEFAULT_QUEUE_SIZE,
+		QueueMax:  DEFAULT_QUEUE_SIZE,
+		ThreadMax: int32(runtime.NumCPU()),
 
 		dispatchChannel: make(chan *messageDispatch, 1024),
 		storeChannel:    make(chan *messageDispatch, 1),
@@ -133,7 +135,7 @@ func (c *Client) sendQueue(what Byte128) {
 		c.sendqueue = append(c.sendqueue, &sendQueueEntry{0, block})
 		//		fmt.Printf("+q=%d;", len(c.sendqueue))
 
-		if c.sendworkers < int32(runtime.NumCPU()) {
+		if c.sendworkers < 1 || c.sendworkers < c.ThreadMax {
 			atomic.AddInt32(&c.sendworkers, 1)
 			go func() {
 				defer func() { // a panic was raised inside the goroutine (most likely the channel was closed)

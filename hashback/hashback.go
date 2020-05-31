@@ -37,6 +37,7 @@ const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MiB max blocksize
 const MIN_BLOCK_SIZE int = 64 * 1024       // 64kb minimum blocksize (before splitting it)
 
 var SendingQueueSize int64 = 48 * 1024 * 1024 // Try to keep queue to 48 MiB (can use more for directory blocks and will use up to an additional CPU*MAX_BLOCK_SIZE when compressing)
+var SendingQueueThreads int32 = 0
 
 // DefaultIgnoreList populated by init() function from each platform
 var DefaultIgnoreList []string
@@ -276,6 +277,9 @@ func (session *BackupSession) Connect() *core.Client {
 	core.Log(core.LogTrace, "Connecting to %s", session.ServerString)
 	client := core.NewClient(session.ServerString, session.User, *session.AccessKey)
 	client.QueueMax = SendingQueueSize
+	if SendingQueueThreads > 0 {
+		client.ThreadMax = SendingQueueThreads
+	}
 	client.EnablePaint = session.Paint
 	session.Client = client
 	return session.Client
@@ -387,6 +391,10 @@ func main() {
 	var queueSizeMB int64
 	cmd.IntOption("queuesize", "", "<MiB>", "Change sending queue size", &queueSizeMB, cmd.Hidden|cmd.Preference).OnChange(func() {
 		SendingQueueSize = queueSizeMB * 1024 * 1024
+	})
+	var threadCount int64
+	cmd.IntOption("threads", "", "<num>", "Change sending queue max threads", &threadCount, cmd.Hidden|cmd.Preference).OnChange(func() {
+		SendingQueueThreads = int32(threadCount)
 	})
 
 	cmd.StringOption("user", "", "<username>", "Username", &session.User, cmd.Preference|cmd.Required)
