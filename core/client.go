@@ -78,7 +78,7 @@ func NewClient(address string, account string, accesskey Byte128) *Client {
 		blockbuffer: make(map[Byte128]*HashboxBlock),
 
 		QueueMax:  DEFAULT_QUEUE_SIZE,
-		ThreadMax: int32(runtime.NumCPU()),
+		ThreadMax: int32(runtime.NumCPU() / 2),
 
 		dispatchChannel: make(chan *messageDispatch, 1024),
 		storeChannel:    make(chan *messageDispatch, 1),
