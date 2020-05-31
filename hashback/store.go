@@ -84,6 +84,7 @@ func compareEntries(fileInfo os.FileInfo, new *FileEntry, old *FileEntry) bool {
 		}
 		if old.ModTime != new.ModTime {
 			core.Log(core.LogTrace, "ModTime is different: %d != %d", new.ModTime, old.ModTime)
+			return false
 		}
 	}
 	return true
@@ -892,38 +893,36 @@ func (r *referenceEngine) findReference(path string) *FileEntry {
 }
 
 func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
-	if r.cacheCurrent != nil {
-		l, err := r.cacheCurrent.Seek(0, os.SEEK_CUR)
-		PanicOn(err)
-		entry.Serialize(r.cacheCurrent)
-		return l
+	if r.cacheCurrent == nil {
+		panic(errors.New("ASSERT, cacheCurrent == nil on reserveReference in an active referenceEngine"))
 	}
-	panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
+	l, err := r.cacheCurrent.Seek(0, os.SEEK_CUR)
+	PanicOn(err)
+	entry.Serialize(r.cacheCurrent)
+	return l
 }
 
 func (r *referenceEngine) storeReference(entry *FileEntry) {
-	if r.cacheCurrent != nil {
-		entry.Serialize(r.cacheCurrent)
-	} else {
-		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
+	if r.cacheCurrent == nil {
+		panic(errors.New("ASSERT, cacheCurrent == nil on storeReference in an active referenceEngine"))
 	}
+	entry.Serialize(r.cacheCurrent)
 }
 
 func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
-	if r.cacheCurrent != nil {
-		r.cacheCurrent.Seek(location, os.SEEK_SET)
-		entry.Serialize(r.cacheCurrent)
-
-		r.cacheCurrent.Seek(0, os.SEEK_END)
-		entryEOD.Serialize(r.cacheCurrent)
-	} else {
-		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
+	if r.cacheCurrent == nil {
+		panic(errors.New("ASSERT, cacheCurrent == nil on storeReferenceDir in an active referenceEngine"))
 	}
+	r.cacheCurrent.Seek(location, os.SEEK_SET)
+	entry.Serialize(r.cacheCurrent)
+
+	r.cacheCurrent.Seek(0, os.SEEK_END)
+	entryEOD.Serialize(r.cacheCurrent)
 }
 
 func (r *referenceEngine) Commit(rootID core.Byte128) {
 	if r.cacheCurrent == nil {
-		panic(errors.New("ASSERT, cacheCurrent == nil in an active referenceEngine"))
+		panic(errors.New("ASSERT, cacheCurrent == nil on commit in an active referenceEngine"))
 	}
 
 	tempPath := r.cacheCurrent.Name()
