@@ -364,17 +364,12 @@ func (c *Client) ioHandler() {
 				return
 			}
 			c.retryingExchange(outgoing)
-		default:
-			select {
-			case outgoing, ok := <-c.dispatchChannel:
-				if !ok {
-					// Channel is closed
-					return
-				}
-				c.retryingExchange(outgoing)
-			default:
-				continue
+		case outgoing, ok := <-c.dispatchChannel:
+			if !ok {
+				// Channel is closed
+				return
 			}
+			c.retryingExchange(outgoing)
 		}
 	}
 }
