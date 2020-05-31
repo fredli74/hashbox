@@ -490,6 +490,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		}
 	} else {
 		session.Log("Starting full backup.")
+		session.reference.start(nil)
 	}
 
 	if virtualRootDir != nil {
