@@ -112,9 +112,6 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 	}
 	defer file.Close()
 
-	var maxSum rollsum.Rollsum
-	maxSum.Init()
-
 	var fileData bytearray.ByteArray
 	defer fileData.Release()
 
@@ -137,14 +134,16 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 
 		var splitPosition int = fileData.Len()
 		if fileData.Len() > MIN_BLOCK_SIZE*2 { // Candidate for rolling sum split
+			var rollSum rollsum.Rollsum
+			rollSum.Init()
+			var maxd = uint32(0)
+
 			rollIn, rollOut := fileData, fileData // Shallow copy the file data
 			rollInBase, rollOutBase := 0, 0
 			rollInPos, rollOutPos := 0, 0
 			rollInSlice, _ := rollIn.ReadSlice()
 			rollOutSlice, _ := rollOut.ReadSlice()
 
-			partSum := maxSum
-			var maxd = uint32(0)
 			for rollInPos < fileData.Len() {
 				if rollInPos-rollInBase >= len(rollInSlice) { // Next slice please
 					rollInBase, _ = rollIn.ReadSeek(len(rollInSlice), os.SEEK_CUR)
@@ -156,18 +155,17 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 				}
 
 				if rollInPos >= MIN_BLOCK_SIZE {
-					partSum.Rollout(rollOutSlice[rollOutPos-rollOutBase])
+					rollSum.Rollout(rollOutSlice[rollOutPos-rollOutBase])
 					rollOutPos++
 				}
-				partSum.Rollin(rollInSlice[rollInPos-rollInBase])
+				rollSum.Rollin(rollInSlice[rollInPos-rollInBase])
 				rollInPos++
 
 				if rollInPos >= MIN_BLOCK_SIZE {
-					d := partSum.Digest()
+					d := rollSum.Digest()
 					if d >= maxd {
 						maxd = d
 						splitPosition = rollInPos
-						maxSum = partSum // Keep the sum so we can continue from here
 					}
 				}
 			}
