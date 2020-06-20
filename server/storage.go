@@ -320,7 +320,7 @@ type storageMetaEntry struct {
 	datamarker uint32          // = storageDataMarker, used to find / align blocks in case of recovery
 	blockID    core.Byte128    // 16 bytes
 	location   sixByteLocation // 6 bytes
-	dataSize   uint32          // Size of hashboxBlock Data
+	blockSize  uint32          // Size of hashboxBlock
 	links      []core.Byte128  // Array of BlockIDs
 }
 
@@ -332,7 +332,7 @@ func (e *storageMetaEntry) Serialize(w io.Writer) (size int) {
 	size += core.WriteUint32(w, storageDataMarker)
 	size += e.blockID.Serialize(w)
 	size += e.location.Serialize(w)
-	size += core.WriteUint32(w, e.dataSize)
+	size += core.WriteUint32(w, e.blockSize)
 	size += core.WriteUint32(w, uint32(len(e.links)))
 	for i := range e.links {
 		size += e.links[i].Serialize(w)
@@ -346,7 +346,7 @@ func (e *storageMetaEntry) Unserialize(r io.Reader) (size int) {
 	}
 	size += e.blockID.Unserialize(r)
 	size += e.location.Unserialize(r)
-	size += core.ReadUint32(r, &e.dataSize)
+	size += core.ReadUint32(r, &e.blockSize)
 	var n uint32
 	size += core.ReadUint32(r, &n)
 	e.links = make([]core.Byte128, n)
@@ -619,8 +619,8 @@ func (handler *StorageHandler) killMetaEntry(blockID core.Byte128, metaFileNumbe
 		size += int64(entrySize)
 
 		dataFileNumber, _ := entry.location.Get()
-		handler.setDeadSpace(storageFileTypeData, dataFileNumber, int64(entry.dataSize), true)
-		size += int64(entry.dataSize)
+		handler.setDeadSpace(storageFileTypeData, dataFileNumber, int64(entry.blockSize), true)
+		size += int64(entry.blockSize)
 	} else {
 		abort("Incorrect block %x (should be %x) read on metadata location %x:%x", entry.blockID[:], blockID[:], metaFileNumber, metaOffset)
 	}
@@ -685,7 +685,7 @@ func (handler *StorageHandler) writeBlockFile(block *core.HashboxBlock) bool {
 	// flush notice: manually flush datFile before creating the meta entry
 	datFile.Sync()
 
-	metaEntry := storageMetaEntry{blockID: block.BlockID, dataSize: uint32(block.Data.Len()), links: block.Links}
+	metaEntry := storageMetaEntry{blockID: block.BlockID, blockSize: uint32(data.Len()), links: block.Links}
 	metaEntry.location.Set(datFileNumber, datOffset)
 	// flush notice: writeMetaEntry always flushes meta file
 	metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
@@ -1323,6 +1323,9 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 					break
 				}
 			}
+
+			blockSize := offset - blockOffset
+
 			if blockOffset > storageOffsetLimit {
 				core.Log(core.LogError, "Offset %x for block %x is beyond offset limit, forcing a move", blockOffset, dataEntry.block.BlockID[:])
 				brokenSpot = blockOffset
@@ -1331,10 +1334,10 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 				// Cannot fit a Cgap marker, so we need to move the block
 				moveFileNum, moveOffset, moveFile := handler.findFreeOffset(storageFileTypeData, -1)
 				core.Log(core.LogDebug, "Rewriting block %x at (%x:%x)", dataEntry.block.BlockID[:], moveFileNum, moveOffset)
-				dataEntry.Serialize(moveFile.Writer)
+				moveSize := dataEntry.Serialize(moveFile.Writer)
 
 				core.Log(core.LogTrace, "Creating new meta for block %x", dataEntry.block.BlockID[:])
-				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: uint32(dataEntry.block.Data.Len()), links: dataEntry.block.Links}
+				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, blockSize: uint32(moveSize), links: dataEntry.block.Links}
 				metaEntry.location.Set(moveFileNum, moveOffset)
 				// flush notice: force flush before writing meta entry
 				moveFile.Sync()
@@ -1375,8 +1378,8 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 						core.Log(core.LogWarning, "Metadata cache location error for block %x (%x:%x != %x:%x)", dataEntry.block.BlockID[:], f, o, datFileNumber, blockOffset)
 						rewriteIX = true
 					}
-					if int(metaEntry.dataSize) != dataEntry.block.Data.Len() {
-						core.Log(core.LogWarning, "Metadata cache size error for block %x (%x != %x)", dataEntry.block.BlockID[:], metaEntry.dataSize, dataEntry.block.Data.Len())
+					if int64(metaEntry.blockSize) != blockSize {
+						core.Log(core.LogWarning, "Metadata cache size error for block %x (%x != %x)", dataEntry.block.BlockID[:], metaEntry.blockSize, blockSize)
 						rewriteIX = true
 					}
 					linksOk := true
@@ -1413,7 +1416,7 @@ func (handler *StorageHandler) RecoverData(startfile int32, endfile int32) (repa
 				core.Log(core.LogTrace, "Block %x (%x:%x) verified", dataEntry.block.BlockID[:], datFileNumber, blockOffset)
 			} else {
 				core.Log(core.LogTrace, "REPAIRING meta for block %x", dataEntry.block.BlockID[:])
-				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: uint32(dataEntry.block.Data.Len()), links: dataEntry.block.Links}
+				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, blockSize: uint32(blockSize), links: dataEntry.block.Links}
 				metaEntry.location.Set(datFileNumber, blockOffset)
 				metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
 

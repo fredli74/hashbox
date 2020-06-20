@@ -8,13 +8,14 @@ package main
 import (
 	"crypto/md5"
 	"encoding/base64"
-	"github.com/fredli74/hashbox/core"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/fredli74/hashbox/core"
 )
 
 type AccountInfo struct {
@@ -50,11 +51,11 @@ type AccountHandler struct {
 }
 
 const (
-	accounthandler_setinfo = iota
-	accounthandler_getinfo
-	accounthandler_listset
-	accounthandler_addset
-	accounthandler_removeset
+	accounthandlerSetinfo = iota
+	accounthandlerGetinfo
+	accounthandlerListset
+	accounthandlerAddset
+	accounthandlerRemoveset
 )
 
 func (handler *AccountHandler) dispatcher() {
@@ -80,22 +81,22 @@ func (handler *AccountHandler) dispatcher() {
 			func() {
 				defer close(q.result) // Always close the result channel after returning
 				switch q.query {
-				case accounthandler_getinfo:
+				case accounthandlerGetinfo:
 					accountNameH := q.data.(core.Byte128)
 					q.result <- readInfoFile(accountNameH)
 
-				case accounthandler_setinfo:
+				case accounthandlerSetinfo:
 					accountInfo := q.data.(AccountInfo)
 					accountNameH := core.Hash([]byte(accountInfo.AccountName))
 
 					writeInfoFile(accountNameH, accountInfo)
 					q.result <- true
 
-				case accounthandler_listset:
+				case accounthandlerListset:
 					list := q.data.(queryListDataset)
 					q.result <- readDBFile(list.AccountNameH, list.DatasetName)
 
-				case accounthandler_addset:
+				case accounthandlerAddset:
 					add := q.data.(queryAddDatasetState)
 
 					result := appendDatasetTx(add.AccountNameH, add.DatasetName, dbTx{timestamp: time.Now().UnixNano(), txType: dbTxTypeAdd, data: add.State})
@@ -120,7 +121,7 @@ func (handler *AccountHandler) dispatcher() {
 
 					q.result <- result
 
-				case accounthandler_removeset:
+				case accounthandlerRemoveset:
 					del := q.data.(queryRemoveDatasetState)
 
 					result := appendDatasetTx(del.AccountNameH, del.DatasetName, dbTx{timestamp: time.Now().UnixNano(), txType: dbTxTypeDel, data: del.StateID})
@@ -178,12 +179,12 @@ func (handler *AccountHandler) doCommand(q ChannelQuery) interface{} {
 }
 
 func (handler *AccountHandler) ListDataset(a core.Byte128, set core.String) *dbStateCollection {
-	q := ChannelQuery{accounthandler_listset, queryListDataset{a, set}, make(chan interface{}, 1)}
+	q := ChannelQuery{accounthandlerListset, queryListDataset{a, set}, make(chan interface{}, 1)}
 	return handler.doCommand(q).(*dbStateCollection)
 }
 
 func (handler *AccountHandler) AddDatasetState(a core.Byte128, set core.String, state core.DatasetState) error {
-	q := ChannelQuery{accounthandler_addset, queryAddDatasetState{a, set, state}, make(chan interface{}, 1)}
+	q := ChannelQuery{accounthandlerAddset, queryAddDatasetState{a, set, state}, make(chan interface{}, 1)}
 	r := handler.doCommand(q)
 	if r != nil {
 		return r.(error)
@@ -191,7 +192,7 @@ func (handler *AccountHandler) AddDatasetState(a core.Byte128, set core.String, 
 	return nil
 }
 func (handler *AccountHandler) RemoveDatasetState(a core.Byte128, set core.String, stateID core.Byte128) error {
-	q := ChannelQuery{accounthandler_removeset, queryRemoveDatasetState{a, set, stateID}, make(chan interface{}, 1)}
+	q := ChannelQuery{accounthandlerRemoveset, queryRemoveDatasetState{a, set, stateID}, make(chan interface{}, 1)}
 	r := handler.doCommand(q)
 	if r != nil {
 		return r.(error)
@@ -199,12 +200,12 @@ func (handler *AccountHandler) RemoveDatasetState(a core.Byte128, set core.Strin
 	return nil
 }
 func (handler *AccountHandler) GetInfo(a core.Byte128) *AccountInfo {
-	q := ChannelQuery{accounthandler_getinfo, a, make(chan interface{}, 1)}
+	q := ChannelQuery{accounthandlerGetinfo, a, make(chan interface{}, 1)}
 	return handler.doCommand(q).(*AccountInfo)
 	// ToDO: test this with a read-error
 }
 func (handler *AccountHandler) SetInfo(a AccountInfo) bool {
-	q := ChannelQuery{accounthandler_setinfo, a, make(chan interface{}, 1)}
+	q := ChannelQuery{accounthandlerSetinfo, a, make(chan interface{}, 1)}
 	return handler.doCommand(q).(bool)
 	// ToDO: test this with a write-error
 }
