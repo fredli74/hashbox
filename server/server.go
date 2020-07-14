@@ -208,7 +208,7 @@ func handleConnection(conn net.Conn) {
 							for _, l := range c.Block.Links {
 								if !storageHandler.doesBlockExist(l) {
 									reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-									reply.Data = &core.MsgServerError{ErrorMessage: "Linked to non existant block"}
+									reply.Data = &core.MsgServerError{ErrorMessage: "Linked to non existent block"}
 									break
 								}
 							}
