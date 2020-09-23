@@ -991,7 +991,7 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 
 	var lastProgress = -1
 	deleted, moved := int64(0), int64(0)
-	offset, writeOffset := int64(storageFileHeaderSize), int64(storageFileHeaderSize)
+	offset, highWaterMark := int64(storageFileHeaderSize), int64(storageFileHeaderSize)
 	for offset < fileSize {
 		// Check if there is a Cgap marker here and in that case, jump ahead of it
 		skip := skipDataGap(reader)
@@ -1014,12 +1014,13 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 		} else {
 			// Keep the block
 			freeFileNum, freeOffset, freeFile := handler.findFreeOffset(fileType, fileNumber)
-			if freeFileNum >= fileNumber && readOffset == writeOffset { // No space in earlier file let it be if possible
-				writeOffset += int64(entrySize)
-				core.Log(core.LogTrace, "No need to write, moving writeOffset to %x", writeOffset)
+			if freeFileNum >= fileNumber && readOffset == highWaterMark { // No space in earlier file, block is where it belongs
+				highWaterMark = offset
+				core.Log(core.LogTrace, "No need to write, moving highWaterMark to %x", highWaterMark)
 			} else if free, _ := core.FreeSpace(datDirectory); free < int64(entrySize)+MINIMUM_DAT_FREE {
-				writeOffset = offset // make sure we point the writer pointer after this block so we do not overwrite it
+				highWaterMark = fileSize // we ran out of space, skip the rest
 				core.Log(core.LogWarning, "Unable to move block %x (%d bytes) because there is not enough free space on data path", entryBlockID[:], entrySize)
+				break
 			} else { // found space in a different file, move the block
 				written := int64(entry.Serialize(freeFile.Writer))
 				ASSERT(written == int64(entrySize))
@@ -1058,10 +1059,12 @@ func (handler *StorageHandler) CompactFile(fileType int, fileNumber int32) int64
 		handler.SyncAll()
 	}
 
-	file.Writer.File.Truncate(writeOffset)
-	handler.setDeadSpace(fileType, fileNumber, 0, false)
+	if highWaterMark < fileSize {
+		file.Writer.File.Truncate(highWaterMark)
+		handler.setDeadSpace(fileType, fileNumber, 0, false)
+	}
 
-	core.Log(core.LogInfo, "Removed %s (%s deleted, %s moved) from file %s (size %s)", core.HumanSize(offset-writeOffset), core.HumanSize(deleted), core.HumanSize(moved), file.Path, core.HumanSize(writeOffset))
+	core.Log(core.LogInfo, "Removed %s (%s deleted, %s moved) from file %s (size %s)", core.HumanSize(offset-highWaterMark), core.HumanSize(deleted), core.HumanSize(moved), file.Path, core.HumanSize(highWaterMark))
 	return deleted
 }
 func (handler *StorageHandler) CompactAll(fileType int, threshold int) {
