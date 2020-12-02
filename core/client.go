@@ -105,7 +105,13 @@ func (c *Client) Paint(what string) {
 
 func (c *Client) Close(polite bool) {
 	if polite {
-		c.dispatchAndWait(MsgTypeGoodbye, nil)
+		func() {
+			defer func() {
+				r := recover();
+				Log(LogDebug, "Error sending Goodbye message to server (%v)", r)
+			}()
+			c.dispatchAndWait(MsgTypeGoodbye, nil)
+		}()
 	}
 
 	c.dispatchMutex.Lock()

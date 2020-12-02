@@ -762,6 +762,7 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 				select {
 				case r.errorChannel <- fmt.Errorf("Panic raised in reference loader process (%v)", err):
 					core.Log(core.LogDebug, "Reference loader sent error on error channel")
+					r.stopped = true
 				default:
 					core.Log(core.LogDebug, "Reference loader error channel buffer is full, no message sent")
 				}
@@ -822,6 +823,9 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 
 func (r *referenceEngine) popChannelEntry() *FileEntry {
 	select {
+	case e := <-r.errorChannel:
+		core.Log(core.LogError, "Reference loader encountered an error")
+		panic(e)
 	case e := <-r.entryChannel:
 		return e
 	}
@@ -838,7 +842,7 @@ func (r *referenceEngine) popReference() *FileEntry {
 	if e != nil {
 		if e.ContentType == ContentTypeDirectory {
 			r.path = append(r.path, string(e.FileName))
-		} else if string(e.FileName) == "" { // EOD
+		} else if string(e.FileName) == "" && len(r.path) > 0 { // EOD
 			r.path = r.path[:len(r.path)-1]
 		}
 	}
