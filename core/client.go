@@ -61,10 +61,10 @@ type Client struct {
 
 	sendqueue []*sendQueueEntry
 
-	handlerErrorSignal chan error
-
-	dispatchChannel chan *messageDispatch
-	storeChannel    chan *messageDispatch
+	dispatchChannel chan *messageDispatch // input to goroutine; buffered list of outgoing messages to dispatch
+	storeChannel    chan *messageDispatch // input to goroutine; next block in queue to store
+	errorChannel    chan error            // output from goroutine; ioHandler encountered an error
+	lastError       error                 // last error encountered
 }
 
 func NewClient(address string, account string, accesskey Byte128) *Client {
@@ -87,7 +87,7 @@ func NewClient(address string, account string, accesskey Byte128) *Client {
 	if address != "" {
 		client.Connect()
 	}
-	client.handlerErrorSignal = make(chan error, 1)
+	client.errorChannel = make(chan error, 1)
 	client.wg.Add(1)
 	go client.ioHandler()
 
@@ -104,18 +104,21 @@ func (c *Client) Paint(what string) {
 }
 
 func (c *Client) Close(polite bool) {
-	if polite {
-		func() {
-			defer func() {
-				r := recover();
-				Log(LogDebug, "Error sending Goodbye message to server (%v)", r)
-			}()
-			c.dispatchAndWait(MsgTypeGoodbye, nil)
-		}()
-	}
-
 	c.dispatchMutex.Lock()
 	if !c.closing {
+		if polite {
+			c.dispatchMutex.Unlock()
+			func() {
+				defer func() {
+					r := recover()
+					if r != nil {
+						Log(LogDebug, "Error sending Goodbye message to server (%v)", r)
+					}
+				}()
+				c.dispatchAndWait(MsgTypeGoodbye, nil)
+			}()
+			c.dispatchMutex.Lock()
+		}
 		c.closing = true
 		close(c.dispatchChannel)
 		close(c.storeChannel)
@@ -146,12 +149,14 @@ func (c *Client) sendQueue(what Byte128) {
 			go func() {
 				defer func() { // a panic was raised inside the goroutine (most likely the channel was closed)
 					if r := recover(); !c.closing && r != nil {
-						err, _ := <-c.handlerErrorSignal
+						if c.lastError != nil {
+							panic(c.lastError)
+						}
+						err, _ := <-c.errorChannel
 						if err != nil {
 							panic(err)
-						} else {
-							panic(r)
 						}
+						panic(r)
 					}
 				}()
 
@@ -356,8 +361,9 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 func (c *Client) ioHandler() {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised inside the goroutine
-			c.handlerErrorSignal <- r.(error)
-			close(c.handlerErrorSignal)
+			c.lastError = r.(error)
+			c.errorChannel <- r.(error)
+			close(c.errorChannel) // close it to trigger everyone to stop
 		}
 		c.wg.Done()
 	}()
@@ -384,17 +390,26 @@ func (c *Client) ioHandler() {
 func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChannel chan interface{}) {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised (most likely the channel was closed)
-			err, _ := <-c.handlerErrorSignal
-			if err != nil {
-				panic(err)
-			} else {
-				panic(r)
+			if c.lastError != nil {
+				panic(c.lastError)
 			}
+			panic(r)
 		}
 	}()
 
 	if !c.closing {
-		c.dispatchChannel <- &messageDispatch{msg: &ProtocolMessage{Type: msgType, Data: msgData}, returnChannel: returnChannel}
+		select {
+		case c.dispatchChannel <- &messageDispatch{msg: &ProtocolMessage{Type: msgType, Data: msgData}, returnChannel: returnChannel}:
+			return
+		case err, _ := <-c.errorChannel:
+			if c.lastError != nil {
+				panic(c.lastError)
+			}
+			if err != nil {
+				panic(err)
+			}
+			panic("Why did we end up here?")
+		}
 	} else {
 		if returnChannel != nil {
 			close(returnChannel)
@@ -420,7 +435,10 @@ func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{
 				return t.Data
 			}
 		}
-	case err := <-c.handlerErrorSignal:
+	case err := <-c.errorChannel:
+		if c.lastError != nil {
+			panic(c.lastError)
+		}
 		if err != nil {
 			panic(err)
 		}
