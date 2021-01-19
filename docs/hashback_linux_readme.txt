@@ -1,6 +1,9 @@
 #
 # Setup hashback client on linux
 #
+# This script requires curl and unzip
+# `sudo apt-get install curl unzip`
+#
 
 platform=linux-amd64
 
