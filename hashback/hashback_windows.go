@@ -1,9 +1,9 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2018
+//	| # | |    Copyright 2015-2024
 //	+---+´
 
-// +build windows
+//go:build windows
 
 package main
 
@@ -66,7 +66,6 @@ func userHomeFolder() string {
 }
 
 // Special detection for Dropbox Smart Sync placeholder files
-// compare with second precision because of Dropbox Online Only files
 const FILE_ATTRIBUTE_OFFLINE = 0x1000
 
 func isOfflineFile(fileInfo os.FileInfo) bool {

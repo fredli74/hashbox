@@ -1,9 +1,9 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2018
+//	| # | |    Copyright 2015-2024
 //	+---+´
 
-// +build windows
+//go:build windows
 
 package core
 

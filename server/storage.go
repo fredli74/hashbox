@@ -1,6 +1,6 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2018
+//	| # | |    Copyright 2015-2024
 //	+---+´
 
 package main
@@ -19,9 +19,9 @@ import (
 	"time"
 )
 
-//********************************************************************************//
-//                                 StorageHandler                                 //
-//********************************************************************************//
+//***********************************************************************//
+//                         StorageHandler                                //
+//***********************************************************************//
 
 type ChannelCommand struct {
 	command int
@@ -182,11 +182,9 @@ func (handler *StorageHandler) checkFree(size int64) bool {
 	return true
 }
 
-//********************************************************************************//
-//                                                                                //
-//                      Storage database handling                                 //
-//                                                                                //
-//********************************************************************************//
+//***********************************************************************//
+//                       Storage database handling                       //
+//***********************************************************************//
 
 type _storageFileTypeInfo struct {
 	Type       uint32
@@ -273,9 +271,9 @@ func (b *sixByteLocation) Unserialize(r io.Reader) (size int) {
 	return core.ReadBytes(r, b[:])
 }
 
-//*******************************************************************************//
-//                           storageIXEntry                                      //
-//*******************************************************************************//
+//***********************************************************************//
+//                         storageIXEntry                                //
+//***********************************************************************//
 
 const storageIXEntrySize int64 = 24                                                  // 24 bytes
 const storageIXEntryProbeLimit int = 682                                             // 682*24 bytes = 16368 < 16k
@@ -304,9 +302,10 @@ func (e *storageIXEntry) Unserialize(r io.Reader) (size int) {
 	return
 }
 
-//******************************************************************************//
-//                                 storageEntry                                 //
-//******************************************************************************//
+//***********************************************************************//
+//                         storageEntry                                  //
+//***********************************************************************//
+
 type storageEntry interface {
 	BlockID() core.Byte128
 	VerifyLocation(handler *StorageHandler, fileNumber int32, fileOffset int64) bool
@@ -314,9 +313,9 @@ type storageEntry interface {
 	core.Unserializer
 }
 
-//*******************************************************************************//
-//                          storageMetaEntry                                     //
-//*******************************************************************************//
+//***********************************************************************//
+//                         storageMetaEntry                              //
+//***********************************************************************//
 
 // storageMetaEntry used for double-storing data links, size and location (this is to speed up links and size checking)
 type storageMetaEntry struct {
@@ -365,9 +364,9 @@ func (e *storageMetaEntry) VerifyLocation(handler *StorageHandler, fileNumber in
 	return f == fileNumber && o == fileOffset
 }
 
-//******************************************************************************//
-//                               storageDataEntry                               //
-//******************************************************************************//
+//***********************************************************************//
+//                         storageDataEntry                              //
+//***********************************************************************//
 
 type storageDataEntry struct {
 	datamarker uint32 // = storageDataMarker, used to find / align blocks in case of recovery
@@ -416,9 +415,9 @@ func (e *storageDataEntry) VerifyLocation(handler *StorageHandler, fileNumber in
 	return f == fileNumber && o == fileOffset
 }
 
-//********************************************************************************//
-//                        storage file handling                                   //
-//********************************************************************************//
+//***********************************************************************//
+//                         storage file handling                         //
+//***********************************************************************//
 
 func (handler *StorageHandler) getNumberedName(fileType int, fileNumber int32) string {
 	return fmt.Sprintf("%.8X%s", fileNumber, storageFileTypeInfo[fileType].Extension)

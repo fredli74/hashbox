@@ -1,7 +1,7 @@
 ```
 	 ,+---+    
 	+---+´|    HASHBOX / HASHBACK
-	| # | |    Copyright 2015-2018 Fredrik Lidström
+	| # | |    Copyright 2015-2024 Fredrik Lidström
 	+---+´     
 ```
 

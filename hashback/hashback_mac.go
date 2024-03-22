@@ -1,9 +1,9 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2018
+//	| # | |    Copyright 2015-2024
 //	+---+´
 
-// +build darwin
+//go:build darwin
 
 package main
 

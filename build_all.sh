@@ -2,6 +2,7 @@
 set -x
 version=`git describe HEAD --tags --always --abbrev=0`
 revision=`git describe HEAD --tags --always`
+GOPATH=$(go env GOPATH)
 
 rm "$GOPATH/bin/hashbox/"*.zip
 rm "$GOPATH/bin/hashbox/"*

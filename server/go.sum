@@ -1,0 +1,10 @@
+github.com/fredli74/bytearray v0.0.0-20160519123742-883b9d2bdcd6 h1:JLylN6PxKYv/XRa6aFHY9i5Xem7unSOxtCQkBe2/YOY=
+github.com/fredli74/bytearray v0.0.0-20160519123742-883b9d2bdcd6/go.mod h1:27kEbKG5J4c9EYkGw+aBEZS60pSh9Q/LstJGBJySubA=
+github.com/fredli74/cmdparser v0.0.0-20160519131828-8835ce0e2af2 h1:ChTpMja0gkCrj5OLQgqyBCB4Noq5oUwFZlL8wG5LqIg=
+github.com/fredli74/cmdparser v0.0.0-20160519131828-8835ce0e2af2/go.mod h1:jIe/wes27xwVRnRzEdrNOp1QsUcRqrWsFCEyFs2ztbI=
+github.com/fredli74/hashbox v0.0.0-20210119001311-17014ab3cd0c h1:es7UnXOcAIh8zMOYVFqzBdUgh5MsoZa+1UYd3/gRakU=
+github.com/fredli74/hashbox v0.0.0-20210119001311-17014ab3cd0c/go.mod h1:YtfD/hzneN+VWFWRsBsnkcTn5wrYFrR1WgCikebbEU0=
+github.com/fredli74/lockfile v0.0.0-20240308112638-92f5e1efe5d6 h1:V1cvRWIIirKdCty152f2jl05Q+vYG3QKmxHhfgP+Af4=
+github.com/fredli74/lockfile v0.0.0-20240308112638-92f5e1efe5d6/go.mod h1:2o7gEO6MFrLBcI9C4xQrR5gU4OqX4UWnpmO1Zo7/B0M=
+github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0 h1:iQTw/8FWTuc7uiaSepXwyf3o52HaUYcV+Tu66S3F5GA=
+github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0/go.mod h1:1NbS8ALrpOvjt0rHPNLyCIeMtbizbir8U//inJ+zuB8=
