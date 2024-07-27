@@ -176,7 +176,9 @@ func ZlibCompress(src bytearray.ByteArray) (dst bytearray.ByteArray) {
 	src.ReadSeek(0, bytearray.SEEK_SET)
 	zw := zpool.GetWriter(&dst)
 	CopyOrPanic(zw, &src)
-	zw.Close()
+	if err := zw.Close(); err != nil {
+		panic(err)
+	}
 	zpool.PutWriter(zw)
 	return dst
 }
@@ -186,7 +188,11 @@ func ZlibUncompress(src bytearray.ByteArray) (dst bytearray.ByteArray) {
 	if err != nil {
 		panic(err)
 	}
-	defer zr.Close()
+	defer func() {
+		if err := zr.Close(); err != nil {
+			panic(err)
+		}
+	}()
 	CopyOrPanic(&dst, zr)
 	return dst
 }
