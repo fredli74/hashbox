@@ -692,7 +692,7 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 		cacheRecover, _ := os.Open(filepath.Join(LocalStoragePath, filename))
 		if cacheRecover != nil {
 			defer cacheRecover.Close()
-			core.Log(core.LogDebug, "Opened resume cache %s", cacheRecover.Name())
+			core.Log(core.LogInfo, "Opened resume cache %s", cacheRecover.Name())
 
 			info, err := cacheRecover.Stat()
 			PanicOn(err)
@@ -801,7 +801,7 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 		cacheLast, _ := os.Open(r.cacheFilePathName(*rootBlockID))
 		if cacheLast != nil {
 			defer cacheLast.Close()
-			core.Log(core.LogDebug, "Opened local cache %s", cacheLast.Name())
+			core.Log(core.LogInfo, "Opened local cache %s", cacheLast.Name())
 
 			info, err := cacheLast.Stat()
 			PanicOn(err)
