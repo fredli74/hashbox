@@ -22,10 +22,8 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -50,16 +48,6 @@ func (session *BackupSession) PrintRecoverProgress(progress float64, interval ti
 		session.Log(">>> %.1f min, resuming last backup: %.0f%%", time.Since(session.Start).Minutes(), progress)
 		session.Progress = time.Now().Add(interval)
 	}
-}
-
-func minorError(r interface{}) error {
-	e, ok := r.(*os.PathError)
-	if ok && ((runtime.GOOS == "windows" && (e.Err == syscall.Errno(32) || // ERROR_SHARING_VIOLATION
-		e.Err == syscall.Errno(33))) || // ERROR_LOCK_VIOLATION
-		e.Err == syscall.EBADF) { // "bad file descriptor" while reading some files on OSX
-		return e
-	}
-	return nil
 }
 
 func compareEntries(fileInfo os.FileInfo, new *FileEntry, old *FileEntry) bool {
@@ -94,7 +82,7 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 	defer func() {
 		// Panic error handling
 		if r := recover(); r != nil {
-			if e := minorError(r); e != nil {
+			if e := minorPathError(r); e != nil {
 				err = e
 			} else {
 				panic(r) // Any other error while reading is not normal and should panic
@@ -358,7 +346,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 			if entry.FileSize > 0 {
 				session.LogVerbose("%s", path)
 				if err = session.storeFile(path, entry); err != nil {
-					if e := minorError(err); e != nil {
+					if e := minorPathError(err); e != nil {
 						return refEntry, e // Returning refEntry here in case this file existed and could be opened in a previous backup
 					}
 					return nil, err

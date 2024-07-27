@@ -72,3 +72,13 @@ func isOfflineFile(fileInfo os.FileInfo) bool {
 	sys := fileInfo.Sys().(*syscall.Win32FileAttributeData)
 	return sys != nil && sys.FileAttributes&FILE_ATTRIBUTE_OFFLINE == FILE_ATTRIBUTE_OFFLINE
 }
+
+func minorPathError(r interface{}) error {
+	e, ok := r.(*os.PathError)
+	if ok && (e.Err == syscall.Errno(32) || // ERROR_SHARING_VIOLATION
+		e.Err == syscall.Errno(33) || // ERROR_LOCK_VIOLATION
+		e.Err == syscall.Errno(5)) { // ERROR_ACCESS_DENIED
+		return e
+	}
+	return nil
+}

@@ -53,3 +53,11 @@ func isOfflineFile(fileInfo os.FileInfo) bool {
 	sys := fileInfo.Sys().(*syscall.Stat_t)
 	return sys != nil && sys.Size > 0 && sys.Blocks == 0
 }
+
+func minorPathError(r interface{}) error {
+	e, ok := r.(*os.PathError)
+	if ok && e.Err == syscall.EBADF { // "bad file descriptor" while reading some files on OSX
+		return e
+	}
+	return nil
+}
