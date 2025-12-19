@@ -12,7 +12,7 @@ import (
 
 	"github.com/fredli74/bytearray"
 	cmd "github.com/fredli74/cmdparser"
-	"github.com/fredli74/hashbox/core"
+	"github.com/fredli74/hashbox/pkg/core"
 	"github.com/fredli74/lockfile"
 
 	"bytes"

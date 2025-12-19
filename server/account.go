@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fredli74/hashbox/core"
+	"github.com/fredli74/hashbox/pkg/core"
 )
 
 type AccountInfo struct {

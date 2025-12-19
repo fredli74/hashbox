@@ -1,11 +1,11 @@
 {
 	"folders": [
-		{
-			"path": "."
-		},
-		{
-			"path": "../core"
-		}
-	],
+			{
+				"path": "."
+			},
+			{
+				"path": "../pkg/core"
+			}
+		],
 	"settings": {}
 }

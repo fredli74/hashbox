@@ -1,4 +1,4 @@
-module github.com/fredli74/hashbox/core
+module github.com/fredli74/hashbox/pkg/core
 
 go 1.22.5
 
