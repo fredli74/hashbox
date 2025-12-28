@@ -1,6 +1,6 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2024
+//	| # | |    Copyright 2015-2025
 //	+---+´
 
 // Hashbox core, version 0.1
@@ -60,4 +60,46 @@ func TestHashDataPanicsWhenCompressed(t *testing.T) {
 		}
 	}()
 	block.HashData()
+}
+
+func TestVerifyBlockFailsWhenCompressedDataCorrupt(t *testing.T) {
+	var data bytearray.ByteArray
+	data.Write([]byte("compress-me"))
+	block := NewHashboxBlock(BlockDataTypeZlib, data, nil)
+	block.CompressData()
+
+	// Corrupt the stored checksum to simulate tampering without causing zlib parsing panics
+	block.BlockID[0] ^= 0xFF
+	if block.VerifyBlock() {
+		t.Fatal("VerifyBlock should fail on compressed block with mismatched ID")
+	}
+}
+
+func TestVerifyBlockFailsWhenUncompressedDataCorrupt(t *testing.T) {
+	var data bytearray.ByteArray
+	data.Write([]byte("plain-data"))
+	block := NewHashboxBlock(BlockDataTypeRaw, data, nil)
+
+	// Corrupt the raw payload
+	block.Data.ReadSeek(0, bytearray.SEEK_SET)
+	if buf, _ := block.Data.ReadSlice(); len(buf) > 0 {
+		buf[0] ^= 0xFF
+	}
+	if block.VerifyBlock() {
+		t.Fatal("VerifyBlock should fail on corrupted uncompressed data")
+	}
+}
+
+func TestVerifyBlockFailsWhenLinksCorrupt(t *testing.T) {
+	var data bytearray.ByteArray
+	data.Write([]byte("linked"))
+	var link Byte128
+	copy(link[:], []byte("link-123456789012"))
+	block := NewHashboxBlock(BlockDataTypeRaw, data, []Byte128{link})
+
+	// Tamper with the link list after BlockID was calculated
+	block.Links[0][0] ^= 0xFF
+	if block.VerifyBlock() {
+		t.Fatal("VerifyBlock should fail on block with tampered links")
+	}
 }

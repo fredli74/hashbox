@@ -1,6 +1,6 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2024
+//	| # | |    Copyright 2015-2025
 //	+---+´
 
 //go:build darwin

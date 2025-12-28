@@ -1,3 +1,8 @@
+//	 ,+---+
+//	+---+´|    HASHBOX SOURCE
+//	| # | |    Copyright 2015-2025
+//	+---+´
+
 package filelock
 
 import (
