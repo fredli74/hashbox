@@ -28,18 +28,14 @@ func GenerateDataEncryptionKey() Byte128 {
 }
 func DecryptDataInPlace(cipherdata []byte, key Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	if err != nil {
-		panic(err)
-	}
+	AbortOn(err)
 
 	aesStream := cipher.NewCBCDecrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(cipherdata, cipherdata)
 }
 func EncryptDataInPlace(data []byte, key Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	if err != nil {
-		panic(err)
-	}
+	AbortOn(err)
 
 	aesStream := cipher.NewCBCEncrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(data, data)

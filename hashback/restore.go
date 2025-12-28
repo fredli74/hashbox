@@ -177,25 +177,21 @@ func (session *BackupSession) changeDir(blockID core.Byte128, pathList []string)
 
 func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath string, restorelist ...string) {
 	if err := os.MkdirAll(restorepath, 0777); err != nil {
-		panic(err)
+		core.AbortOn(err)
 	}
 
 	if len(restorelist) > 0 {
 		for _, r := range restorelist {
 			list, err := session.findPathMatch(rootBlockID, r)
-			if err != nil {
-				panic(err)
-			}
+			core.AbortOn(err)
 			for _, e := range list {
-				if err := session.restoreEntry(e, restorepath); err != nil {
-					panic(err)
-				}
+				err := session.restoreEntry(e, restorepath)
+				core.AbortOn(err)
 			}
 		}
 	} else {
-		if err := session.restoreDir(rootBlockID, restorepath); err != nil {
-			panic(err)
-		}
+		err := session.restoreDir(rootBlockID, restorepath)
+		core.AbortOn(err)
 	}
 	session.PrintRestoreProgress()
 }
@@ -231,7 +227,7 @@ func (session *BackupSession) diffAndPrint(startOffset int64, A io.Reader, B io.
 		}
 		nB, err := B.Read(bufB[:nA])
 		if nA != nB {
-			PanicOn(err)
+			core.AbortOn(err)
 			panic(errors.New("Unable to read local file"))
 		}
 
@@ -371,15 +367,11 @@ func (session *BackupSession) diffDir(blockID core.Byte128, path string) {
 	blockData.Release()
 
 	fil, err := os.Open(path)
-	if err != nil {
-		panic(err)
-	}
+	core.AbortOn(err)
 	defer fil.Close()
 
 	fl, err := fil.Readdir(-1)
-	if err != nil {
-		panic(err)
-	}
+	core.AbortOn(err)
 	sort.Sort(FileInfoSlice(fl))
 
 	iL, iR := 0, 0
@@ -411,7 +403,7 @@ func (session *BackupSession) diffDir(blockID core.Byte128, path string) {
 
 func (session *BackupSession) DiffRestore(rootBlockID core.Byte128, restorepath string, restorelist ...string) {
 	info, err := os.Stat(restorepath)
-	PanicOn(err)
+	core.AbortOn(err)
 
 	if !info.IsDir() {
 		panic(fmt.Errorf("%s is not a directory", restorepath))
@@ -420,9 +412,7 @@ func (session *BackupSession) DiffRestore(rootBlockID core.Byte128, restorepath 
 	if len(restorelist) > 0 {
 		for _, r := range restorelist {
 			list, err := session.findPathMatch(rootBlockID, r)
-			if err != nil {
-				panic(err)
-			}
+			core.AbortOn(err)
 			for _, e := range list {
 				same, err := session.diffEntry(e, restorepath)
 				if !same {

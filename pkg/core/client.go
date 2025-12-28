@@ -153,9 +153,7 @@ func (c *Client) sendQueue(what Byte128) {
 							panic(c.lastError)
 						}
 						err, _ := <-c.errorChannel
-						if err != nil {
-							panic(err)
-						}
+						AbortOn(err)
 						panic(r)
 					}
 				}()
@@ -247,9 +245,7 @@ func (c *Client) Connect() {
 	c.connection = nil // Drop previous connection object
 
 	conn, err := net.Dial("tcp", c.ServerAddress)
-	if err != nil {
-		panic(err)
-	}
+	AbortOn(err)
 	newConnection := NewTimeoutConn(conn, DEFAULT_CONNECTION_TIMEOUT)
 
 	c.Authorize(newConnection)
@@ -405,9 +401,7 @@ func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChan
 			if c.lastError != nil {
 				panic(c.lastError)
 			}
-			if err != nil {
-				panic(err)
-			}
+			AbortOn(err)
 			panic("Why did we end up here?")
 		}
 	} else {
@@ -439,9 +433,7 @@ func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{
 		if c.lastError != nil {
 			panic(c.lastError)
 		}
-		if err != nil {
-			panic(err)
-		}
+		AbortOn(err)
 		panic(errors.New("Connection was closed while waiting for a response"))
 	}
 	panic(errors.New("ASSERT! We should not reach this point"))

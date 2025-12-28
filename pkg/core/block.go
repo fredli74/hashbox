@@ -176,22 +176,18 @@ func ZlibCompress(src bytearray.ByteArray) (dst bytearray.ByteArray) {
 	src.ReadSeek(0, bytearray.SEEK_SET)
 	zw := zpool.GetWriter(&dst)
 	CopyOrPanic(zw, &src)
-	if err := zw.Close(); err != nil {
-		panic(err)
-	}
+	err := zw.Close()
+	AbortOn(err)
 	zpool.PutWriter(zw)
 	return dst
 }
 func ZlibUncompress(src bytearray.ByteArray) (dst bytearray.ByteArray) {
 	src.ReadSeek(0, bytearray.SEEK_SET)
 	zr, err := zlib.NewReader(&src)
-	if err != nil {
-		panic(err)
-	}
+	AbortOn(err)
 	defer func() {
-		if err := zr.Close(); err != nil {
-			panic(err)
-		}
+		err := zr.Close()
+		AbortOn(err)
 	}()
 	CopyOrPanic(&dst, zr)
 	return dst
@@ -214,9 +210,7 @@ func (z *zlibPool) GetWriter(w io.Writer) (zw *zlib.Writer) {
 	} else {
 		var err error
 		zw, err = zlib.NewWriterLevel(w, zlib.DefaultCompression)
-		if err != nil {
-			panic(err)
-		}
+		AbortOn(err)
 	}
 	return zw
 }

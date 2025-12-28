@@ -50,19 +50,6 @@ var CustomIgnoreList []string
 
 var DEBUG bool = false
 
-func PanicOn(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-func SoftError(err error) {
-	fmt.Println("!!!", err)
-}
-func HardError(err error) {
-	panic(err)
-}
-
 func SerializeToBuffer(what core.Serializer) []byte {
 	buf := bytes.NewBuffer(nil)
 	what.Serialize(buf)
@@ -369,7 +356,7 @@ func main() {
 			}
 		}
 		err = os.MkdirAll(LocalStoragePath, 0700)
-		PanicOn(err)
+		core.AbortOn(err)
 	}
 
 	session := NewBackupSession()
@@ -521,9 +508,7 @@ func main() {
 				}
 				var err error
 				filelist, err = session.findPathMatch(state.BlockID, listpath)
-				if err != nil {
-					panic(err)
-				}
+				core.AbortOn(err)
 
 				fmt.Printf("Listing %s\n", listpath)
 				if len(filelist) > 0 {
@@ -787,7 +772,7 @@ func main() {
 	}()
 
 	if err := cmd.Parse(); err != nil {
-		panic(err)
+		core.AbortOn(err)
 	}
 }
 
@@ -804,18 +789,14 @@ func GenerateDataEncryptionKey() core.Byte128 {
 }
 func DecryptDataInPlace(cipherdata []byte, key core.Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	if err != nil {
-		panic(err)
-	}
+	core.AbortOn(err)
 
 	aesStream := cipher.NewCBCDecrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(cipherdata, cipherdata)
 }
 func EncryptDataInPlace(data []byte, key core.Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	if err != nil {
-		panic(err)
-	}
+	core.AbortOn(err)
 
 	aesStream := cipher.NewCBCEncrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(data, data)

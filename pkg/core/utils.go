@@ -19,12 +19,22 @@ import (
 	"time"
 )
 
-func ReadBytes(r io.Reader, data []byte) int {
-	if n, err := io.ReadFull(r, data); err != nil {
+// Abort panics with a formatted error message.
+func Abort(format string, a ...interface{}) {
+	panic(fmt.Errorf(format, a...))
+}
+
+// AbortOn panics if err is non-nil.
+func AbortOn(err error) {
+	if err != nil {
 		panic(err)
-	} else {
-		return n
 	}
+}
+
+func ReadBytes(r io.Reader, data []byte) int {
+	n, err := io.ReadFull(r, data)
+	AbortOn(err)
+	return n
 }
 func ReadUint8(r io.Reader, data *uint8) int {
 	var b [1]byte
@@ -51,11 +61,9 @@ func ReadInt64(r io.Reader, data *int64) int {
 	return n
 }
 func WriteBytes(w io.Writer, data []byte) int {
-	if n, err := w.Write(data); err != nil {
-		panic(err)
-	} else {
-		return n
-	}
+	n, err := w.Write(data)
+	AbortOn(err)
+	return n
 }
 func WriteUint8(w io.Writer, data uint8) int {
 	var b [1]byte = [1]byte{data}
@@ -76,16 +84,12 @@ func WriteInt64(w io.Writer, data int64) int {
 
 func CopyOrPanic(dst io.Writer, src io.Reader) int {
 	written, err := io.Copy(dst, src)
-	if err != nil {
-		panic(err)
-	}
+	AbortOn(err)
 	return int(written)
 }
 func CopyNOrPanic(dst io.Writer, src io.Reader, n int) int {
 	written, err := io.CopyN(dst, src, int64(n))
-	if err != nil {
-		panic(err)
-	}
+	AbortOn(err)
 	return int(written)
 }
 

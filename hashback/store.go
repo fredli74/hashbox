@@ -442,9 +442,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	var virtualRootDir *DirectoryBlock
 	{
 		info, err := os.Lstat(path[0])
-		if err != nil {
-			panic(err)
-		}
+		core.AbortOn(err)
 		if !info.IsDir() || len(path) > 1 {
 			virtualRootDir = &DirectoryBlock{}
 			session.reference.virtualRoot = make(map[string]string)
@@ -484,9 +482,8 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		var entry *FileEntry
 		for _, s := range path {
 			entry, err = session.storePath(s, true)
-			if err != nil {
-				panic(err)
-			} else if entry == nil {
+			core.AbortOn(err)
+			if entry == nil {
 				panic(fmt.Errorf("Unable to store %s", s))
 			} else if virtualRootDir != nil {
 				virtualRootDir.File = append(virtualRootDir.File, entry)
@@ -499,7 +496,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		session.State.BlockID = session.Client.StoreData(core.BlockDataTypeZlib, SerializeToByteArray(virtualRootDir), links)
 	} else {
 		session.State.BlockID, err = session.storeDir(path[0], nil)
-		PanicOn(err)
+		core.AbortOn(err)
 	}
 
 	// Commit all pending writes
@@ -683,7 +680,7 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 			core.Log(core.LogInfo, "Opened resume cache %s", cacheRecover.Name())
 
 			info, err := cacheRecover.Stat()
-			PanicOn(err)
+			core.AbortOn(err)
 			cacheSize := info.Size()
 			reader := bufio.NewReader(cacheRecover)
 
@@ -792,7 +789,7 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 			core.Log(core.LogInfo, "Opened local cache %s", cacheLast.Name())
 
 			info, err := cacheLast.Stat()
-			PanicOn(err)
+			core.AbortOn(err)
 			cacheSize := info.Size()
 			reader := bufio.NewReader(cacheLast)
 			for offset := int64(0); offset < cacheSize; {
@@ -888,7 +885,7 @@ func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
 		panic(errors.New("ASSERT, cacheCurrent == nil on reserveReference in an active referenceEngine"))
 	}
 	l, err := r.cacheCurrent.Seek(0, os.SEEK_CUR)
-	PanicOn(err)
+	core.AbortOn(err)
 	entry.Serialize(r.cacheCurrent)
 	return l
 }
@@ -967,7 +964,7 @@ func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *refe
 
 	var err error
 	r.cacheCurrent, err = ioutil.TempFile(LocalStoragePath, r.cacheName("temp.*"))
-	PanicOn(err)
+	core.AbortOn(err)
 
 	return r
 }
