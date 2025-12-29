@@ -117,11 +117,20 @@ fi
 echo "Running second backup..."
 HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" store "$DATASET" "$SOURCE_DIR"
 
+# Basic client queries against the latest backup
+echo "Running client info/list commands..."
+HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" info
+HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" list "$DATASET"
+HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" list "$DATASET" .
+
 rm -rf "$RESTORE_DIR"
 mkdir -p "$RESTORE_DIR"
 
 echo "Running restore..."
 HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" restore "$DATASET" . "$RESTORE_DIR"
+
+echo "Running diff against restore..."
+HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" diff "$DATASET" . "$RESTORE_DIR"
 
 echo "Server log:"
 cat "$SERVER_LOG"
