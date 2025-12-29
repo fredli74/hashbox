@@ -5,18 +5,25 @@
 
 package filelock
 
-import (
-	"os"
-)
+import "os"
 
 // Locker wraps a platform-specific file lock handle.
 type Locker struct {
 	f *os.File
 }
 
-// Open opens the file (creating it if needed) and returns a Locker without taking the lock.
+// Open wraps os.Open (read-only) and returns a Locker without taking the lock.
 func Open(path string) (*Locker, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0666)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return &Locker{f: f}, nil
+}
+
+// OpenFile wraps os.OpenFile with the provided flags/perm and returns a Locker without taking the lock.
+func OpenFile(path string, flag int, perm os.FileMode) (*Locker, error) {
+	f, err := os.OpenFile(path, flag, perm)
 	if err != nil {
 		return nil, err
 	}

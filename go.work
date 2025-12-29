@@ -3,6 +3,7 @@ go 1.22.5
 use (
 	./pkg/core
 	./pkg/filelock
+	./pkg/accountdb
 	./server
 	./hashback
 )

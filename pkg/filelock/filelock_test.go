@@ -40,7 +40,7 @@ func TestLockHelperProcess(t *testing.T) {
 		t.Skip("helper process")
 	}
 	path := os.Args[len(os.Args)-1]
-	l, err := Open(path)
+	l, err := OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		fmt.Printf("open: %v\n", err)
 		os.Exit(1)
@@ -68,7 +68,7 @@ func TestLockWriterHelperProcess(t *testing.T) {
 	lockPath := os.Args[len(os.Args)-2]
 	outPath := os.Args[len(os.Args)-1]
 
-	l, err := Open(lockPath)
+	l, err := OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "open lock: %v\n", err)
 		os.Exit(1)
@@ -121,7 +121,7 @@ func TestLockBlocksAcrossProcesses(t *testing.T) {
 	}
 
 	// Attempt to lock in parent; should block until helper releases.
-	l, err := Open(lockPath)
+	l, err := OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		t.Fatalf("open in parent: %v", err)
 	}

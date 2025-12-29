@@ -6,23 +6,13 @@
 package main
 
 import (
-	"crypto/md5"
-	"encoding/base64"
-	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"sync"
-	"time"
 
+	"github.com/fredli74/hashbox/pkg/accountdb"
 	"github.com/fredli74/hashbox/pkg/core"
 )
 
-type AccountInfo struct {
-	AccountName core.String
-	AccessKey   core.Byte128
-	Datasets    core.DatasetArray
-}
 type queryListDataset struct {
 	AccountNameH core.Byte128
 	DatasetName  core.String
@@ -45,6 +35,7 @@ type ChannelQuery struct {
 }
 
 type AccountHandler struct {
+	store  *accountdb.Store
 	signal chan error // goroutine signal channel, returns raised errors and stops goroutine when closed
 	query  chan ChannelQuery
 	wg     sync.WaitGroup
@@ -83,26 +74,26 @@ func (handler *AccountHandler) dispatcher() {
 				switch q.query {
 				case accounthandlerGetinfo:
 					accountNameH := q.data.(core.Byte128)
-					q.result <- readInfoFile(accountNameH)
+					q.result <- handler.store.ReadInfoFile(accountNameH)
 
 				case accounthandlerSetinfo:
-					accountInfo := q.data.(AccountInfo)
+					accountInfo := q.data.(accountdb.AccountInfo)
 					accountNameH := core.Hash([]byte(accountInfo.AccountName))
 
-					writeInfoFile(accountNameH, accountInfo)
+					handler.store.WriteInfoFile(accountNameH, accountInfo)
 					q.result <- true
 
 				case accounthandlerListset:
 					list := q.data.(queryListDataset)
-					q.result <- readDBFile(list.AccountNameH, list.DatasetName)
+					q.result <- handler.store.ReadDBFile(list.AccountNameH, list.DatasetName)
 
 				case accounthandlerAddset:
 					add := q.data.(queryAddDatasetState)
 
-					result := appendDatasetTx(add.AccountNameH, add.DatasetName, dbTx{timestamp: time.Now().UnixNano(), txType: dbTxTypeAdd, data: add.State})
+					result := handler.store.AppendAddState(add.AccountNameH, add.DatasetName, add.State)
 
 					{ // update the db file
-						collection := readDBFile(add.AccountNameH, add.DatasetName)
+						collection := handler.store.ReadDBFile(add.AccountNameH, add.DatasetName)
 						if collection != nil {
 							for i, s := range collection.States {
 								if s.State.StateID.Compare(add.State.StateID) == 0 {
@@ -112,11 +103,11 @@ func (handler *AccountHandler) dispatcher() {
 								}
 							}
 						} else {
-							collection = &dbStateCollection{}
+							collection = &accountdb.DBStateCollection{}
 						}
 						collection.States = append(collection.States, core.DatasetStateEntry{State: add.State})
 						sort.Sort(collection.States)
-						writeDBFile(add.AccountNameH, add.DatasetName, collection)
+						handler.store.WriteDBFile(add.AccountNameH, add.DatasetName, collection)
 					}
 
 					q.result <- result
@@ -124,10 +115,10 @@ func (handler *AccountHandler) dispatcher() {
 				case accounthandlerRemoveset:
 					del := q.data.(queryRemoveDatasetState)
 
-					result := appendDatasetTx(del.AccountNameH, del.DatasetName, dbTx{timestamp: time.Now().UnixNano(), txType: dbTxTypeDel, data: del.StateID})
+					result := handler.store.AppendDelState(del.AccountNameH, del.DatasetName, del.StateID)
 
 					{ // update the db file
-						collection := readDBFile(del.AccountNameH, del.DatasetName)
+						collection := handler.store.ReadDBFile(del.AccountNameH, del.DatasetName)
 						if collection != nil {
 							for i, s := range collection.States {
 								if s.State.StateID.Compare(del.StateID) == 0 {
@@ -137,9 +128,9 @@ func (handler *AccountHandler) dispatcher() {
 								}
 							}
 						} else {
-							collection = &dbStateCollection{}
+							collection = &accountdb.DBStateCollection{}
 						}
-						writeDBFile(del.AccountNameH, del.DatasetName, collection)
+						handler.store.WriteDBFile(del.AccountNameH, del.DatasetName, collection)
 					}
 
 					q.result <- result
@@ -178,9 +169,9 @@ func (handler *AccountHandler) doCommand(q ChannelQuery) interface{} {
 	return r
 }
 
-func (handler *AccountHandler) ListDataset(a core.Byte128, set core.String) *dbStateCollection {
+func (handler *AccountHandler) ListDataset(a core.Byte128, set core.String) *accountdb.DBStateCollection {
 	q := ChannelQuery{accounthandlerListset, queryListDataset{a, set}, make(chan interface{}, 1)}
-	return handler.doCommand(q).(*dbStateCollection)
+	return handler.doCommand(q).(*accountdb.DBStateCollection)
 }
 
 func (handler *AccountHandler) AddDatasetState(a core.Byte128, set core.String, state core.DatasetState) error {
@@ -199,12 +190,12 @@ func (handler *AccountHandler) RemoveDatasetState(a core.Byte128, set core.Strin
 	}
 	return nil
 }
-func (handler *AccountHandler) GetInfo(a core.Byte128) *AccountInfo {
+func (handler *AccountHandler) GetInfo(a core.Byte128) *accountdb.AccountInfo {
 	q := ChannelQuery{accounthandlerGetinfo, a, make(chan interface{}, 1)}
-	return handler.doCommand(q).(*AccountInfo)
+	return handler.doCommand(q).(*accountdb.AccountInfo)
 	// ToDO: test this with a read-error
 }
-func (handler *AccountHandler) SetInfo(a AccountInfo) bool {
+func (handler *AccountHandler) SetInfo(a accountdb.AccountInfo) bool {
 	q := ChannelQuery{accounthandlerSetinfo, a, make(chan interface{}, 1)}
 	return handler.doCommand(q).(bool)
 	// ToDO: test this with a write-error
@@ -218,6 +209,7 @@ func (handler *AccountHandler) Close() {
 }
 func NewAccountHandler() *AccountHandler {
 	handler := &AccountHandler{
+		store:  accountdb.NewStore(datDirectory),
 		query:  make(chan ChannelQuery, 32),
 		signal: make(chan error), // cannot be buffered
 	}
@@ -233,234 +225,6 @@ func NewAccountHandler() *AccountHandler {
 //
 //*****************************************************************************************************************//
 
-const (
-	dbVersion                  uint32 = 1
-	dbFileTypeTransaction      uint32 = 0x48415458 // "HATX" Hashbox Account Transaction
-	dbFileExtensionTransaction string = ".trn"
-	dbFileTypeDatabase         uint32 = 0x48414442 // "HADB" Hashbox Account Database
-	dbFileExtensionDatabase    string = ".db"
-	dbTxTypeAdd                uint32 = 0x2B414444 // "+ADD"
-	dbTxTypeDel                uint32 = 0x2D44454C // "-DEL"
-)
-
-type dbFileHeader struct {
-	filetype    uint32
-	version     uint32
-	datasetName core.String
-}
-
-func (h *dbFileHeader) Serialize(w io.Writer) {
-	core.WriteUint32(w, h.filetype)
-	core.WriteUint32(w, h.version)
-	h.datasetName.Serialize(w)
-}
-func (h *dbFileHeader) Unserialize(r io.Reader) {
-	core.ReadUint32(r, &h.filetype)
-	core.ReadUint32(r, &h.version)
-	if h.version != dbVersion {
-		core.Abort("Invalid version in dbFileHeader")
-	}
-	h.datasetName.Unserialize(r)
-}
-
-type dbTx struct {
-	timestamp int64
-	txType    uint32
-	data      interface{}
-}
-
-func (t *dbTx) Serialize(w io.Writer) {
-	core.WriteInt64(w, t.timestamp)
-	core.WriteUint32(w, t.txType)
-	t.data.(core.Serializer).Serialize(w)
-}
-func (t *dbTx) Unserialize(r io.Reader) {
-	core.ReadInt64(r, &t.timestamp)
-	core.ReadUint32(r, &t.txType)
-	switch t.txType {
-	case dbTxTypeAdd:
-		var s core.DatasetState
-		s.Unserialize(r)
-		t.data = s
-	case dbTxTypeDel:
-		var s core.Byte128
-		s.Unserialize(r)
-		t.data = s
-	default:
-		core.Abort("Corrupt transaction file")
-	}
-}
-
-type dbStateCollection struct {
-	// datasetName is already in the file header
-	Size   int64        // Size of all data referenced by this dataset
-	ListH  core.Byte128 // = md5(States)
-	States core.DatasetStateArray
-}
-
-func (c *dbStateCollection) Serialize(w io.Writer) {
-	c.States.Serialize(w)
-}
-func (c *dbStateCollection) Unserialize(r io.Reader) {
-	c.States.Unserialize(r)
-	{
-		c.Size = 0
-		maxSize := int64(0)
-		hash := md5.New()
-		for _, s := range c.States {
-			s.Serialize(hash)
-			if s.State.Size > maxSize {
-				maxSize = s.State.Size
-			}
-			c.Size += s.State.UniqueSize // TODO: this calculation is wrong the moment you start deleting stuff, it needs to be reworked
-		}
-		copy(c.ListH[:], hash.Sum(nil)[:16])
-		c.Size += maxSize
-	}
-}
-
-func appendDatasetTx(accountNameH core.Byte128, datasetName core.String, tx dbTx) error {
-	file, err := os.OpenFile(datasetFilename(accountNameH, string(datasetName))+dbFileExtensionTransaction, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
-	core.AbortOn(err)
-	defer file.Close()
-
-	pos, err := file.Seek(0, 2)
-	if pos == 0 { // New file, write the header
-		header := dbFileHeader{filetype: dbFileTypeTransaction, version: dbVersion, datasetName: datasetName}
-		header.Serialize(file)
-	}
-	tx.Serialize(file)
-	return nil
-}
-func updateInfoFile(accountNameH core.Byte128, datasetName core.String) {
-	collection := readDBFile(accountNameH, datasetName)
-	if collection == nil {
-		core.Abort("updateInfoFile was called on a DB file which cannot be opened")
-	}
-
-	// Now also update account info
-	info := readInfoFile(accountNameH)
-	for i := 0; i < len(info.Datasets); i++ {
-		if info.Datasets[i].Name == datasetName {
-			info.Datasets[i] = info.Datasets[len(info.Datasets)-1]
-			info.Datasets = info.Datasets[:len(info.Datasets)-1]
-			break
-		}
-	}
-	if len(collection.States) > 0 { // Add the dataset state
-		info.Datasets = append(info.Datasets, core.Dataset{Name: datasetName, Size: collection.Size, ListH: collection.ListH})
-	}
-	sort.Sort(info.Datasets)
-	writeInfoFile(accountNameH, *info)
-}
-
-func stateArrayFromTransactions(accountNameH core.Byte128, datasetName core.String) (states core.DatasetStateArray) {
-	filename := datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
-	file, err := os.Open(filename)
-	core.AbortOn(err)
-	defer file.Close()
-	var header dbFileHeader
-	header.Unserialize(file)
-	if header.version != dbVersion || header.filetype != dbFileTypeTransaction {
-		core.Abort("%s is not a valid transaction file", filename)
-	}
-
-	stateMap := make(map[core.Byte128]core.DatasetState)
-	// Go through transaction history and populate the stateMap
-	func() {
-		defer func() {
-			if r := recover(); r != nil && r != io.EOF {
-				panic(r) // Any other error is not normal and should panic
-			}
-			return
-		}()
-
-		var pointInHistory int64
-		for {
-			var tx dbTx
-			tx.Unserialize(file)
-			if tx.timestamp < pointInHistory {
-				core.Abort("%s is corrupt, timestamp check failed (%x < %x)", filename, tx.timestamp, pointInHistory)
-			}
-			pointInHistory = tx.timestamp
-			switch tx.txType {
-			case dbTxTypeAdd:
-				stateMap[tx.data.(core.DatasetState).StateID] = tx.data.(core.DatasetState)
-			case dbTxTypeDel:
-				delete(stateMap, tx.data.(core.Byte128))
-			default:
-				core.Abort("%s is corrupt, invalid transaction type found: %x", filename, tx.txType)
-			}
-		}
-	}()
-
-	for _, s := range stateMap {
-		states = append(states, core.DatasetStateEntry{State: s})
-	}
-	return states
-}
-
-func writeDBFile(accountNameH core.Byte128, datasetName core.String, c *dbStateCollection) {
-	file, err := os.OpenFile(datasetFilename(accountNameH, string(datasetName))+dbFileExtensionDatabase, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
-	core.AbortOn(err)
-	defer file.Close()
-
-	header := dbFileHeader{filetype: dbFileTypeDatabase, version: dbVersion, datasetName: datasetName}
-	header.Serialize(file)
-	c.Serialize(file)
-
-	updateInfoFile(accountNameH, datasetName)
-}
-func readDBFile(accountNameH core.Byte128, datasetName core.String) *dbStateCollection {
-	filename := datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionDatabase
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil
-	}
-	defer file.Close()
-	var header dbFileHeader
-	header.Unserialize(file)
-	if header.version != dbVersion || header.filetype != dbFileTypeDatabase {
-		core.Abort("%s is not a valid db file", filename)
-	}
-	var c dbStateCollection
-	c.Unserialize(file)
-	return &c
-}
-func writeInfoFile(accountNameH core.Byte128, a AccountInfo) {
-	file, err := os.OpenFile(accountFilename(accountNameH)+".info", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
-	core.AbortOn(err)
-	defer file.Close()
-
-	a.AccountName.Serialize(file)
-	a.AccessKey.Serialize(file)
-	a.Datasets.Serialize(file)
-}
-func readInfoFile(accountNameH core.Byte128) *AccountInfo {
-	file, err := os.Open(accountFilename(accountNameH) + ".info")
-	if err != nil {
-		return nil
-	}
-
-	var a AccountInfo
-	a.AccountName.Unserialize(file)
-	a.AccessKey.Unserialize(file)
-	a.Datasets.Unserialize(file)
-	return &a
-}
-
-func base64filename(d []byte) string {
-	return base64.RawURLEncoding.EncodeToString(d)
-}
-func accountFilename(nameHash core.Byte128) string {
-	name := base64filename(nameHash[:])
-	return filepath.Join(datDirectory, "account", name)
-}
-func datasetFilename(aH core.Byte128, dName string) string {
-	dNameH := core.Hash([]byte(dName))
-	return accountFilename(aH) + "." + base64filename(dNameH[:])
-}
-
 type BlockSource struct {
 	BlockID      core.Byte128
 	AccountName  string
@@ -469,69 +233,27 @@ type BlockSource struct {
 	StateID      core.Byte128
 }
 
-func getDatasetNameFromFile(filename string) core.String {
-	// Open the file, read and check the file headers
-	fil, err := os.Open(filepath.Join(datDirectory, "account", filename))
-	core.AbortOn(err)
-	defer fil.Close()
-
-	var header dbFileHeader
-	header.Unserialize(fil)
-	if header.filetype != dbFileTypeTransaction {
-		core.Abort("File %s is not a valid transaction file", filename)
-	}
-
-	datasetName := header.datasetName
-	var datasetNameH core.Byte128
-	{
-		d, err := base64.RawURLEncoding.DecodeString(filename[23:45])
-		core.AbortOn(err)
-		datasetNameH.Set(d)
-	}
-	datasetHashB := core.Hash([]byte(datasetName))
-	if datasetHashB.Compare(datasetNameH) != 0 {
-		core.Abort("Header for %s does not contain the correct dataset name", filename)
-	}
-	return datasetName
-}
 func (handler *AccountHandler) CollectAllRootBlocks(skipInvalid bool) (rootBlocks []BlockSource) {
-	// Open each dataset and check the chains
-	dir, err := os.Open(filepath.Join(datDirectory, "account"))
+	accounts, err := handler.store.ListAccounts()
 	core.AbortOn(err)
-	defer dir.Close()
-	dirlist, err := dir.Readdir(-1)
-	core.AbortOn(err)
-
-	for _, info := range dirlist {
-		name := info.Name()
-		if m, _ := filepath.Match("??????????????????????.??????????????????????.trn", name); m {
-			// Read the accountNameH from the filename
-			var accountName string
-			var accountNameH core.Byte128
-			{
-				decoded, err := base64.RawURLEncoding.DecodeString(name[:22])
-				core.AbortOn(err)
-				accountNameH.Set(decoded)
-				info := readInfoFile(accountNameH)
-				if info != nil {
-					accountName = string(info.AccountName)
-				}
-			}
-
-			datasetName := getDatasetNameFromFile(name)
-			collection := readDBFile(accountNameH, datasetName)
+	for _, acc := range accounts {
+		datasets, err := handler.store.ListDatasets(&acc.AccountNameH)
+		core.AbortOn(err)
+		for _, ds := range datasets {
+			collection := handler.store.ReadDBFile(ds.AccountNameH, ds.DatasetName)
 			if collection == nil {
 				core.Abort("CollectAllRootBlocks was called on a DB file which cannot be opened")
 			}
+			accountName := string(acc.AccountName)
 			for _, e := range collection.States {
 				if e.StateFlags&core.StateFlagInvalid == core.StateFlagInvalid {
 					if skipInvalid {
-						core.Log(core.LogWarning, "All data referenced by %s.%s.%x will be marked for removal unless referenced elsewhere", accountName, datasetName, e.State.StateID[:])
+						core.Log(core.LogWarning, "All data referenced by %s.%s.%x will be marked for removal unless referenced elsewhere", accountName, ds.DatasetName, e.State.StateID[:])
 					} else {
-						core.Abort("Dataset %s.%s.%x is referencing data with a broken block chain", accountName, datasetName, e.State.StateID[:])
+						core.Abort("Dataset %s.%s.%x is referencing data with a broken block chain", accountName, ds.DatasetName, e.State.StateID[:])
 					}
 				} else {
-					rootBlocks = append(rootBlocks, BlockSource{BlockID: e.State.BlockID, StateID: e.State.StateID, DatasetName: datasetName, AccountNameH: accountNameH, AccountName: string(accountName)})
+					rootBlocks = append(rootBlocks, BlockSource{BlockID: e.State.BlockID, StateID: e.State.StateID, DatasetName: ds.DatasetName, AccountNameH: ds.AccountNameH, AccountName: accountName})
 				}
 			}
 		}
@@ -539,68 +261,16 @@ func (handler *AccountHandler) CollectAllRootBlocks(skipInvalid bool) (rootBlock
 	return rootBlocks
 }
 
-func (handler *AccountHandler) RebuildAccountFiles() (rootBlocks []BlockSource) {
-	// Open each dataset and check the chains
-	dir, err := os.Open(filepath.Join(datDirectory, "account"))
+func (handler *AccountHandler) RebuildAccountFiles() {
+	accounts, err := handler.store.ListAccounts()
 	core.AbortOn(err)
-	defer dir.Close()
-	dirlist, err := dir.Readdir(-1)
-	core.AbortOn(err)
-
-	for _, info := range dirlist { // Clear all cached dataset information from the info files
-		name := info.Name()
-		if m, _ := filepath.Match("??????????????????????.info", name); m {
-			// Read the accountNameH from the filename
-			var accountNameH core.Byte128
-			{
-				decoded, err := base64.RawURLEncoding.DecodeString(name[:22])
-				core.AbortOn(err)
-				accountNameH.Set(decoded)
-			}
-
-			info := readInfoFile(accountNameH)
-			if info != nil {
-				info.Datasets = nil
-				writeInfoFile(accountNameH, *info)
-			}
-		}
+	for _, acc := range accounts {
+		handler.store.RebuildAccount(acc.AccountNameH)
 	}
-
-	for _, info := range dirlist {
-		name := info.Name()
-		if m, _ := filepath.Match("??????????????????????.??????????????????????.trn", name); m {
-			// Read the accountNameH from the filename
-			var accountName string
-			var accountNameH core.Byte128
-			{
-				decoded, err := base64.RawURLEncoding.DecodeString(name[:22])
-				core.AbortOn(err)
-				accountNameH.Set(decoded)
-				info := readInfoFile(accountNameH)
-				if info != nil {
-					accountName = string(info.AccountName)
-				}
-			}
-
-			datasetName := getDatasetNameFromFile(name)
-
-			core.Log(core.LogDebug, "Regenerating file %s.db (%s.%s)", name[:45], accountName, datasetName)
-
-			// Generate the DB file from transactions
-			states := stateArrayFromTransactions(accountNameH, datasetName)
-			sort.Sort(states)
-			writeDBFile(accountNameH, datasetName, &dbStateCollection{States: states})
-
-			for _, e := range states {
-				rootBlocks = append(rootBlocks, BlockSource{BlockID: e.State.BlockID, StateID: e.State.StateID, DatasetName: datasetName, AccountNameH: accountNameH, AccountName: string(accountName)})
-			}
-		}
-	}
-	return rootBlocks
 }
 
 func (handler *AccountHandler) InvalidateDatasetState(accountNameH core.Byte128, datasetName core.String, stateID core.Byte128) {
-	collection := readDBFile(accountNameH, datasetName)
+	collection := handler.store.ReadDBFile(accountNameH, datasetName)
 	if collection == nil {
 		core.Abort("InvalidateDatasetState was called on a DB file which cannot be opened")
 	}
@@ -610,5 +280,5 @@ func (handler *AccountHandler) InvalidateDatasetState(accountNameH core.Byte128,
 			break
 		}
 	}
-	writeDBFile(accountNameH, datasetName, collection)
+	handler.store.WriteDBFile(accountNameH, datasetName, collection)
 }

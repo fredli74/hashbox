@@ -7,16 +7,6 @@ package main
 
 import (
 	//"github.com/davecheney/profile"
-	"net/http"
-	_ "net/http/pprof"
-	"runtime"
-	"runtime/debug"
-
-	"github.com/fredli74/bytearray"
-	cmd "github.com/fredli74/cmdparser"
-	"github.com/fredli74/hashbox/pkg/core"
-	"github.com/fredli74/lockfile"
-
 	"bytes"
 	"encoding/binary"
 	"fmt"
@@ -29,6 +19,16 @@ import (
 	"sync"
 	"time"
 
+	"net/http"
+	_ "net/http/pprof"
+	"runtime"
+	"runtime/debug"
+
+	"github.com/fredli74/bytearray"
+	cmd "github.com/fredli74/cmdparser"
+	"github.com/fredli74/hashbox/pkg/accountdb"
+	"github.com/fredli74/hashbox/pkg/core"
+	"github.com/fredli74/lockfile"
 	"github.com/kardianos/osext"
 )
 
@@ -144,7 +144,7 @@ func handleConnection(conn net.Conn) {
 						if !unauthorized {
 							list := accountHandler.ListDataset(c.AccountNameH, c.DatasetName)
 							if list == nil {
-								list = new(dbStateCollection)
+								list = new(accountdb.DBStateCollection)
 							}
 							reply.Data = &core.MsgServerListDataset{States: list.States, ListH: list.ListH}
 							//				} else {
@@ -265,14 +265,6 @@ func run() (returnValue int) {
 		}
 	})
 
-	// Please note that datPath has not been set until we have parsed arguments, that is ok because neither of the handlers
-	// start opening files on their own
-	// TODO: remove datPath global and send them into handlers on creation instead
-	accountHandler = NewAccountHandler()
-	defer accountHandler.Close()
-	storageHandler = NewStorageHandler()
-	defer storageHandler.Close()
-
 	cmd.Command("", "", func() { // Default
 		serverAddr := net.TCPAddr{IP: nil, Port: int(serverPort), Zone: ""}
 
@@ -281,6 +273,11 @@ func run() (returnValue int) {
 		} else {
 			defer lock.Unlock()
 		}
+
+		accountHandler = NewAccountHandler()
+		defer accountHandler.Close()
+		storageHandler = NewStorageHandler()
+		defer storageHandler.Close()
 
 		var listener *net.TCPListener
 		if listener, err = net.ListenTCP("tcp", &serverAddr); err != nil {
@@ -337,11 +334,16 @@ func run() (returnValue int) {
 			defer lock.Unlock()
 		}
 
+		accountHandler = NewAccountHandler()
+		defer accountHandler.Close()
+		storageHandler = NewStorageHandler()
+		defer storageHandler.Close()
+
 		if len(cmd.Args) < 4 {
 			core.Abort("Missing argument to adduser command")
 		}
 
-		if (!accountHandler.SetInfo(AccountInfo{AccountName: core.String(cmd.Args[2]), AccessKey: core.GenerateAccessKey(cmd.Args[2], cmd.Args[3])})) {
+		if !accountHandler.SetInfo(accountdb.AccountInfo{AccountName: core.String(cmd.Args[2]), AccessKey: core.GenerateAccessKey(cmd.Args[2], cmd.Args[3])}) {
 			core.Abort("Error creating account")
 		}
 		accountNameH := core.Hash([]byte(cmd.Args[2]))
@@ -376,6 +378,11 @@ func run() (returnValue int) {
 		} else {
 			defer lock.Unlock()
 		}
+
+		accountHandler = NewAccountHandler()
+		defer accountHandler.Close()
+		storageHandler = NewStorageHandler()
+		defer storageHandler.Close()
 
 		start := time.Now()
 		if !optGcCompactOnly {
@@ -419,6 +426,11 @@ func run() (returnValue int) {
 			defer lock.Unlock()
 		}
 
+		accountHandler = NewAccountHandler()
+		defer accountHandler.Close()
+		storageHandler = NewStorageHandler()
+		defer storageHandler.Close()
+
 		start := time.Now()
 
 		core.Log(core.LogInfo, "Checking storage file headers")
@@ -450,6 +462,11 @@ func run() (returnValue int) {
 			}
 		}
 
+		accountHandler = NewAccountHandler()
+		defer accountHandler.Close()
+		storageHandler = NewStorageHandler()
+		defer storageHandler.Close()
+
 		errorCount := 0
 		start := time.Now()
 
@@ -457,11 +474,10 @@ func run() (returnValue int) {
 
 		verifiedBlocks := make(map[core.Byte128]bool) // Keep track of verifiedBlocks blocks
 		rootlist := []BlockSource{}
-		if optReadOnly {
-			rootlist = accountHandler.CollectAllRootBlocks(false)
-		} else {
-			rootlist = accountHandler.RebuildAccountFiles()
+		if !optReadOnly {
+			accountHandler.RebuildAccountFiles()
 		}
+		rootlist = accountHandler.CollectAllRootBlocks(false)
 
 		for i, r := range rootlist {
 			tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])

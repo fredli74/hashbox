@@ -7,6 +7,7 @@ package main
 
 import (
 	"github.com/fredli74/bytearray"
+	"github.com/fredli74/hashbox/pkg/accountdb"
 	"github.com/fredli74/hashbox/pkg/core"
 
 	"bytes"
@@ -57,7 +58,7 @@ func TestCreatingTestServer(t *testing.T) {
 }
 
 func TestServerTestAccount(t *testing.T) {
-	A := AccountInfo{
+	A := accountdb.AccountInfo{
 		AccountName: "test account",
 		AccessKey:   core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))),
 		Datasets:    core.DatasetArray{},
