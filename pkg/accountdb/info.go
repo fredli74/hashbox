@@ -17,6 +17,7 @@ import (
 type AccountListing struct {
 	AccountNameH core.Byte128
 	AccountName  core.String
+	Datasets     core.DatasetArray
 	Filename     string
 }
 
@@ -76,10 +77,17 @@ func (fs *Store) ListAccounts() ([]AccountListing, error) {
 		h.Set(decoded)
 		info := fs.ReadInfoFile(h)
 		accountName := core.String("")
+		var datasets core.DatasetArray
 		if info != nil {
 			accountName = info.AccountName
+			datasets = info.Datasets
 		}
-		out = append(out, AccountListing{AccountNameH: h, AccountName: accountName, Filename: filepath.Join(fs.DataDir, "account", name)})
+		out = append(out, AccountListing{
+			AccountNameH: h,
+			AccountName:  accountName,
+			Datasets:     datasets,
+			Filename:     filepath.Join(fs.DataDir, "account", name),
+		})
 	}
 	return out, nil
 }
