@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/fredli74/hashbox/pkg/core"
-	"github.com/fredli74/hashbox/pkg/filelock"
+	"github.com/fredli74/hashbox/pkg/lockablefile"
 )
 
 type DBTx struct {
@@ -49,7 +49,7 @@ func (t *DBTx) Unserialize(r io.Reader) {
 // AppendTx appends a transaction to the dataset log.
 func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx DBTx) error {
 	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
-	lock, err := filelock.OpenFile(filename, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
+	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer lock.Close()
 	core.AbortOn(lock.Lock())
@@ -113,7 +113,7 @@ func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetNa
 
 // TxReader is a tolerant streaming reader over a .trn file.
 type TxReader struct {
-	fh *filelock.Locker // locked file handle
+	fh *lockablefile.LockableFile // locked file handle
 }
 
 // NewTxReader opens and validates a .trn file and returns a reader.
@@ -122,11 +122,11 @@ func (fs *Store) NewTxReader(accountNameH core.Byte128, datasetName core.String)
 	if _, err := os.Stat(filename); err != nil {
 		return nil, err
 	}
-	lock, err := filelock.OpenFile(filename, os.O_RDWR, 0)
+	lock, err := lockablefile.Open(filename)
 	if err != nil {
 		return nil, err
 	}
-	if err := lock.Lock(); err != nil {
+	if err := lock.LockShared(); err != nil {
 		lock.Close()
 		return nil, err
 	}
@@ -192,10 +192,10 @@ func (fs *Store) GetDatasetNameFromTransactionFile(filename string) core.String 
 	_, err := os.Stat(fullpath)
 	core.AbortOn(err)
 	// Open the file, read and check the file headers
-	lock, err := filelock.OpenFile(fullpath, os.O_RDWR, 0)
+	lock, err := lockablefile.Open(fullpath)
 	core.AbortOn(err)
 	defer lock.Close()
-	core.AbortOn(lock.Lock())
+	core.AbortOn(lock.LockShared())
 	defer lock.Unlock()
 	fil := lock.File()
 

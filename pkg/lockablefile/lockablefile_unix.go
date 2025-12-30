@@ -5,7 +5,7 @@
 
 //go:build unix
 
-package filelock
+package lockablefile
 
 import (
 	"os"
@@ -14,7 +14,7 @@ import (
 )
 
 // Lock acquires an exclusive advisory lock on the file descriptor.
-func (l *Locker) Lock() error {
+func (l *LockableFile) Lock() error {
 	if l == nil || l.f == nil {
 		return os.ErrInvalid
 	}
@@ -27,8 +27,22 @@ func (l *Locker) Lock() error {
 	return unix.FcntlFlock(l.f.Fd(), unix.F_SETLKW, &flock)
 }
 
+// LockShared acquires a shared advisory lock on the file descriptor.
+func (l *LockableFile) LockShared() error {
+	if l == nil || l.f == nil {
+		return os.ErrInvalid
+	}
+	flock := unix.Flock_t{
+		Type:   unix.F_RDLCK,
+		Whence: int16(os.SEEK_SET),
+		Start:  0,
+		Len:    0, // whole file
+	}
+	return unix.FcntlFlock(l.f.Fd(), unix.F_SETLKW, &flock)
+}
+
 // Unlock releases the advisory lock.
-func (l *Locker) Unlock() error {
+func (l *LockableFile) Unlock() error {
 	if l == nil || l.f == nil {
 		return os.ErrInvalid
 	}

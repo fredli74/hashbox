@@ -4,7 +4,7 @@ go 1.22.5
 
 require (
 	github.com/fredli74/hashbox/pkg/core v0.0.0-00010101000000-000000000000
-	github.com/fredli74/hashbox/pkg/filelock v0.0.0-00010101000000-000000000000
+	github.com/fredli74/hashbox/pkg/lockablefile v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -13,4 +13,4 @@ require (
 )
 
 replace github.com/fredli74/hashbox/pkg/core => ../core
-replace github.com/fredli74/hashbox/pkg/filelock => ../filelock
+replace github.com/fredli74/hashbox/pkg/lockablefile => ../lockablefile

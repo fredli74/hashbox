@@ -5,7 +5,7 @@
 
 //go:build windows
 
-package filelock
+package lockablefile
 
 import (
 	"os"
@@ -14,15 +14,23 @@ import (
 )
 
 // Lock acquires an exclusive lock on the file using LockFileEx.
-func (l *Locker) Lock() error {
+func (l *LockableFile) Lock() error {
 	if l == nil || l.f == nil {
 		return os.ErrInvalid
 	}
 	return lockFileEx(l.f.Fd(), windows.LOCKFILE_EXCLUSIVE_LOCK)
 }
 
+// LockShared acquires a shared lock on the file using LockFileEx.
+func (l *LockableFile) LockShared() error {
+	if l == nil || l.f == nil {
+		return os.ErrInvalid
+	}
+	return lockFileEx(l.f.Fd(), 0)
+}
+
 // Unlock releases the lock using UnlockFileEx.
-func (l *Locker) Unlock() error {
+func (l *LockableFile) Unlock() error {
 	if l == nil || l.f == nil {
 		return os.ErrInvalid
 	}
