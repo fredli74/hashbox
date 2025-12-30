@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/fredli74/hashbox/pkg/storagedb"
 	"math/rand"
 	"net"
 	"os"
@@ -44,15 +45,6 @@ var storageHandler *StorageHandler
 var done chan bool
 
 var logLock sync.Mutex
-
-/* THIS SHOULD BE REMOVED, WE SHOULD NEVER USE PANICS AS A NORMAL EXECUTION STATE */
-func Try(f func()) (err interface{}) {
-	defer func() {
-		err = recover()
-	}()
-	f()
-	return nil
-}
 
 func handleConnection(conn net.Conn) {
 	remoteID := conn.RemoteAddr().String()
@@ -194,7 +186,7 @@ func handleConnection(conn net.Conn) {
 									break
 								}
 							}
-							if !storageHandler.checkFree(int64(c.Block.Data.Len())) {
+							if !storageHandler.store.CheckFree(int64(c.Block.Data.Len())) {
 								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
 								reply.Data = &core.MsgServerError{ErrorMessage: "Write permission is denied because the server is out of space"}
 							}
@@ -391,15 +383,15 @@ func run() (returnValue int) {
 			for _, r := range accountHandler.CollectAllRootBlocks(optGcForce) {
 				roots = append(roots, r.BlockID)
 			}
-			storageHandler.MarkIndexes(roots, true)
-			storageHandler.SweepIndexes(true)
+			storageHandler.store.MarkIndexes(roots, true)
+			storageHandler.store.SweepIndexes(true)
 			core.Log(core.LogInfo, "Mark and sweep duration %.1f minutes", time.Since(start).Minutes())
-			storageHandler.ShowStorageDeadSpace()
+			storageHandler.store.ShowStorageDeadSpace()
 		}
 		if optGcCompact || optGcCompactOnly {
-			storageHandler.CompactIndexes(true)
-			storageHandler.CompactAll(storageFileTypeMeta, int(optGcDeadSkip))
-			storageHandler.CompactAll(storageFileTypeData, int(optGcDeadSkip))
+			storageHandler.store.CompactIndexes(true)
+			storageHandler.store.CompactAll(storagedb.StorageFileTypeMeta, int(optGcDeadSkip))
+			storageHandler.store.CompactAll(storagedb.StorageFileTypeData, int(optGcDeadSkip))
 		}
 		core.Log(core.LogInfo, "Garbage collection completed in %.1f minutes", time.Since(start).Minutes())
 	})
@@ -434,14 +426,14 @@ func run() (returnValue int) {
 		start := time.Now()
 
 		core.Log(core.LogInfo, "Checking storage file headers")
-		if storageHandler.CheckStorageFiles() > 0 {
+		if storageHandler.store.CheckStorageFiles() > 0 {
 			core.Log(core.LogError, "Recovery will not continue because errors where raised.")
 			returnValue = 1
 			return
 		}
 
 		core.Log(core.LogInfo, "Scanning data files")
-		repairCount := storageHandler.RecoverData(startfile, endfile)
+		repairCount := storageHandler.store.RecoverData(startfile, endfile)
 
 		if repairCount > 0 {
 			core.Log(core.LogInfo, "Performed %d repairs. Please run a verify.", repairCount)
@@ -482,7 +474,7 @@ func run() (returnValue int) {
 		for i, r := range rootlist {
 			tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
 			core.Log(core.LogDebug, "Verify data referenced by %s", tag)
-			if err := storageHandler.CheckBlockTree(r.BlockID, verifiedBlocks, optVerifyContent, optReadOnly); err != nil {
+			if err := storageHandler.store.CheckBlockTree(r.BlockID, verifiedBlocks, optVerifyContent, optReadOnly); err != nil {
 				if optReadOnly {
 					core.Abort("%v", err)
 				} else {
@@ -497,7 +489,7 @@ func run() (returnValue int) {
 		}
 
 		core.Log(core.LogInfo, "Verifying unreferenced index entries")
-		storageHandler.CheckIndexes(verifiedBlocks, optVerifyContent, optReadOnly)
+		storageHandler.store.CheckIndexes(verifiedBlocks, optVerifyContent, optReadOnly)
 
 		core.Log(core.LogInfo, "Verify completed in %.1f minutes", time.Since(start).Minutes())
 		if errorCount > 0 {

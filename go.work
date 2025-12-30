@@ -4,6 +4,7 @@ use (
 	./pkg/core
 	./pkg/filelock
 	./pkg/accountdb
+	./pkg/storagedb
 	./server
 	./hashback
 )
