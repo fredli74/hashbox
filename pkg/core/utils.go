@@ -115,8 +115,8 @@ func Log(level int, format string, a ...interface{}) {
 	}
 }
 
-var humanUnitName []string = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
 var shortHumanUnitName []string = []string{"B", "K", "M", "G", "T", "P", "E"}
+var humanUnitName []string = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
 
 func unitize(size int64, limit int) (floatSize float64, unit int, precision int) {
 	floatSize = float64(size)
@@ -131,14 +131,19 @@ func unitize(size int64, limit int) (floatSize float64, unit int, precision int)
 	return floatSize, unit, precision
 }
 
-func HumanSize(size int64) string {
-	s, u, p := unitize(size, len(humanUnitName))
-	return fmt.Sprintf("%.*f %s", p, s, humanUnitName[u])
-}
 func ShortHumanSize(size int64) string {
 	s, u, p := unitize(size, len(shortHumanUnitName))
 	return fmt.Sprintf("%.*f%s", p, s, shortHumanUnitName[u])
 }
+func HumanSize(size int64) string {
+	s, u, p := unitize(size, len(humanUnitName))
+	return fmt.Sprintf("%.*f %s", p, s, humanUnitName[u])
+}
+// CompactHumanSize is like HumanSize but removes whitespace (e.g. "1.2KiB").
+func CompactHumanSize(size int64) string {
+	return strings.ReplaceAll(HumanSize(size), " ", "")
+}
+
 
 const MaxUint = ^uint(0)
 const MinUint = 0
