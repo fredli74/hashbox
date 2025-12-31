@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -118,7 +119,7 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 
 		// Fill the fileData buffer
 		core.CopyNOrPanic(&fileData, file, maxBlockSize-fileData.Len())
-		fileData.ReadSeek(0, os.SEEK_CUR) // TODO: figure out why this line is here because I do not remember
+		fileData.ReadSeek(0, io.SeekCurrent) // TODO: figure out why this line is here because I do not remember
 
 		var splitPosition int = fileData.Len()
 		if fileData.Len() > MIN_BLOCK_SIZE*2 { // Candidate for rolling sum split
@@ -134,11 +135,11 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 
 			for rollInPos < fileData.Len() {
 				if rollInPos-rollInBase >= len(rollInSlice) { // Next slice please
-					rollInBase, _ = rollIn.ReadSeek(len(rollInSlice), os.SEEK_CUR)
+					rollInBase, _ = rollIn.ReadSeek(len(rollInSlice), io.SeekCurrent)
 					rollInSlice, _ = rollIn.ReadSlice()
 				}
 				if rollOutPos-rollOutBase >= len(rollOutSlice) { // Next slice please
-					rollOutBase, _ = rollOut.ReadSeek(len(rollOutSlice), os.SEEK_CUR)
+					rollOutBase, _ = rollOut.ReadSeek(len(rollOutSlice), io.SeekCurrent)
 					rollOutSlice, _ = rollOut.ReadSlice()
 				}
 
@@ -881,37 +882,29 @@ func (r *referenceEngine) findReference(path string) *FileEntry {
 }
 
 func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
-	if r.cacheCurrent == nil {
-		panic(errors.New("ASSERT, cacheCurrent == nil on reserveReference in an active referenceEngine"))
-	}
-	l, err := r.cacheCurrent.Seek(0, os.SEEK_CUR)
+	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent == nil on reserveReference in an active referenceEngine")
+	l, err := r.cacheCurrent.Seek(0, io.SeekCurrent)
 	core.AbortOn(err)
 	entry.Serialize(r.cacheCurrent)
 	return l
 }
 
 func (r *referenceEngine) storeReference(entry *FileEntry) {
-	if r.cacheCurrent == nil {
-		panic(errors.New("ASSERT, cacheCurrent == nil on storeReference in an active referenceEngine"))
-	}
+	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent == nil on storeReference in an active referenceEngine")
 	entry.Serialize(r.cacheCurrent)
 }
 
 func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
-	if r.cacheCurrent == nil {
-		panic(errors.New("ASSERT, cacheCurrent == nil on storeReferenceDir in an active referenceEngine"))
-	}
-	r.cacheCurrent.Seek(location, os.SEEK_SET)
+	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent == nil on storeReferenceDir in an active referenceEngine")
+	r.cacheCurrent.Seek(location, io.SeekStart)
 	entry.Serialize(r.cacheCurrent)
 
-	r.cacheCurrent.Seek(0, os.SEEK_END)
+	r.cacheCurrent.Seek(0, io.SeekEnd)
 	entryEOD.Serialize(r.cacheCurrent)
 }
 
 func (r *referenceEngine) Commit(rootID core.Byte128) {
-	if r.cacheCurrent == nil {
-		panic(errors.New("ASSERT, cacheCurrent == nil on commit in an active referenceEngine"))
-	}
+	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent must not be nil on commit")
 
 	tempPath := r.cacheCurrent.Name()
 	newCachePath := r.cacheFilePathName(rootID)

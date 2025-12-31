@@ -57,7 +57,7 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 	// TODO: Decrypt block
 
 	d := block.Data
-	d.ReadSeek(0, os.SEEK_SET)
+	d.ReadSeek(0, io.SeekStart)
 	core.CopyOrPanic(f, &d)
 	session.WriteData += int64(d.Len())
 	d.Release()
@@ -257,8 +257,8 @@ func (session *BackupSession) diffFileData(f *os.File, blockID core.Byte128, Dec
 	d := block.Data
 	defer d.Release()
 
-	d.ReadSeek(0, os.SEEK_SET)
-	offset, _ := f.Seek(0, os.SEEK_CUR)
+	d.ReadSeek(0, io.SeekStart)
+	offset, _ := f.Seek(0, io.SeekCurrent)
 
 	if !session.diffAndPrint(offset, &d, f) {
 		return false

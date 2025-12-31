@@ -9,7 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 
 	"github.com/fredli74/hashbox/pkg/core"
 )
@@ -79,7 +79,7 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 
 		datSize := datFile.Size()
 		core.Log(core.LogInfo, "Scanning data file #%d (%s)", datFileNumber, core.HumanSize(datSize))
-		datFile.Reader.Seek(storageFileHeaderSize, os.SEEK_SET)
+		datFile.Reader.Seek(storageFileHeaderSize, io.SeekStart)
 
 		var lastProgress = -1
 		brokenSpot := int64(0)
@@ -113,7 +113,7 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 					brokenSpot = blockOffset
 				}
 				offset = blockOffset + 1
-				datFile.Reader.Seek(offset, os.SEEK_SET)
+				datFile.Reader.Seek(offset, io.SeekStart)
 				if o, err := forwardToDataMarker(datFile.Reader); err == nil {
 					offset += o
 					core.Log(core.LogInfo, "Skipped forward to next block at %x:%x", datFileNumber, offset)
@@ -134,7 +134,7 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 				moveFileNum, moveOffset, moveFile := handler.findFreeOffset(storageFileTypeData, -1)
 				core.Log(core.LogDebug, "Rewriting block %x at (%x:%x)", dataEntry.block.BlockID[:], moveFileNum, moveOffset)
 				moveSize := uint32(dataEntry.Serialize(moveFile.Writer))
-				core.ASSERT(moveSize == dataSize)
+				core.ASSERT(moveSize == dataSize, "incorrect move size")
 
 				core.Log(core.LogTrace, "Creating new meta for block %x", dataEntry.block.BlockID[:])
 				metaEntry := storageMetaEntry{blockID: dataEntry.block.BlockID, dataSize: dataSize, links: dataEntry.block.Links}
@@ -152,7 +152,7 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 				continue
 			} else if brokenSpot > 0 {
 				core.Log(core.LogTrace, "Creating a free space marker at %x:%x (skip %d bytes)", datFileNumber, brokenSpot, blockOffset-brokenSpot)
-				datFile.Writer.Seek(brokenSpot, os.SEEK_SET)
+				datFile.Writer.Seek(brokenSpot, io.SeekStart)
 				writeDataGap(datFile.Writer, blockOffset-brokenSpot)
 				brokenSpot = 0
 			}
@@ -256,7 +256,7 @@ func (handler *Store) checkBlockFromIXEntry(ixEntry *storageIXEntry, verifiedBlo
 		defer dataEntry.Release()
 
 		core.Log(core.LogTrace, "Read %x:%x block %x", dataFileNumber, dataOffset, ixEntry.blockID[:])
-		dataFile.Reader.Seek(dataOffset, os.SEEK_SET)
+		dataFile.Reader.Seek(dataOffset, io.SeekStart)
 		if fullVerify {
 			dataEntry.Unserialize(dataFile.Reader)
 			dataEntry.block.UncompressData()
@@ -349,7 +349,7 @@ func (handler *Store) CheckIndexes(verifiedBlocks map[core.Byte128]bool, fullVer
 
 		reader, err := core.OpenBufferedReader(ixFile.Path, 32768, ixFile.Flag)
 		core.AbortOn(err)
-		_, err = reader.Seek(storageFileHeaderSize, os.SEEK_SET)
+		_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
 		core.AbortOn(err)
 
 		lastProgress := -1
@@ -371,7 +371,7 @@ func (handler *Store) CheckIndexes(verifiedBlocks map[core.Byte128]bool, fullVer
 						core.Log(core.LogWarning, "Block tree for %x was marked invalid: %v", ixEntry.blockID[:], err)
 					}
 				} else {
-					core.ASSERT(v == true)
+					core.ASSERT(v == true, "Block %x was previously marked invalid", ixEntry.blockID[:])
 				}
 			}
 

@@ -62,7 +62,7 @@ func (b *HashboxBlock) Serialize(w io.Writer) (size int) {
 	size += WriteUint32(w, uint32(b.Data.Len()))
 	l := CopyOrPanic(w, &b.Data)
 	if l != b.Data.Len() {
-		panic(fmt.Errorf("ASSERT! Writing block %x with data length %d bytes, but wrote %d bytes", b.BlockID[:], b.Data.Len(), l))
+		panic(fmt.Errorf("Writing block %x with data length %d bytes, but wrote %d bytes", b.BlockID[:], b.Data.Len(), l))
 	}
 	size += l
 
@@ -94,9 +94,7 @@ func (b *HashboxBlock) Unserialize(r io.Reader) (size int) {
 }
 
 func (b *HashboxBlock) HashData() (BlockID Byte128) {
-	if b.Compressed {
-		panic("ASSERT! Called HashData on compressed data")
-	}
+	ASSERT(!b.Compressed, "HashData called on compressed data")
 
 	hash := md5.New()
 	b.SerializeLinks(hash)

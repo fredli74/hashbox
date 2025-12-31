@@ -245,7 +245,7 @@ func (store *Store) findFreeOffset(fileType int, ignore int32) (freeFileNum int3
 	for {
 		if store.topFileNumber[fileType] != ignore {
 			freeFile = store.getNumberedFile(fileType, store.topFileNumber[fileType], true)
-			freeOffset, _ = freeFile.Writer.Seek(0, os.SEEK_END)
+			freeOffset, _ = freeFile.Writer.Seek(0, io.SeekEnd)
 			if freeOffset <= storageOffsetLimit {
 				break
 			}
@@ -271,7 +271,7 @@ func (store *Store) setDeadSpace(fileType int, fileNumber int32, size int64, add
 	}
 
 	// Write new deadspace to file
-	file.Writer.Seek(storageFileDeadspaceOffset, os.SEEK_SET)
+	file.Writer.Seek(storageFileDeadspaceOffset, io.SeekStart)
 	core.WriteInt64(file.Writer, store.filedeadspace[name])
 }
 

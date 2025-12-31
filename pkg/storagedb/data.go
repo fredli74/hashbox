@@ -8,7 +8,6 @@ package storagedb
 import (
 	"bytes"
 	"io"
-	"os"
 
 	"github.com/fredli74/hashbox/pkg/core"
 )
@@ -117,7 +116,7 @@ func (handler *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, e
 	if dataFile == nil {
 		core.Abort("Error reading block from file %x, file does not exist", dataFileNumber)
 	}
-	dataFile.Reader.Seek(dataOffset, os.SEEK_SET)
+	dataFile.Reader.Seek(dataOffset, io.SeekStart)
 
 	var dataEntry storageDataEntry
 	dataEntry.Unserialize(dataFile.Reader)

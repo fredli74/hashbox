@@ -8,6 +8,7 @@ package core
 
 import (
 	"bufio"
+	"io"
 	"os"
 )
 
@@ -86,7 +87,7 @@ func OpenBufferedFile(path string, buffersize int, flag int, perm os.FileMode) (
 }
 func (b *BufferedFile) Size() int64 {
 	b.Writer.Flush() // Always flush in case we want to read what we have written
-	size, err := b.Writer.Seek(0, os.SEEK_END)
+	size, err := b.Writer.Seek(0, io.SeekEnd)
 	AbortOn(err)
 	return size
 }

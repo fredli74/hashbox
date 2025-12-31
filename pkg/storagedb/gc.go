@@ -7,7 +7,7 @@ package storagedb
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"time"
 
 	"github.com/fredli74/hashbox/pkg/core"
@@ -49,7 +49,7 @@ func (handler *Store) MarkIndexes(roots []core.Byte128, Paint bool) {
 				core.Abort("Error marking index entry in file %x, offset %x, file does not exist", ixFileNumber, ixOffset)
 			}
 
-			ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
+			ixFile.Writer.Seek(ixOffset, io.SeekStart)
 			core.WriteUint16(ixFile.Writer, entry.flags)
 
 			visited[blockID] = true // Mark that we do not need to check this block again
@@ -84,7 +84,7 @@ func (handler *Store) SweepIndexes(Paint bool) {
 		// Open a separate reader that is not moved by any other routines
 		reader, err := core.OpenBufferedReader(ixFile.Path, 32768, ixFile.Flag)
 		core.AbortOn(err)
-		_, err = reader.Seek(storageFileHeaderSize, os.SEEK_SET)
+		_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
 		core.AbortOn(err)
 
 		var lastProgress = -1
@@ -124,7 +124,7 @@ func (handler *Store) SweepIndexes(Paint bool) {
 						core.Abort("findIXOffset for %x (%x:%x) returned an invalid offset %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
 					}
 				}
-				ixFile.Writer.Seek(offset, os.SEEK_SET)
+				ixFile.Writer.Seek(offset, io.SeekStart)
 				core.WriteUint16(ixFile.Writer, entry.flags)
 			}
 
@@ -157,7 +157,7 @@ func (handler *Store) CompactIndexes(Paint bool) {
 			core.Log(core.LogInfo, "Compacting index file #%d (%s)", ixFileNumber, core.HumanSize(ixSize))
 		}
 
-		_, err := ixFile.Reader.Seek(storageFileHeaderSize, os.SEEK_SET)
+		_, err := ixFile.Reader.Seek(storageFileHeaderSize, io.SeekStart)
 		core.AbortOn(err)
 
 		truncPoint := int64(storageFileHeaderSize)
@@ -169,7 +169,7 @@ func (handler *Store) CompactIndexes(Paint bool) {
 
 			if entry.flags&entryFlagInvalid == entryFlagInvalid {
 				clearedBlocks++
-				ixFile.Writer.Seek(offset, os.SEEK_SET)
+				ixFile.Writer.Seek(offset, io.SeekStart)
 				blankEntry.Serialize(ixFile.Writer)
 				core.Log(core.LogDebug, "Cleared index at %x:%x", ixFileNumber, offset)
 			} else if entry.flags&entryFlagExists == entryFlagExists {
@@ -214,7 +214,7 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 
 	reader, err := core.OpenBufferedReader(file.Path, 32768, file.Flag)
 	core.AbortOn(err)
-	_, err = reader.Seek(storageFileHeaderSize, os.SEEK_SET)
+	_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
 	core.AbortOn(err)
 
 	type relocation struct {
@@ -258,7 +258,7 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 				break
 			} else {
 				written := int64(entry.Serialize(freeFile.Writer))
-				core.ASSERT(written == int64(entrySize))
+				core.ASSERT(written == int64(entrySize), "incorrect written size")
 				core.Log(core.LogDebug, "Copied block %x (%d bytes) from %x:%x to %x:%x", entryBlockID[:], written, fileNumber, readOffset, freeFileNum, freeOffset)
 				moved += int64(entrySize)
 

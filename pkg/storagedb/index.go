@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/fredli74/hashbox/pkg/core"
 )
@@ -74,7 +73,7 @@ OuterLoop:
 			core.Log(core.LogTrace, "%x > %x", ixOffset, ixSize)
 			break
 		}
-		_, err := ixFile.Reader.Seek(ixOffset, os.SEEK_SET)
+		_, err := ixFile.Reader.Seek(ixOffset, io.SeekStart)
 		core.AbortOn(err)
 
 		for i := 0; i < storageIXEntryProbeLimit; i++ {
@@ -118,12 +117,12 @@ func (handler *Store) readIXEntry(blockID core.Byte128) (entry *storageIXEntry, 
 
 func (handler *Store) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *storageIXEntry, forceFlush bool) {
 	var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, true)
-	ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
+	ixFile.Writer.Seek(ixOffset, io.SeekStart)
 	finalFlags := entry.flags
 	entry.flags |= entryFlagInvalid // Write record as invalid first
 	entry.Serialize(ixFile.Writer)
 
-	ixFile.Writer.Seek(ixOffset, os.SEEK_SET)
+	ixFile.Writer.Seek(ixOffset, io.SeekStart)
 	core.WriteUint16(ixFile.Writer, finalFlags) // Write correct flags
 	if forceFlush == true {
 		ixFile.Sync()

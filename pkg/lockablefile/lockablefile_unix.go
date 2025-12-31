@@ -8,7 +8,7 @@
 package lockablefile
 
 import (
-	"os"
+	"io"
 
 	"github.com/fredli74/hashbox/pkg/core"
 	"golang.org/x/sys/unix"
@@ -19,7 +19,7 @@ func (l *LockableFile) Lock() {
 	core.ASSERT(l != nil && l.f != nil, "Lock called on nil file")
 	flock := unix.Flock_t{
 		Type:   unix.F_WRLCK,
-		Whence: int16(os.SEEK_SET),
+		Whence: int16(io.SeekStart),
 		Start:  0,
 		Len:    0, // whole file
 	}
@@ -31,7 +31,7 @@ func (l *LockableFile) LockShared() {
 	core.ASSERT(l != nil && l.f != nil, "LockShared called on nil file")
 	flock := unix.Flock_t{
 		Type:   unix.F_RDLCK,
-		Whence: int16(os.SEEK_SET),
+		Whence: int16(io.SeekStart),
 		Start:  0,
 		Len:    0, // whole file
 	}
@@ -43,7 +43,7 @@ func (l *LockableFile) Unlock() {
 	core.ASSERT(l != nil && l.f != nil, "Unlock called on nil file")
 	flock := unix.Flock_t{
 		Type:   unix.F_UNLCK,
-		Whence: int16(os.SEEK_SET),
+		Whence: int16(io.SeekStart),
 		Start:  0,
 		Len:    0,
 	}
