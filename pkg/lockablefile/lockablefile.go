@@ -5,7 +5,11 @@
 
 package lockablefile
 
-import "os"
+import (
+	"os"
+
+	"github.com/fredli74/hashbox/pkg/core"
+)
 
 // LockableFile wraps an *os.File with lock helpers.
 type LockableFile struct {
@@ -35,9 +39,7 @@ func (l *LockableFile) File() *os.File {
 }
 
 // Close releases any lock (via close) and closes the file.
-func (l *LockableFile) Close() error {
-	if l == nil || l.f == nil {
-		return nil
-	}
-	return l.f.Close()
+func (l *LockableFile) Close() {
+	core.ASSERT(l != nil && l.f != nil, "Close called on nil file")
+	core.AbortOn(l.f.Close())
 }

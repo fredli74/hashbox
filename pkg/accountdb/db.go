@@ -52,8 +52,11 @@ func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) 
 	defer file.Close()
 	var header dbFileHeader
 	header.Unserialize(file)
-	if header.version != dbVersion || header.filetype != dbFileTypeDatabase {
+	if header.filetype != dbFileTypeDatabase {
 		core.Abort("%s is not a valid db file", filename)
+	}
+	if header.version != dbVersion {
+		core.Abort("Unsupported db file version in %s", filename)
 	}
 	var c DBStateCollection
 	c.Unserialize(file)

@@ -90,7 +90,7 @@ func (handler *AccountHandler) dispatcher() {
 				case accounthandlerAddset:
 					add := q.data.(queryAddDatasetState)
 
-					result := handler.store.AppendAddState(add.AccountNameH, add.DatasetName, add.State)
+					handler.store.AppendAddState(add.AccountNameH, add.DatasetName, add.State)
 
 					{ // update the db file
 						collection := handler.store.ReadDBFile(add.AccountNameH, add.DatasetName)
@@ -110,12 +110,12 @@ func (handler *AccountHandler) dispatcher() {
 						handler.store.WriteDBFile(add.AccountNameH, add.DatasetName, collection)
 					}
 
-					q.result <- result
+					q.result <- nil
 
 				case accounthandlerRemoveset:
 					del := q.data.(queryRemoveDatasetState)
 
-					result := handler.store.AppendDelState(del.AccountNameH, del.DatasetName, del.StateID)
+					handler.store.AppendDelState(del.AccountNameH, del.DatasetName, del.StateID)
 
 					{ // update the db file
 						collection := handler.store.ReadDBFile(del.AccountNameH, del.DatasetName)
@@ -133,7 +133,7 @@ func (handler *AccountHandler) dispatcher() {
 						handler.store.WriteDBFile(del.AccountNameH, del.DatasetName, collection)
 					}
 
-					q.result <- result
+					q.result <- nil
 
 				default:
 					core.Abort("Unknown query in AccountHandler causing hangup: %d", q.query)

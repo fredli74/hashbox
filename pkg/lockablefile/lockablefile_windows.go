@@ -8,41 +8,34 @@
 package lockablefile
 
 import (
-	"os"
-
+	"github.com/fredli74/hashbox/pkg/core"
 	"golang.org/x/sys/windows"
 )
 
 // Lock acquires an exclusive lock on the file using LockFileEx.
-func (l *LockableFile) Lock() error {
-	if l == nil || l.f == nil {
-		return os.ErrInvalid
-	}
-	return lockFileEx(l.f.Fd(), windows.LOCKFILE_EXCLUSIVE_LOCK)
+func (l *LockableFile) Lock() {
+	core.ASSERT(l != nil && l.f != nil, "Lock called on nil file")
+	lockFileEx(l.f.Fd(), windows.LOCKFILE_EXCLUSIVE_LOCK)
 }
 
 // LockShared acquires a shared lock on the file using LockFileEx.
-func (l *LockableFile) LockShared() error {
-	if l == nil || l.f == nil {
-		return os.ErrInvalid
-	}
-	return lockFileEx(l.f.Fd(), 0)
+func (l *LockableFile) LockShared() {
+	core.ASSERT(l != nil && l.f != nil, "LockShared called on nil file")
+	lockFileEx(l.f.Fd(), 0)
 }
 
 // Unlock releases the lock using UnlockFileEx.
-func (l *LockableFile) Unlock() error {
-	if l == nil || l.f == nil {
-		return os.ErrInvalid
-	}
-	return unlockFileEx(l.f.Fd())
+func (l *LockableFile) Unlock() {
+	core.ASSERT(l != nil && l.f != nil, "Unlock called on nil file")
+	unlockFileEx(l.f.Fd())
 }
 
-func lockFileEx(fd uintptr, flags uint32) error {
+func lockFileEx(fd uintptr, flags uint32) {
 	var ol windows.Overlapped
-	return windows.LockFileEx(windows.Handle(fd), flags, 0, 1, 0, &ol)
+	core.AbortOn(windows.LockFileEx(windows.Handle(fd), flags, 0, 1, 0, &ol))
 }
 
-func unlockFileEx(fd uintptr) error {
+func unlockFileEx(fd uintptr) {
 	var ol windows.Overlapped
-	return windows.UnlockFileEx(windows.Handle(fd), 0, 1, 0, &ol)
+	core.AbortOn(windows.UnlockFileEx(windows.Handle(fd), 0, 1, 0, &ol))
 }

@@ -8,7 +8,6 @@ package accountdb
 import (
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -47,33 +46,37 @@ func (t *DBTx) Unserialize(r io.Reader) {
 }
 
 // AppendTx appends a transaction to the dataset log.
-func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx DBTx) error {
+// Panics on unexpected IO/lock errors.
+func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx DBTx) {
 	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
 	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer lock.Close()
-	core.AbortOn(lock.Lock())
+	lock.Lock()
 	defer lock.Unlock()
 
 	file := lock.File()
 
-	pos, _ := file.Seek(0, 2)
+	pos, err := file.Seek(0, io.SeekEnd)
+	core.AbortOn(err)
 	if pos == 0 { // New file, write the header
 		header := dbFileHeader{filetype: dbFileTypeTransaction, version: dbVersion, datasetName: datasetName}
 		header.Serialize(file)
 	}
 	tx.Serialize(file)
-	return nil
+	// Explicit fsync to persist the append before releasing the lock; Close alone
+	// does not guarantee durability.
+	core.AbortOn(file.Sync())
 }
 
 // AppendAddState appends an add tx with current timestamp.
-func (fs *Store) AppendAddState(accountNameH core.Byte128, datasetName core.String, state core.DatasetState) error {
-	return fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: dbTxTypeAdd, Data: state})
+func (fs *Store) AppendAddState(accountNameH core.Byte128, datasetName core.String, state core.DatasetState) {
+	fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: dbTxTypeAdd, Data: state})
 }
 
 // AppendDelState appends a delete tx with current timestamp.
-func (fs *Store) AppendDelState(accountNameH core.Byte128, datasetName core.String, stateID core.Byte128) error {
-	return fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: dbTxTypeDel, Data: stateID})
+func (fs *Store) AppendDelState(accountNameH core.Byte128, datasetName core.String, stateID core.Byte128) {
+	fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: dbTxTypeDel, Data: stateID})
 }
 
 // StateArrayFromTransactions returns current live states by replaying the transaction log.
@@ -97,9 +100,11 @@ func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetNa
 		pointInHistory = tx.Timestamp
 		switch tx.TxType {
 		case dbTxTypeAdd:
-			stateMap[tx.Data.(core.DatasetState).StateID] = tx.Data.(core.DatasetState)
+			state := tx.Data.(core.DatasetState)
+			stateMap[state.StateID] = state
 		case dbTxTypeDel:
-			delete(stateMap, tx.Data.(core.Byte128))
+			stateID := tx.Data.(core.Byte128)
+			delete(stateMap, stateID)
 		default:
 			core.Abort("%s is corrupt, invalid transaction type found: %x", filename, tx.TxType)
 		}
@@ -119,47 +124,46 @@ type TxReader struct {
 // NewTxReader opens and validates a .trn file and returns a reader.
 func (fs *Store) NewTxReader(accountNameH core.Byte128, datasetName core.String) (*TxReader, error) {
 	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
-	if _, err := os.Stat(filename); err != nil {
-		return nil, err
-	}
 	lock, err := lockablefile.Open(filename)
 	if err != nil {
 		return nil, err
 	}
-	if err := lock.LockShared(); err != nil {
+
+	locked := false
+	defer func() {
+		if rec := recover(); rec != nil {
+			if locked {
+				lock.Unlock()
+			}
 		lock.Close()
-		return nil, err
+			panic(rec)
 	}
-	file := lock.File()
+	}()
+
+	lock.LockShared()
+	locked = true
+
+	f := lock.File()
 	var header dbFileHeader
-	header.Unserialize(file)
+	header.Unserialize(f)
 	if header.filetype != dbFileTypeTransaction {
-		lock.Unlock()
-		lock.Close()
-		return nil, fmt.Errorf("%s is not a valid transaction file", filename)
+		core.Abort("File %s is not a valid transaction file", filename)
 	}
 	if header.version != dbVersion {
-		lock.Unlock()
-		lock.Close()
-		return nil, fmt.Errorf("%s has unsupported version %d (expected %d)", filename, header.version, dbVersion)
+		core.Abort("Unsupported trn file version %x in %s", header.version, filename)
 	}
 	if header.datasetName != datasetName {
-		lock.Unlock()
-		lock.Close()
-		return nil, fmt.Errorf("%s dataset name mismatch in header", filename)
+		core.Abort("%s dataset name mismatch in header", filename)
 	}
 	return &TxReader{fh: lock}, nil
 }
 
 // Close closes the reader.
-func (r *TxReader) Close() error {
-	if r == nil || r.fh == nil {
-		return nil
-	}
+func (r *TxReader) Close() {
+	core.ASSERT(r != nil && r.fh != nil, "TxReader.Close on nil handle")
 	r.fh.Unlock()
-	err := r.fh.Close()
+	r.fh.Close()
 	r.fh = nil
-	return err
 }
 
 // Seek sets the underlying reader position.
@@ -167,14 +171,8 @@ func (r *TxReader) Seek(offset int64, whence int) (int64, error) {
 	return r.fh.File().Seek(offset, whence)
 }
 
-// Pos returns the current reader offset.
-func (r *TxReader) Pos() (int64, error) {
-	return r.fh.File().Seek(0, io.SeekCurrent)
-}
-
 // Next returns the next tx or nil on short read/EOF.
 func (r *TxReader) Next() *DBTx {
-	var tx DBTx
 	defer func() {
 		if rec := recover(); rec != nil {
 			if e, ok := rec.(error); !ok || !(errors.Is(e, io.EOF) || errors.Is(e, io.ErrUnexpectedEOF)) {
@@ -182,8 +180,14 @@ func (r *TxReader) Next() *DBTx {
 			}
 		}
 	}()
+	var tx DBTx
 	tx.Unserialize(r.fh.File())
 	return &tx
+}
+
+// Pos returns the current offset.
+func (r *TxReader) Pos() (int64, error) {
+	return r.fh.File().Seek(0, io.SeekCurrent)
 }
 
 // GetDatasetNameFromTransactionFile returns the dataset name stored in a .trn file header.
@@ -195,12 +199,12 @@ func (fs *Store) GetDatasetNameFromTransactionFile(filename string) core.String 
 	lock, err := lockablefile.Open(fullpath)
 	core.AbortOn(err)
 	defer lock.Close()
-	core.AbortOn(lock.LockShared())
+	lock.LockShared()
 	defer lock.Unlock()
-	fil := lock.File()
+	f := lock.File()
 
 	var header dbFileHeader
-	header.Unserialize(fil)
+	header.Unserialize(f)
 	if header.filetype != dbFileTypeTransaction {
 		core.Abort("File %s is not a valid transaction file", filename)
 	}

@@ -46,10 +46,7 @@ func TestLockHelperProcess(t *testing.T) {
 		os.Exit(1)
 	}
 	defer l.Close()
-	if err := l.Lock(); err != nil {
-		fmt.Printf("lock: %v\n", err)
-		os.Exit(1)
-	}
+	l.Lock()
 	fmt.Println("locked") // Signal parent that the lock is held
 	time.Sleep(200 * time.Millisecond)
 	l.Unlock()
@@ -74,10 +71,7 @@ func TestLockWriterHelperProcess(t *testing.T) {
 		os.Exit(1)
 	}
 	defer l.Close()
-	if err := l.Lock(); err != nil {
-		fmt.Fprintf(os.Stderr, "lock: %v\n", err)
-		os.Exit(1)
-	}
+	l.Lock()
 	defer l.Unlock()
 
 	file, err := os.OpenFile(outPath, os.O_CREATE|os.O_RDWR, 0666)
@@ -127,12 +121,15 @@ func TestLockBlocksAcrossProcesses(t *testing.T) {
 	}
 	defer l.Close()
 
-	acquired := make(chan error, 1)
-	go func() { acquired <- l.Lock() }()
+	acquired := make(chan struct{}, 1)
+	go func() {
+		l.Lock()
+		acquired <- struct{}{}
+	}()
 
 	select {
-	case err := <-acquired:
-		t.Fatalf("lock acquired too early (err=%v), expected to block", err)
+	case <-acquired:
+		t.Fatalf("lock acquired too early, expected to block")
 	case <-time.After(50 * time.Millisecond):
 		// still blocked, good
 	}
@@ -143,17 +140,12 @@ func TestLockBlocksAcrossProcesses(t *testing.T) {
 	}
 
 	select {
-	case err := <-acquired:
-		if err != nil {
-			t.Fatalf("lock after helper release failed: %v", err)
-		}
+	case <-acquired:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("lock did not acquire after helper exited")
 	}
 
-	if err := l.Unlock(); err != nil {
-		t.Fatalf("unlock in parent: %v", err)
-	}
+	l.Unlock()
 }
 
 func TestLockOrdersConcurrentWrites(t *testing.T) {
