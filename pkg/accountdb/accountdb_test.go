@@ -50,13 +50,13 @@ func TestStateArrayFromTransactions(t *testing.T) {
 	state1 := makeState("one", 10, 4)
 	state2 := makeState("two", 20, 8)
 
-	if err := store.AppendTx(account, dataset, DBTx{timestamp: 1, txType: dbTxTypeAdd, data: state1}); err != nil {
+	if err := store.AppendTx(account, dataset, DBTx{Timestamp: 1, TxType: dbTxTypeAdd, Data: state1}); err != nil {
 		t.Fatalf("append tx1: %v", err)
 	}
-	if err := store.AppendTx(account, dataset, DBTx{timestamp: 2, txType: dbTxTypeAdd, data: state2}); err != nil {
+	if err := store.AppendTx(account, dataset, DBTx{Timestamp: 2, TxType: dbTxTypeAdd, Data: state2}); err != nil {
 		t.Fatalf("append tx2: %v", err)
 	}
-	if err := store.AppendTx(account, dataset, DBTx{timestamp: 3, txType: dbTxTypeDel, data: state1.StateID}); err != nil {
+	if err := store.AppendTx(account, dataset, DBTx{Timestamp: 3, TxType: dbTxTypeDel, Data: state1.StateID}); err != nil {
 		t.Fatalf("append delete: %v", err)
 	}
 
@@ -76,10 +76,10 @@ func TestTxReaderStopsOnTruncatedEntry(t *testing.T) {
 	state1 := makeState("first", 5, 5)
 	state2 := makeState("second", 6, 6)
 
-	if err := store.AppendTx(account, dataset, DBTx{timestamp: 1, txType: dbTxTypeAdd, data: state1}); err != nil {
+	if err := store.AppendTx(account, dataset, DBTx{Timestamp: 1, TxType: dbTxTypeAdd, Data: state1}); err != nil {
 		t.Fatalf("append tx1: %v", err)
 	}
-	if err := store.AppendTx(account, dataset, DBTx{timestamp: 2, txType: dbTxTypeAdd, data: state2}); err != nil {
+	if err := store.AppendTx(account, dataset, DBTx{Timestamp: 2, TxType: dbTxTypeAdd, Data: state2}); err != nil {
 		t.Fatalf("append tx2: %v", err)
 	}
 
@@ -99,10 +99,10 @@ func TestTxReaderStopsOnTruncatedEntry(t *testing.T) {
 	defer r.Close()
 
 	tx := r.Next()
-	if tx == nil || tx.txType != dbTxTypeAdd {
+	if tx == nil || tx.TxType != dbTxTypeAdd {
 		t.Fatalf("unexpected first tx: %+v", tx)
 	}
-	if s, ok := tx.data.(core.DatasetState); !ok || s != state1 {
+	if s, ok := tx.Data.(core.DatasetState); !ok || s != state1 {
 		t.Fatalf("unexpected first tx: %+v", tx)
 	}
 

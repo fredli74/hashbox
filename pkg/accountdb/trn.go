@@ -19,28 +19,28 @@ import (
 )
 
 type DBTx struct {
-	timestamp int64
-	txType    uint32
-	data      interface{}
+	Timestamp int64
+	TxType    uint32
+	Data      interface{}
 }
 
 func (t *DBTx) Serialize(w io.Writer) {
-	core.WriteInt64(w, t.timestamp)
-	core.WriteUint32(w, t.txType)
-	t.data.(core.Serializer).Serialize(w)
+	core.WriteInt64(w, t.Timestamp)
+	core.WriteUint32(w, t.TxType)
+	t.Data.(core.Serializer).Serialize(w)
 }
 func (t *DBTx) Unserialize(r io.Reader) {
-	core.ReadInt64(r, &t.timestamp)
-	core.ReadUint32(r, &t.txType)
-	switch t.txType {
+	core.ReadInt64(r, &t.Timestamp)
+	core.ReadUint32(r, &t.TxType)
+	switch t.TxType {
 	case dbTxTypeAdd:
 		var s core.DatasetState
 		s.Unserialize(r)
-		t.data = s
+		t.Data = s
 	case dbTxTypeDel:
 		var s core.Byte128
 		s.Unserialize(r)
-		t.data = s
+		t.Data = s
 	default:
 		core.Abort("Corrupt transaction file")
 	}
@@ -68,12 +68,12 @@ func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx
 
 // AppendAddState appends an add tx with current timestamp.
 func (fs *Store) AppendAddState(accountNameH core.Byte128, datasetName core.String, state core.DatasetState) error {
-	return fs.AppendTx(accountNameH, datasetName, DBTx{timestamp: time.Now().UnixNano(), txType: dbTxTypeAdd, data: state})
+	return fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: dbTxTypeAdd, Data: state})
 }
 
 // AppendDelState appends a delete tx with current timestamp.
 func (fs *Store) AppendDelState(accountNameH core.Byte128, datasetName core.String, stateID core.Byte128) error {
-	return fs.AppendTx(accountNameH, datasetName, DBTx{timestamp: time.Now().UnixNano(), txType: dbTxTypeDel, data: stateID})
+	return fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: dbTxTypeDel, Data: stateID})
 }
 
 // StateArrayFromTransactions returns current live states by replaying the transaction log.
@@ -91,17 +91,17 @@ func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetNa
 		if tx == nil {
 			break
 		}
-		if tx.timestamp < pointInHistory {
-			core.Abort("%s is corrupt, timestamp check failed (%x < %x)", filename, tx.timestamp, pointInHistory)
+		if tx.Timestamp < pointInHistory {
+			core.Abort("%s is corrupt, timestamp check failed (%x < %x)", filename, tx.Timestamp, pointInHistory)
 		}
-		pointInHistory = tx.timestamp
-		switch tx.txType {
+		pointInHistory = tx.Timestamp
+		switch tx.TxType {
 		case dbTxTypeAdd:
-			stateMap[tx.data.(core.DatasetState).StateID] = tx.data.(core.DatasetState)
+			stateMap[tx.Data.(core.DatasetState).StateID] = tx.Data.(core.DatasetState)
 		case dbTxTypeDel:
-			delete(stateMap, tx.data.(core.Byte128))
+			delete(stateMap, tx.Data.(core.Byte128))
 		default:
-			core.Abort("%s is corrupt, invalid transaction type found: %x", filename, tx.txType)
+			core.Abort("%s is corrupt, invalid transaction type found: %x", filename, tx.TxType)
 		}
 	}
 
