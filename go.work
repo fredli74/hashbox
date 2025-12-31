@@ -7,4 +7,5 @@ use (
 	./pkg/storagedb
 	./server
 	./hashback
+	./util
 )
