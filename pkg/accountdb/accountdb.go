@@ -19,8 +19,8 @@ const (
 	dbFileExtensionTransaction string = ".trn"
 	dbFileTypeDatabase         uint32 = 0x48414442 // "HADB" Hashbox Account Database
 	dbFileExtensionDatabase    string = ".db"
-	dbTxTypeAdd                uint32 = 0x2B414444 // "+ADD"
-	dbTxTypeDel                uint32 = 0x2D44454C // "-DEL"
+	DbTxTypeAdd                uint32 = 0x2B414444 // "+ADD"
+	DbTxTypeDel                uint32 = 0x2D44454C // "-DEL"
 )
 
 type dbFileHeader struct {

@@ -32,11 +32,11 @@ func (t *DBTx) Unserialize(r io.Reader) {
 	core.ReadInt64(r, &t.Timestamp)
 	core.ReadUint32(r, &t.TxType)
 	switch t.TxType {
-	case dbTxTypeAdd:
+	case DbTxTypeAdd:
 		var s core.DatasetState
 		s.Unserialize(r)
 		t.Data = s
-	case dbTxTypeDel:
+	case DbTxTypeDel:
 		var s core.Byte128
 		s.Unserialize(r)
 		t.Data = s
@@ -71,12 +71,12 @@ func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx
 
 // AppendAddState appends an add tx with current timestamp.
 func (fs *Store) AppendAddState(accountNameH core.Byte128, datasetName core.String, state core.DatasetState) {
-	fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: dbTxTypeAdd, Data: state})
+	fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: DbTxTypeAdd, Data: state})
 }
 
 // AppendDelState appends a delete tx with current timestamp.
 func (fs *Store) AppendDelState(accountNameH core.Byte128, datasetName core.String, stateID core.Byte128) {
-	fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: dbTxTypeDel, Data: stateID})
+	fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: DbTxTypeDel, Data: stateID})
 }
 
 // StateArrayFromTransactions returns current live states by replaying the transaction log.
@@ -99,10 +99,10 @@ func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetNa
 		}
 		pointInHistory = tx.Timestamp
 		switch tx.TxType {
-		case dbTxTypeAdd:
+		case DbTxTypeAdd:
 			state := tx.Data.(core.DatasetState)
 			stateMap[state.StateID] = state
-		case dbTxTypeDel:
+		case DbTxTypeDel:
 			stateID := tx.Data.(core.Byte128)
 			delete(stateMap, stateID)
 		default:
@@ -114,6 +114,42 @@ func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetNa
 		states = append(states, core.DatasetStateEntry{State: s})
 	}
 	return states
+}
+
+// ReadTRNFile reads and validates the transaction log for a dataset.
+func (fs *Store) ReadTRNFile(accountNameH core.Byte128, datasetName core.String) []DBTx {
+	reader, err := fs.NewTxReader(accountNameH, datasetName)
+	core.AbortOn(err)
+	defer reader.Close()
+
+	var out []DBTx
+	for {
+		tx := reader.Next()
+		if tx == nil {
+			break
+		}
+		out = append(out, *tx)
+	}
+	return out
+}
+
+// WriteTRNFile truncates and writes a transaction log exclusively.
+func (fs *Store) WriteTRNFile(accountNameH core.Byte128, datasetName core.String, txs []DBTx) {
+	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
+	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
+	core.AbortOn(err)
+	defer lock.Close()
+	lock.Lock()
+	defer lock.Unlock()
+
+	f := lock.File()
+	header := dbFileHeader{filetype: dbFileTypeTransaction, version: dbVersion, datasetName: datasetName}
+	header.Serialize(f)
+	for _, tx := range txs {
+		tx.Serialize(f)
+	}
+	// Explicit fsync to persist the rewritten log before releasing the lock.
+	core.AbortOn(f.Sync())
 }
 
 // TxReader is a tolerant streaming reader over a .trn file.
@@ -135,9 +171,9 @@ func (fs *Store) NewTxReader(accountNameH core.Byte128, datasetName core.String)
 			if locked {
 				lock.Unlock()
 			}
-		lock.Close()
+			lock.Close()
 			panic(rec)
-	}
+		}
 	}()
 
 	lock.LockShared()

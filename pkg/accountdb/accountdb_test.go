@@ -50,9 +50,9 @@ func TestStateArrayFromTransactions(t *testing.T) {
 	state1 := makeState("one", 10, 4)
 	state2 := makeState("two", 20, 8)
 
-	store.AppendTx(account, dataset, DBTx{Timestamp: 1, TxType: dbTxTypeAdd, Data: state1})
-	store.AppendTx(account, dataset, DBTx{Timestamp: 2, TxType: dbTxTypeAdd, Data: state2})
-	store.AppendTx(account, dataset, DBTx{Timestamp: 3, TxType: dbTxTypeDel, Data: state1.StateID})
+	store.AppendTx(account, dataset, DBTx{Timestamp: 1, TxType: DbTxTypeAdd, Data: state1})
+	store.AppendTx(account, dataset, DBTx{Timestamp: 2, TxType: DbTxTypeAdd, Data: state2})
+	store.AppendTx(account, dataset, DBTx{Timestamp: 3, TxType: DbTxTypeDel, Data: state1.StateID})
 
 	states := store.StateArrayFromTransactions(account, dataset)
 	if len(states) != 1 {
@@ -70,8 +70,8 @@ func TestTxReaderStopsOnTruncatedEntry(t *testing.T) {
 	state1 := makeState("first", 5, 5)
 	state2 := makeState("second", 6, 6)
 
-	store.AppendTx(account, dataset, DBTx{Timestamp: 1, TxType: dbTxTypeAdd, Data: state1})
-	store.AppendTx(account, dataset, DBTx{Timestamp: 2, TxType: dbTxTypeAdd, Data: state2})
+	store.AppendTx(account, dataset, DBTx{Timestamp: 1, TxType: DbTxTypeAdd, Data: state1})
+	store.AppendTx(account, dataset, DBTx{Timestamp: 2, TxType: DbTxTypeAdd, Data: state2})
 
 	filename := store.datasetFilename(account, string(dataset)) + dbFileExtensionTransaction
 	info, err := os.Stat(filename)
@@ -89,7 +89,7 @@ func TestTxReaderStopsOnTruncatedEntry(t *testing.T) {
 	defer r.Close()
 
 	tx := r.Next()
-	if tx == nil || tx.TxType != dbTxTypeAdd {
+	if tx == nil || tx.TxType != DbTxTypeAdd {
 		t.Fatalf("unexpected first tx: %+v", tx)
 	}
 	if s, ok := tx.Data.(core.DatasetState); !ok || s != state1 {
