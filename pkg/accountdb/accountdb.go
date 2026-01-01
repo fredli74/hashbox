@@ -60,7 +60,7 @@ func (fs *Store) accountFilename(nameHash core.Byte128) string {
 	return filepath.Join(fs.DataDir, "account", name)
 }
 
-func (fs *Store) datasetFilename(aH core.Byte128, dName string) string {
+func (fs *Store) DatasetFilename(aH core.Byte128, dName core.String) string {
 	dNameH := core.Hash([]byte(dName))
 	return fs.accountFilename(aH) + "." + base64filename(dNameH[:])
 }

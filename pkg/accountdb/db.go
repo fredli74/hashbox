@@ -44,7 +44,7 @@ func (c *DBStateCollection) Unserialize(r io.Reader) {
 
 // ReadDBFile reads a .db cache file.
 func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) *DBStateCollection {
-	filename := fs.datasetFilename(accountNameH, string(datasetName)) + DbFileExtensionDatabase
+	filename := fs.DatasetFilename(accountNameH, datasetName) + DbFileExtensionDatabase
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil
@@ -65,7 +65,7 @@ func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) 
 
 // WriteDBFile writes a .db cache file and updates the .info dataset list.
 func (fs *Store) WriteDBFile(accountNameH core.Byte128, datasetName core.String, c *DBStateCollection) {
-	filename := fs.datasetFilename(accountNameH, string(datasetName)) + DbFileExtensionDatabase
+	filename := fs.DatasetFilename(accountNameH, datasetName) + DbFileExtensionDatabase
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer file.Close()

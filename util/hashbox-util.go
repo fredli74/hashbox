@@ -6,84 +6,114 @@ import (
 	"path/filepath"
 
 	cmd "github.com/fredli74/cmdparser"
+	"github.com/fredli74/hashbox/pkg/core"
 	"github.com/kardianos/osext"
 )
 
 var (
 	datDirectory string
 	idxDirectory string
+	showDeleted  bool
 )
 
 func main() {
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Fprintf(os.Stderr, "hashbox-util: %v\n", rec)
+			os.Exit(1)
+		}
+	}()
 	cmd.Title = "hashbox-util"
 
 	datDirectory, idxDirectory = defaultPaths()
-	cli := newCommandSet(datDirectory, idxDirectory)
 
-	cmd.StringOption("dat-path", "", "<path>", "Path to data directory (contains account/)", &datDirectory, cmd.Standard)
-	cmd.StringOption("idx-path", "", "<path>", "Path to index directory", &idxDirectory, cmd.Standard)
+	// Global options
+	cmd.StringOption("data", "", "<path>", "Path to data directory (contains account/)", &datDirectory, cmd.Standard)
+	cmd.StringOption("index", "", "<path>", "Path to index directory", &idxDirectory, cmd.Standard)
 
-	cmd.Command("list-accounts", "", func() {
-		if err := cli.listAccounts(); err != nil {
-			fmt.Fprintf(os.Stderr, "error listing accounts: %v\n", err)
-			os.Exit(1)
-		}
+	cmd.Command("list-accounts", "List all accounts", func() {
+		newCommandSet(datDirectory, idxDirectory).listAccounts()
 	})
 
-	cmd.Command("list-datasets", "<account name>", func() {
+	cmd.Command("delete-account", "<account>  Append deletes for all datasets/states in an account", func() {
 		if len(cmd.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "account name required")
-			os.Exit(1)
+			core.Abort("account required")
+		}
+		newCommandSet(datDirectory, idxDirectory).deleteAccount(cmd.Args[2])
+	})
+
+	cmd.Command("list-datasets", "<account name>  List datasets for an account", func() {
+		if len(cmd.Args) < 3 {
+			core.Abort("account name required")
 		}
 		accountName := cmd.Args[2]
-		if err := cli.listDatasets(accountName); err != nil {
-			fmt.Fprintf(os.Stderr, "error listing datasets: %v\n", err)
-			os.Exit(1)
-		}
+		newCommandSet(datDirectory, idxDirectory).listDatasets(accountName)
 	})
 
-	cmd.Command("list-states", "<account name> <dataset name>", func() {
+	cmd.Command("move-dataset", "<srcAccount> <srcDataset> <dstAccount> [dstDataset]  Merge/relocate dataset", func() {
+		if len(cmd.Args) < 5 {
+			core.Abort("srcAccount srcDataset dstAccount required")
+		}
+		dstDataset := cmd.Args[3]
+		if len(cmd.Args) >= 6 {
+			dstDataset = cmd.Args[5]
+		}
+		newCommandSet(datDirectory, idxDirectory).moveDataset(cmd.Args[2], cmd.Args[3], cmd.Args[4], dstDataset)
+	})
+
+	cmd.Command("delete-dataset", "<account> <dataset>  Append deletes for all states in a dataset", func() {
 		if len(cmd.Args) < 4 {
-			fmt.Fprintln(os.Stderr, "account and dataset required")
-			os.Exit(1)
+			core.Abort("account and dataset required")
+		}
+		newCommandSet(datDirectory, idxDirectory).deleteDataset(cmd.Args[2], cmd.Args[3])
+	})
+
+	cmd.BoolOption("show-deleted", "list-states", "Include deleted states when listing", &showDeleted, cmd.Standard)
+	cmd.Command("list-states", "<account name> <dataset name>  List states for a dataset", func() {
+		if len(cmd.Args) < 4 {
+			core.Abort("account and dataset required")
 		}
 		accountName := cmd.Args[2]
 		dataset := cmd.Args[3]
-		if err := cli.listStates(accountName, dataset); err != nil {
-			fmt.Fprintf(os.Stderr, "error listing states: %v\n", err)
-			os.Exit(1)
-		}
+		newCommandSet(datDirectory, idxDirectory).listStates(accountName, dataset)
 	})
 
-	cmd.Command("rebuild-db", "", func() {
-		err := cli.rebuildDB()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error rebuilding db/info: %v\n", err)
-			os.Exit(1)
+	cmd.Command("delete-state", "<account> <dataset> <stateID>  Append delete for a state", func() {
+		if len(cmd.Args) < 5 {
+			core.Abort("account, dataset, and stateID required")
 		}
+		newCommandSet(datDirectory, idxDirectory).deleteState(cmd.Args[2], cmd.Args[3], cmd.Args[4])
 	})
 
-	cmd.Command("show-block", "<block id>", func() {
+	cmd.Command("purge-states", "<account> <dataset>  Write purged .trn with only live states", func() {
+		if len(cmd.Args) < 4 {
+			core.Abort("account and dataset required")
+		}
+		newCommandSet(datDirectory, idxDirectory).purgeStates(cmd.Args[2], cmd.Args[3])
+	})
+
+	cmd.Command("block-info", "<block id>  Show block metadata", func() {
 		if len(cmd.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "block id required")
-			os.Exit(1)
+			core.Abort("block id required")
 		}
-		if err := cli.showBlock(cmd.Args[2]); err != nil {
-			fmt.Fprintf(os.Stderr, "error showing block: %v\n", err)
-			os.Exit(1)
-		}
+		newCommandSet(datDirectory, idxDirectory).showBlock(cmd.Args[2])
 	})
 
-	cmd.Command("", "", func() {
-		fmt.Println("Commands:")
-		fmt.Println("  list-accounts")
-		fmt.Println("  list-datasets <account>")
-		fmt.Println("  list-states <account> <dataset>")
-		fmt.Println("  rebuild-db")
-		fmt.Println("  show-block <block-id>")
+	cmd.Command("rebuild-db", "[account] [dataset]  Rebuild .db caches (all or filtered)", func() {
+		var account, dataset string
+		if len(cmd.Args) >= 3 {
+			account = cmd.Args[2]
+		}
+		if len(cmd.Args) >= 4 {
+			dataset = cmd.Args[3]
+		}
+		newCommandSet(datDirectory, idxDirectory).rebuildDB(account, dataset)
 	})
 
-	cmd.Parse()
+	cmd.Command("", "", func() { cmd.Usage() })
+
+	err := cmd.Parse()
+	core.AbortOn(err, "command parse failed: %v", err)
 }
 
 // defaultPaths tries to pick a sensible default for data/index:

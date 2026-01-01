@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/fredli74/hashbox/pkg/accountdb"
@@ -130,5 +131,23 @@ func blockTypeString(t uint8) string {
 		return "zlib"
 	default:
 		return fmt.Sprintf("unknown(0x%x)", t)
+	}
+}
+
+// renameIfExists renames src to dst if src exists. Returns nil when src is
+// absent, aborts on unexpected stat or rename failures.
+func renameIfExists(src, dst string) {
+	info, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		core.Abort("stat %s: %v", src, err)
+	}
+	if info.IsDir() {
+		core.Abort("rename on directory %s is not supported", src)
+	}
+	if err := os.Rename(src, dst); err != nil {
+		core.Abort("rename %s -> %s: %v", src, dst, err)
 	}
 }

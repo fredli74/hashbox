@@ -26,12 +26,10 @@ func TestListAccountsIncludesHashAndName(t *testing.T) {
 
 	cmds := newCommandSet(tmp, filepath.Join(tmp, "index"))
 	out := captureOutput(t, func() {
-		if err := cmds.listAccounts(); err != nil {
-			t.Fatalf("listAccounts error: %v", err)
-		}
+		cmds.listAccounts()
 	})
 
-	if !strings.Contains(out, "#"+formatHash(accHash)) || !strings.Contains(out, string(accName)) {
+	if !strings.Contains(out, "["+formatHash(accHash)+"]") || !strings.Contains(out, string(accName)) {
 		t.Fatalf("output missing account hash/name: %s", out)
 	}
 }
@@ -65,21 +63,17 @@ func TestListDatasetsAndStates(t *testing.T) {
 
 	cmds := newCommandSet(tmp, filepath.Join(tmp, "index"))
 	out := captureOutput(t, func() {
-		if err := cmds.listDatasets(string(accName)); err != nil {
-			t.Fatalf("listDatasets error: %v", err)
-		}
+		cmds.listDatasets(string(accName))
 	})
 	if !strings.Contains(out, "states=2") || !strings.Contains(out, "size=33B") {
 		t.Fatalf("unexpected dataset output: %s", out)
 	}
-	if !strings.Contains(out, "#"+formatHash(core.Hash([]byte(dataset)))) {
+	if !strings.Contains(out, "["+formatHash(core.Hash([]byte(dataset)))+"]") {
 		t.Fatalf("missing dataset hash: %s", out)
 	}
 
 	stateOut := captureOutput(t, func() {
-		if err := cmds.listStates(string(accName), string(dataset)); err != nil {
-			t.Fatalf("listStates error: %v", err)
-		}
+		cmds.listStates(string(accName), string(dataset))
 	})
 	if !strings.Contains(stateOut, "size=10B") || !strings.Contains(stateOut, "size=20B") {
 		t.Fatalf("unexpected state output: %s", stateOut)
@@ -106,11 +100,9 @@ func TestShowBlock(t *testing.T) {
 
 	cmds := newCommandSet(dataDir, idxDir)
 	out := captureOutput(t, func() {
-		if err := cmds.showBlock(fmtHash(block.BlockID[:])); err != nil {
-			t.Fatalf("showBlock error: %v", err)
-		}
+		cmds.showBlock(fmtHash(block.BlockID[:]))
 	})
-	if !strings.Contains(out, "Type: raw") || !strings.Contains(out, "Compressed: 5B") {
+	if !strings.Contains(out, "Size: 5B (raw data)") {
 		t.Fatalf("unexpected show-block output: %s", out)
 	}
 }
@@ -138,9 +130,7 @@ func requireDirs(t *testing.T, path string) {
 
 func appendState(t *testing.T, store *accountdb.Store, acc core.Byte128, dataset core.String, state core.DatasetState) {
 	t.Helper()
-	if err := store.AppendAddState(acc, dataset, state); err != nil {
-		t.Fatalf("append state: %v", err)
-	}
+	store.AppendAddState(acc, dataset, state)
 }
 
 func bytearrayFromBytes(t *testing.T, b []byte) bytearray.ByteArray {
