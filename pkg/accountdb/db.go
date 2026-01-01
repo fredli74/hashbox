@@ -44,7 +44,7 @@ func (c *DBStateCollection) Unserialize(r io.Reader) {
 
 // ReadDBFile reads a .db cache file.
 func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) *DBStateCollection {
-	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionDatabase
+	filename := fs.datasetFilename(accountNameH, string(datasetName)) + DbFileExtensionDatabase
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil
@@ -52,10 +52,10 @@ func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) 
 	defer file.Close()
 	var header dbFileHeader
 	header.Unserialize(file)
-	if header.filetype != dbFileTypeDatabase {
+	if header.filetype != DbFileTypeDatabase {
 		core.Abort("%s is not a valid db file", filename)
 	}
-	if header.version != dbVersion {
+	if header.version != DbVersion {
 		core.Abort("Unsupported db file version in %s", filename)
 	}
 	var c DBStateCollection
@@ -65,12 +65,12 @@ func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) 
 
 // WriteDBFile writes a .db cache file and updates the .info dataset list.
 func (fs *Store) WriteDBFile(accountNameH core.Byte128, datasetName core.String, c *DBStateCollection) {
-	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionDatabase
+	filename := fs.datasetFilename(accountNameH, string(datasetName)) + DbFileExtensionDatabase
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer file.Close()
 
-	header := dbFileHeader{filetype: dbFileTypeDatabase, version: dbVersion, datasetName: datasetName}
+	header := dbFileHeader{filetype: DbFileTypeDatabase, version: DbVersion, datasetName: datasetName}
 	header.Serialize(file)
 	c.Serialize(file)
 

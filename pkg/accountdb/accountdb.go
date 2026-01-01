@@ -14,11 +14,11 @@ import (
 )
 
 const (
-	dbVersion                  uint32 = 1
-	dbFileTypeTransaction      uint32 = 0x48415458 // "HATX" Hashbox Account Transaction
-	dbFileExtensionTransaction string = ".trn"
-	dbFileTypeDatabase         uint32 = 0x48414442 // "HADB" Hashbox Account Database
-	dbFileExtensionDatabase    string = ".db"
+	DbVersion                  uint32 = 1
+	DbFileTypeTransaction      uint32 = 0x48415458 // "HATX" Hashbox Account Transaction
+	DbFileExtensionTransaction string = ".trn"
+	DbFileTypeDatabase         uint32 = 0x48414442 // "HADB" Hashbox Account Database
+	DbFileExtensionDatabase    string = ".db"
 	DbTxTypeAdd                uint32 = 0x2B414444 // "+ADD"
 	DbTxTypeDel                uint32 = 0x2D44454C // "-DEL"
 )
@@ -37,7 +37,7 @@ func (h *dbFileHeader) Serialize(w io.Writer) {
 func (h *dbFileHeader) Unserialize(r io.Reader) {
 	core.ReadUint32(r, &h.filetype)
 	core.ReadUint32(r, &h.version)
-	if h.version != dbVersion {
+	if h.version != DbVersion {
 		core.Abort("Invalid version in dbFileHeader")
 	}
 	h.datasetName.Unserialize(r)

@@ -15,72 +15,6 @@ import (
 )
 
 //***********************************************************************//
-//                                 Store                                 //
-//***********************************************************************//
-
-type Store struct {
-	filepool      map[string]*core.BufferedFile
-	filedeadspace map[string]int64
-	topFileNumber []int32
-
-	datDirectory string
-	idxDirectory string
-}
-
-func NewStore(datDir, idxDir string) *Store {
-	return &Store{
-		filepool:      make(map[string]*core.BufferedFile),
-		filedeadspace: make(map[string]int64),
-		topFileNumber: []int32{0, 0, 0},
-		datDirectory:  datDir,
-		idxDirectory:  idxDir,
-	}
-}
-
-func (store *Store) SyncAll() {
-	for s, f := range store.filepool {
-		core.Log(core.LogDebug, "Syncing %s", s)
-		f.Sync()
-	}
-}
-
-func (store *Store) Close() {
-	for s, f := range store.filepool {
-		core.Log(core.LogInfo, "Closing %s", s)
-		f.Close()
-	}
-}
-
-func (store *Store) DoesBlockExist(blockID core.Byte128) bool {
-	_, _, _, err := store.readIXEntry(blockID)
-	return err == nil
-}
-
-func (store *Store) ReadBlock(blockID core.Byte128) *core.HashboxBlock {
-	block, _ := store.readBlockFile(blockID)
-	return block
-}
-
-func (store *Store) WriteBlock(block *core.HashboxBlock) bool {
-	return store.writeBlockFile(block)
-}
-
-const MINIMUM_IX_FREE = int64(storageIXFileSize + storageIXFileSize/20) // 105% of an IX file because we must be able to create a new one
-const MINIMUM_DAT_FREE = int64(1 << 26)                                 // 64 MB minimum free space
-
-func (store *Store) CheckFree(size int64) bool {
-	if free, _ := core.FreeSpace(store.idxDirectory); free < MINIMUM_IX_FREE {
-		core.Log(core.LogWarning, "Storage rejected because free space on index path has dropped below %d", MINIMUM_IX_FREE)
-		return false
-	}
-	if free, _ := core.FreeSpace(store.datDirectory); free < size+MINIMUM_DAT_FREE {
-		core.Log(core.LogWarning, "Storage rejected because free space on data path has dropped below %d", size+MINIMUM_DAT_FREE)
-		return false
-	}
-	return true
-}
-
-//***********************************************************************//
 //                       Storage database handling                       //
 //***********************************************************************//
 
@@ -285,4 +219,71 @@ func (store *Store) ShowStorageDeadSpace() {
 		core.AbortOn(err)
 		core.Log(core.LogInfo, "File %s, %s (est. dead data %s)", datFile.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace))
 	}
+}
+
+
+//***********************************************************************//
+//                                 Store                                 //
+//***********************************************************************//
+
+type Store struct {
+	filepool      map[string]*core.BufferedFile
+	filedeadspace map[string]int64
+	topFileNumber []int32
+
+	datDirectory string
+	idxDirectory string
+}
+
+func NewStore(datDir, idxDir string) *Store {
+	return &Store{
+		filepool:      make(map[string]*core.BufferedFile),
+		filedeadspace: make(map[string]int64),
+		topFileNumber: []int32{0, 0, 0},
+		datDirectory:  datDir,
+		idxDirectory:  idxDir,
+	}
+}
+
+func (store *Store) SyncAll() {
+	for s, f := range store.filepool {
+		core.Log(core.LogDebug, "Syncing %s", s)
+		f.Sync()
+	}
+}
+
+func (store *Store) Close() {
+	for s, f := range store.filepool {
+		core.Log(core.LogInfo, "Closing %s", s)
+		f.Close()
+	}
+}
+
+func (store *Store) DoesBlockExist(blockID core.Byte128) bool {
+	_, _, _, err := store.readIXEntry(blockID)
+	return err == nil
+}
+
+func (store *Store) ReadBlock(blockID core.Byte128) *core.HashboxBlock {
+	block, _ := store.readBlockFile(blockID)
+	return block
+}
+
+func (store *Store) WriteBlock(block *core.HashboxBlock) bool {
+	return store.writeBlockFile(block)
+}
+
+const MINIMUM_IX_FREE = int64(storageIXFileSize + storageIXFileSize/20) // 105% of an IX file because we must be able to create a new one
+const MINIMUM_DAT_FREE = int64(1 << 26)                                 // 64 MB minimum free space
+
+func (store *Store) CheckFree(size int64) bool {
+	if free, _ := core.FreeSpace(store.idxDirectory); free < MINIMUM_IX_FREE {
+		core.Log(core.LogWarning, "Storage rejected because free space on index path has dropped below %d", MINIMUM_IX_FREE)
+		return false
+	}
+	if free, _ := core.FreeSpace(store.datDirectory); free < size+MINIMUM_DAT_FREE {
+		core.Log(core.LogWarning, "Storage rejected because free space on data path has dropped below %d", size+MINIMUM_DAT_FREE)
+		return false
+	}
+	return true
 }

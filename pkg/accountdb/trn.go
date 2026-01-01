@@ -17,18 +17,18 @@ import (
 	"github.com/fredli74/hashbox/pkg/lockablefile"
 )
 
-type DBTx struct {
+type DbTx struct {
 	Timestamp int64
 	TxType    uint32
 	Data      interface{}
 }
 
-func (t *DBTx) Serialize(w io.Writer) {
+func (t *DbTx) Serialize(w io.Writer) {
 	core.WriteInt64(w, t.Timestamp)
 	core.WriteUint32(w, t.TxType)
 	t.Data.(core.Serializer).Serialize(w)
 }
-func (t *DBTx) Unserialize(r io.Reader) {
+func (t *DbTx) Unserialize(r io.Reader) {
 	core.ReadInt64(r, &t.Timestamp)
 	core.ReadUint32(r, &t.TxType)
 	switch t.TxType {
@@ -47,8 +47,8 @@ func (t *DBTx) Unserialize(r io.Reader) {
 
 // AppendTx appends a transaction to the dataset log.
 // Panics on unexpected IO/lock errors.
-func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx DBTx) {
-	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
+func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx DbTx) {
+	filename := fs.datasetFilename(accountNameH, string(datasetName)) + DbFileExtensionTransaction
 	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer lock.Close()
@@ -60,7 +60,7 @@ func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx
 	pos, err := file.Seek(0, io.SeekEnd)
 	core.AbortOn(err)
 	if pos == 0 { // New file, write the header
-		header := dbFileHeader{filetype: dbFileTypeTransaction, version: dbVersion, datasetName: datasetName}
+		header := dbFileHeader{filetype: DbFileTypeTransaction, version: DbVersion, datasetName: datasetName}
 		header.Serialize(file)
 	}
 	tx.Serialize(file)
@@ -71,17 +71,17 @@ func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx
 
 // AppendAddState appends an add tx with current timestamp.
 func (fs *Store) AppendAddState(accountNameH core.Byte128, datasetName core.String, state core.DatasetState) {
-	fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: DbTxTypeAdd, Data: state})
+	fs.AppendTx(accountNameH, datasetName, DbTx{Timestamp: time.Now().UnixNano(), TxType: DbTxTypeAdd, Data: state})
 }
 
 // AppendDelState appends a delete tx with current timestamp.
 func (fs *Store) AppendDelState(accountNameH core.Byte128, datasetName core.String, stateID core.Byte128) {
-	fs.AppendTx(accountNameH, datasetName, DBTx{Timestamp: time.Now().UnixNano(), TxType: DbTxTypeDel, Data: stateID})
+	fs.AppendTx(accountNameH, datasetName, DbTx{Timestamp: time.Now().UnixNano(), TxType: DbTxTypeDel, Data: stateID})
 }
 
 // StateArrayFromTransactions returns current live states by replaying the transaction log.
 func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetName core.String) (states core.DatasetStateArray) {
-	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
+	filename := fs.datasetFilename(accountNameH, string(datasetName)) + DbFileExtensionTransaction
 	reader, err := fs.NewTxReader(accountNameH, datasetName)
 	core.AbortOn(err)
 	defer reader.Close()
@@ -116,13 +116,13 @@ func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetNa
 	return states
 }
 
-// ReadTRNFile reads and validates the transaction log for a dataset.
-func (fs *Store) ReadTRNFile(accountNameH core.Byte128, datasetName core.String) []DBTx {
+// ReadTrnFile reads and validates the transaction log for a dataset.
+func (fs *Store) ReadTrnFile(accountNameH core.Byte128, datasetName core.String) []DbTx {
 	reader, err := fs.NewTxReader(accountNameH, datasetName)
 	core.AbortOn(err)
 	defer reader.Close()
 
-	var out []DBTx
+	var out []DbTx
 	for {
 		tx := reader.Next()
 		if tx == nil {
@@ -133,9 +133,9 @@ func (fs *Store) ReadTRNFile(accountNameH core.Byte128, datasetName core.String)
 	return out
 }
 
-// WriteTRNFile truncates and writes a transaction log exclusively.
-func (fs *Store) WriteTRNFile(accountNameH core.Byte128, datasetName core.String, txs []DBTx) {
-	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
+// WriteTrnFile truncates and writes a transaction log exclusively.
+func (fs *Store) WriteTrnFile(accountNameH core.Byte128, datasetName core.String, txs []DbTx) {
+	filename := fs.datasetFilename(accountNameH, string(datasetName)) + DbFileExtensionTransaction
 	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer lock.Close()
@@ -143,7 +143,7 @@ func (fs *Store) WriteTRNFile(accountNameH core.Byte128, datasetName core.String
 	defer lock.Unlock()
 
 	f := lock.File()
-	header := dbFileHeader{filetype: dbFileTypeTransaction, version: dbVersion, datasetName: datasetName}
+	header := dbFileHeader{filetype: DbFileTypeTransaction, version: DbVersion, datasetName: datasetName}
 	header.Serialize(f)
 	for _, tx := range txs {
 		tx.Serialize(f)
@@ -159,7 +159,7 @@ type TxReader struct {
 
 // NewTxReader opens and validates a .trn file and returns a reader.
 func (fs *Store) NewTxReader(accountNameH core.Byte128, datasetName core.String) (*TxReader, error) {
-	filename := fs.datasetFilename(accountNameH, string(datasetName)) + dbFileExtensionTransaction
+	filename := fs.datasetFilename(accountNameH, string(datasetName)) + DbFileExtensionTransaction
 	lock, err := lockablefile.Open(filename)
 	if err != nil {
 		return nil, err
@@ -182,10 +182,10 @@ func (fs *Store) NewTxReader(accountNameH core.Byte128, datasetName core.String)
 	f := lock.File()
 	var header dbFileHeader
 	header.Unserialize(f)
-	if header.filetype != dbFileTypeTransaction {
+	if header.filetype != DbFileTypeTransaction {
 		core.Abort("File %s is not a valid transaction file", filename)
 	}
-	if header.version != dbVersion {
+	if header.version != DbVersion {
 		core.Abort("Unsupported trn file version %x in %s", header.version, filename)
 	}
 	if header.datasetName != datasetName {
@@ -208,7 +208,7 @@ func (r *TxReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 // Next returns the next tx or nil on short read/EOF.
-func (r *TxReader) Next() *DBTx {
+func (r *TxReader) Next() *DbTx {
 	defer func() {
 		if rec := recover(); rec != nil {
 			if e, ok := rec.(error); !ok || !(errors.Is(e, io.EOF) || errors.Is(e, io.ErrUnexpectedEOF)) {
@@ -216,7 +216,7 @@ func (r *TxReader) Next() *DBTx {
 			}
 		}
 	}()
-	var tx DBTx
+	var tx DbTx
 	tx.Unserialize(r.fh.File())
 	return &tx
 }
@@ -241,7 +241,7 @@ func (fs *Store) GetDatasetNameFromTransactionFile(filename string) core.String 
 
 	var header dbFileHeader
 	header.Unserialize(f)
-	if header.filetype != dbFileTypeTransaction {
+	if header.filetype != DbFileTypeTransaction {
 		core.Abort("File %s is not a valid transaction file", filename)
 	}
 
