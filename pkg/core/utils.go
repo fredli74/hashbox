@@ -24,9 +24,14 @@ func Abort(format string, a ...interface{}) {
 	panic(fmt.Errorf(format, a...))
 }
 
-// AbortOn panics if err is non-nil.
-func AbortOn(err error) {
+// AbortOn panics if err is non-nil, with optional formatted message.
+func AbortOn(err error, a ...interface{}) {
 	if err != nil {
+		if len(a) > 0 {
+			if format, ok := a[0].(string); ok {
+				panic(fmt.Errorf(format, a[1:]...))
+			}
+		}
 		panic(err)
 	}
 }
@@ -139,11 +144,11 @@ func HumanSize(size int64) string {
 	s, u, p := unitize(size, len(humanUnitName))
 	return fmt.Sprintf("%.*f %s", p, s, humanUnitName[u])
 }
+
 // CompactHumanSize is like HumanSize but removes whitespace (e.g. "1.2KiB").
 func CompactHumanSize(size int64) string {
 	return strings.ReplaceAll(HumanSize(size), " ", "")
 }
-
 
 const MaxUint = ^uint(0)
 const MinUint = 0
