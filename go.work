@@ -1,11 +1,11 @@
 go 1.22.5
 
 use (
+	./hashback
+	./pkg/accountdb
 	./pkg/core
 	./pkg/lockablefile
-	./pkg/accountdb
 	./pkg/storagedb
 	./server
-	./hashback
 	./util
 )
