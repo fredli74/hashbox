@@ -23,6 +23,7 @@ type AccountListing struct {
 
 type DatasetListing struct {
 	AccountNameH core.Byte128
+	DatasetNameH core.Byte128
 	DatasetName  core.String
 	Filename     string
 }
@@ -139,9 +140,10 @@ func (fs *Store) ListDatasets(accountFilter *core.Byte128) ([]DatasetListing, er
 		if accountFilter != nil && accountNameH.Compare(*accountFilter) != 0 {
 			continue
 		}
-		datasetName := fs.GetDatasetNameFromTransactionFile(name)
+		datasetName, datasetNameH := fs.GetDatasetNameFromTransactionFile(name)
 		out = append(out, DatasetListing{
 			AccountNameH: accountNameH,
+			DatasetNameH: datasetNameH,
 			DatasetName:  datasetName,
 			Filename:     filepath.Join(fs.DataDir, "account", name),
 		})

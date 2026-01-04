@@ -226,8 +226,8 @@ func (r *TxReader) Pos() (int64, error) {
 	return r.fh.File().Seek(0, io.SeekCurrent)
 }
 
-// GetDatasetNameFromTransactionFile returns the dataset name stored in a .trn file header.
-func (fs *Store) GetDatasetNameFromTransactionFile(filename string) core.String {
+// GetDatasetNameFromTransactionFile returns the dataset name and hash stored in a .trn file header.
+func (fs *Store) GetDatasetNameFromTransactionFile(filename string) (core.String, core.Byte128) {
 	fullpath := filepath.Join(fs.DataDir, "account", filename)
 	_, err := os.Stat(fullpath)
 	core.AbortOn(err)
@@ -256,5 +256,5 @@ func (fs *Store) GetDatasetNameFromTransactionFile(filename string) core.String 
 	if datasetHashB.Compare(datasetNameH) != 0 {
 		core.Abort("Header for %s does not contain the correct dataset name", filename)
 	}
-	return datasetName
+	return datasetName, datasetNameH
 }
