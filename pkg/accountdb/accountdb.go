@@ -47,8 +47,8 @@ type Store struct {
 	DataDir string
 }
 
-func NewStore(dataDir string) *Store {
-	return &Store{DataDir: dataDir}
+func NewStore(datDir string) *Store {
+	return &Store{DataDir: datDir}
 }
 
 func base64filename(d []byte) string {

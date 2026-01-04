@@ -210,10 +210,10 @@ func (c *commandSet) deleteDataset(accountName, dataset string) {
 	core.AbortOn(err, "resolve dataset: %v", err)
 	txPath := store.DatasetFilename(accountNameH, datasetName) + accountdb.DbFileExtensionTransaction
 
-	renameIfExists(txPath, txPath+ ".bak")
+	renameIfExists(txPath, txPath+".bak")
 	dbPath := store.DatasetFilename(accountNameH, datasetName) + accountdb.DbFileExtensionDatabase
-	
-	renameIfExists(dbPath, dbPath+ ".bak")
+
+	renameIfExists(dbPath, dbPath+".bak")
 	store.RebuildAccount(accountNameH)
 	fmt.Printf("Deleted dataset %s from account %s\n", escapeControls(string(datasetName)), escapeControls(string(accName)))
 }

@@ -120,11 +120,11 @@ func (store *Store) getNumberedFileName(fileType int, fileNumber int32) string {
 	var path string
 	switch fileType {
 	case storageFileTypeData:
-		path = store.datDirectory
+		path = store.DataDir
 	case storageFileTypeIndex:
-		path = store.idxDirectory
+		path = store.IndexDir
 	case storageFileTypeMeta:
-		path = store.idxDirectory
+		path = store.IndexDir
 	}
 	return filepath.Join(path, store.getNumberedName(fileType, fileNumber))
 }
@@ -231,8 +231,8 @@ type Store struct {
 	filedeadspace map[string]int64
 	topFileNumber []int32
 
-	datDirectory string
-	idxDirectory string
+	DataDir string
+	IndexDir string
 }
 
 func NewStore(datDir, idxDir string) *Store {
@@ -240,8 +240,8 @@ func NewStore(datDir, idxDir string) *Store {
 		filepool:      make(map[string]*core.BufferedFile),
 		filedeadspace: make(map[string]int64),
 		topFileNumber: []int32{0, 0, 0},
-		datDirectory:  datDir,
-		idxDirectory:  idxDir,
+		DataDir:  	   datDir,
+		IndexDir:  	   idxDir,
 	}
 }
 
@@ -277,11 +277,11 @@ const MINIMUM_IX_FREE = int64(storageIXFileSize + storageIXFileSize/20) // 105% 
 const MINIMUM_DAT_FREE = int64(1 << 26)                                 // 64 MB minimum free space
 
 func (store *Store) CheckFree(size int64) bool {
-	if free, _ := core.FreeSpace(store.idxDirectory); free < MINIMUM_IX_FREE {
+	if free, _ := core.FreeSpace(store.IndexDir); free < MINIMUM_IX_FREE {
 		core.Log(core.LogWarning, "Storage rejected because free space on index path has dropped below %d", MINIMUM_IX_FREE)
 		return false
 	}
-	if free, _ := core.FreeSpace(store.datDirectory); free < size+MINIMUM_DAT_FREE {
+	if free, _ := core.FreeSpace(store.DataDir); free < size+MINIMUM_DAT_FREE {
 		core.Log(core.LogWarning, "Storage rejected because free space on data path has dropped below %d", size+MINIMUM_DAT_FREE)
 		return false
 	}
