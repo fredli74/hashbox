@@ -55,18 +55,16 @@ func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx
 	lock.Lock()
 	defer lock.Unlock()
 
-	file := lock.File()
-
-	pos, err := file.Seek(0, io.SeekEnd)
+	pos, err := lock.Seek(0, io.SeekEnd)
 	core.AbortOn(err)
 	if pos == 0 { // New file, write the header
 		header := dbFileHeader{filetype: DbFileTypeTransaction, version: DbVersion, datasetName: datasetName}
-		header.Serialize(file)
+		header.Serialize(lock)
 	}
-	tx.Serialize(file)
+	tx.Serialize(lock)
 	// Explicit fsync to persist the append before releasing the lock; Close alone
 	// does not guarantee durability.
-	core.AbortOn(file.Sync())
+	core.AbortOn(lock.Sync())
 }
 
 // AppendAddState appends an add tx with current timestamp.
@@ -142,14 +140,13 @@ func (fs *Store) WriteTrnFile(accountNameH core.Byte128, datasetName core.String
 	lock.Lock()
 	defer lock.Unlock()
 
-	f := lock.File()
 	header := dbFileHeader{filetype: DbFileTypeTransaction, version: DbVersion, datasetName: datasetName}
-	header.Serialize(f)
+	header.Serialize(lock)
 	for _, tx := range txs {
-		tx.Serialize(f)
+		tx.Serialize(lock)
 	}
 	// Explicit fsync to persist the rewritten log before releasing the lock.
-	core.AbortOn(f.Sync())
+	core.AbortOn(lock.Sync())
 }
 
 // TxReader is a tolerant streaming reader over a .trn file.
@@ -179,7 +176,7 @@ func (fs *Store) NewTxReader(accountNameH core.Byte128, datasetName core.String)
 	lock.LockShared()
 	locked = true
 
-	f := lock.File()
+	f := lock
 	var header dbFileHeader
 	header.Unserialize(f)
 	if header.filetype != DbFileTypeTransaction {
@@ -204,7 +201,7 @@ func (r *TxReader) Close() {
 
 // Seek sets the underlying reader position.
 func (r *TxReader) Seek(offset int64, whence int) (int64, error) {
-	return r.fh.File().Seek(offset, whence)
+	return r.fh.Seek(offset, whence)
 }
 
 // Next returns the next tx or nil on short read/EOF.
@@ -217,13 +214,13 @@ func (r *TxReader) Next() *DbTx {
 		}
 	}()
 	var tx DbTx
-	tx.Unserialize(r.fh.File())
+	tx.Unserialize(r.fh)
 	return &tx
 }
 
 // Pos returns the current offset.
 func (r *TxReader) Pos() (int64, error) {
-	return r.fh.File().Seek(0, io.SeekCurrent)
+	return r.fh.Seek(0, io.SeekCurrent)
 }
 
 // GetDatasetNameFromTransactionFile returns the dataset name and hash stored in a .trn file header.
@@ -237,10 +234,9 @@ func (fs *Store) GetDatasetNameFromTransactionFile(filename string) (core.String
 	defer lock.Close()
 	lock.LockShared()
 	defer lock.Unlock()
-	f := lock.File()
 
 	var header dbFileHeader
-	header.Unserialize(f)
+	header.Unserialize(lock)
 	if header.filetype != DbFileTypeTransaction {
 		core.Abort("File %s is not a valid transaction file", filename)
 	}
