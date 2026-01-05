@@ -40,7 +40,7 @@ func (handler *Store) MarkIndexes(roots []core.Byte128, Paint bool) {
 				metaFileNumber, metaOffset := entry.location.Get()
 				metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
 				core.AbortOn(err)
-				chain = append(chain, metaEntry.links...)
+				chain = append(chain, metaEntry.Links...)
 			}
 
 			entry.flags |= entryFlagMarked // Mark the entry
@@ -89,7 +89,7 @@ func (handler *Store) SweepIndexes(Paint bool) {
 
 		var lastProgress = -1
 		for offset := int64(storageFileHeaderSize); offset < ixSize; offset += storageIXEntrySize {
-			var entry storageIXEntry
+			var entry StorageIXEntry
 			entry.Unserialize(reader)
 
 			if entry.flags&entryFlagInvalid == entryFlagInvalid {
@@ -143,7 +143,7 @@ func (handler *Store) SweepIndexes(Paint bool) {
 }
 
 func (handler *Store) CompactIndexes(Paint bool) {
-	var blankEntry storageIXEntry
+	var blankEntry StorageIXEntry
 	clearedBlocks := 0
 
 	for ixFileNumber := int32(0); ; ixFileNumber++ {
@@ -164,7 +164,7 @@ func (handler *Store) CompactIndexes(Paint bool) {
 
 		var lastProgress = -1
 		for offset := int64(storageFileHeaderSize); offset < ixSize; offset += storageIXEntrySize {
-			var entry storageIXEntry
+			var entry StorageIXEntry
 			entry.Unserialize(ixFile.Reader)
 
 			if entry.flags&entryFlagInvalid == entryFlagInvalid {
@@ -199,10 +199,10 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 	var entry storageEntry
 	switch fileType {
 	case storageFileTypeMeta:
-		metaEntry := new(storageMetaEntry)
+		metaEntry := new(StorageMetaEntry)
 		entry = metaEntry
 	case storageFileTypeData:
-		dataEntry := new(storageDataEntry)
+		dataEntry := new(StorageDataEntry)
 		defer dataEntry.Release()
 		entry = dataEntry
 	}
@@ -252,7 +252,7 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 			if freeFileNum >= fileNumber && readOffset == highWaterMark {
 				highWaterMark = offset
 				core.Log(core.LogTrace, "No need to write, moving highWaterMark to %x", highWaterMark)
-			} else if free, _ := core.FreeSpace(handler.datDirectory); free < int64(entrySize)+MINIMUM_DAT_FREE {
+			} else if free, _ := core.FreeSpace(handler.DataDir); free < int64(entrySize)+MINIMUM_DAT_FREE {
 				highWaterMark = fileSize
 				core.Log(core.LogWarning, "Unable to move block %x (%d bytes) because there is not enough free space on data path", entryBlockID[:], entrySize)
 				break

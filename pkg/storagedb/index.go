@@ -21,23 +21,22 @@ const storageIXEntrySize int64 = 24                                             
 const storageIXEntryProbeLimit int = 682                                             // 682*24 bytes = 16368 < 16k
 const storageIXFileSize = storageIXEntrySize * int64(1<<24+storageIXEntryProbeLimit) // last 24 bits of hash, plus max probe = 24*(2^24+682) = 384MiB indexes
 
-type storageIXEntry struct { // 24 bytes data
+type StorageIXEntry struct { // 24 bytes data
 	flags    uint16          // 2 bytes
 	blockID  core.Byte128    // 16 bytes
 	location sixByteLocation // 6 bytes
 }
 
-func (e *storageIXEntry) BlockID() core.Byte128 {
+func (e *StorageIXEntry) BlockID() core.Byte128 {
 	return e.blockID
 }
-
-func (e *storageIXEntry) Serialize(w io.Writer) (size int) {
+func (e *StorageIXEntry) Serialize(w io.Writer) (size int) {
 	size += core.WriteUint16(w, e.flags)
 	size += e.blockID.Serialize(w)
 	size += e.location.Serialize(w)
 	return
 }
-func (e *storageIXEntry) Unserialize(r io.Reader) (size int) {
+func (e *StorageIXEntry) Unserialize(r io.Reader) (size int) {
 	size += core.ReadUint16(r, &e.flags)
 	size += e.blockID.Unserialize(r)
 	size += e.location.Unserialize(r)
@@ -52,8 +51,8 @@ func calculateIXEntryOffset(blockID core.Byte128) uint32 {
 
 // findIXOffset probes for a blockID and returns entry+file+offset if found, regardless if it is invalid or not
 // if stopOnFree == true, it returns the first possible location where the block could be stored (used for compacting)
-func (handler *Store) findIXOffset(blockID core.Byte128, stopOnFree bool) (*storageIXEntry, int32, int64) {
-	var entry storageIXEntry
+func (handler *Store) findIXOffset(blockID core.Byte128, stopOnFree bool) (*StorageIXEntry, int32, int64) {
+	var entry StorageIXEntry
 
 	baseOffset := int64(calculateIXEntryOffset(blockID))
 	ixFileNumber, freeFileNumber := int32(0), int32(0)
@@ -107,7 +106,7 @@ OuterLoop:
 	return nil, ixFileNumber, ixOffset
 }
 
-func (handler *Store) readIXEntry(blockID core.Byte128) (entry *storageIXEntry, ixFileNumber int32, ixOffset int64, err error) {
+func (handler *Store) readIXEntry(blockID core.Byte128) (entry *StorageIXEntry, ixFileNumber int32, ixOffset int64, err error) {
 	entry, ixFileNumber, ixOffset = handler.findIXOffset(blockID, false)
 	if entry == nil {
 		err = fmt.Errorf("Block index entry not found for %x", blockID[:])
@@ -115,7 +114,7 @@ func (handler *Store) readIXEntry(blockID core.Byte128) (entry *storageIXEntry, 
 	return
 }
 
-func (handler *Store) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *storageIXEntry, forceFlush bool) {
+func (handler *Store) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *StorageIXEntry, forceFlush bool) {
 	var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, true)
 	ixFile.Writer.Seek(ixOffset, io.SeekStart)
 	finalFlags := entry.flags

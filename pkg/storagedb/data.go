@@ -16,27 +16,27 @@ import (
 //                         storageDataEntry                              //
 //***********************************************************************//
 
-type storageDataEntry struct {
+type StorageDataEntry struct {
 	datamarker uint32 // = storageDataMarker, used to find / align blocks in case of recovery
 	block      *core.HashboxBlock
 }
 
-func (e *storageDataEntry) BlockID() core.Byte128 {
+func (e *StorageDataEntry) BlockID() core.Byte128 {
 	return e.block.BlockID
 }
-func (e *storageDataEntry) Release() {
+func (e *StorageDataEntry) Release() {
 	if e.block != nil {
 		e.block.Release()
 	}
 }
 
-func (e *storageDataEntry) Serialize(w io.Writer) (size int) {
+func (e *StorageDataEntry) Serialize(w io.Writer) (size int) {
 	size += core.WriteUint32(w, storageDataMarker)
 	size += e.block.Serialize(w)
 	return
 }
 
-func (e *storageDataEntry) UnserializeHeader(r io.Reader) (size int) {
+func (e *StorageDataEntry) UnserializeHeader(r io.Reader) (size int) {
 	size += core.ReadUint32(r, &e.datamarker)
 	if e.datamarker != storageDataMarker {
 		core.Abort("Incorrect datamarker %x (should be %x)", e.datamarker, storageDataMarker)
@@ -45,7 +45,7 @@ func (e *storageDataEntry) UnserializeHeader(r io.Reader) (size int) {
 }
 
 // IMPORTANT Unserialize allocates memory that needs to be freed manually
-func (e *storageDataEntry) Unserialize(r io.Reader) (size int) {
+func (e *StorageDataEntry) Unserialize(r io.Reader) (size int) {
 	size += e.UnserializeHeader(r)
 	if e.block == nil {
 		e.block = &core.HashboxBlock{}
@@ -53,7 +53,7 @@ func (e *storageDataEntry) Unserialize(r io.Reader) (size int) {
 	size += e.block.Unserialize(r)
 	return
 }
-func (e *storageDataEntry) VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool {
+func (e *StorageDataEntry) VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool {
 	ixEntry, _, _, err := handler.readIXEntry(e.block.BlockID)
 	metaFileNumber, metaOffset := ixEntry.location.Get()
 	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
@@ -78,19 +78,19 @@ func (handler *Store) writeBlockFile(block *core.HashboxBlock) bool {
 
 	datFileNumber, datOffset, datFile := handler.findFreeOffset(storageFileTypeData, -1)
 
-	dataEntry := storageDataEntry{block: block}
+	dataEntry := StorageDataEntry{block: block}
 	var data = new(bytes.Buffer)
 	dataSize := uint32(dataEntry.Serialize(data))
 	data.WriteTo(datFile.Writer)
 	// flush notice: manually flush datFile before creating the meta entry
 	datFile.Sync()
 
-	metaEntry := storageMetaEntry{blockID: block.BlockID, dataSize: dataSize, links: block.Links}
+	metaEntry := StorageMetaEntry{blockID: block.BlockID, DataSize: dataSize, Links: block.Links}
 	metaEntry.location.Set(datFileNumber, datOffset)
 	// flush notice: writeMetaEntry always flushes meta file
 	metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
 
-	ixEntry := storageIXEntry{flags: entryFlagExists, blockID: block.BlockID}
+	ixEntry := StorageIXEntry{flags: entryFlagExists, blockID: block.BlockID}
 	if len(block.Links) == 0 {
 		ixEntry.flags |= entryFlagNoLinks
 	}
@@ -118,7 +118,7 @@ func (handler *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, e
 	}
 	dataFile.Reader.Seek(dataOffset, io.SeekStart)
 
-	var dataEntry storageDataEntry
+	var dataEntry StorageDataEntry
 	dataEntry.Unserialize(dataFile.Reader)
 	return dataEntry.block, nil
 }

@@ -14,50 +14,49 @@ import (
 )
 
 //***********************************************************************//
-//                         storageMetaEntry                              //
+//                         StorageMetaEntry                              //
 //***********************************************************************//
 
-// storageMetaEntry used for double-storing data links, size and location (this is to speed up links and size checking)
-type storageMetaEntry struct {
+// StorageMetaEntry used for double-storing data links, size and location (this is to speed up links and size checking)
+type StorageMetaEntry struct {
 	datamarker uint32          // = storageDataMarker, used to find / align blocks in case of recovery
 	blockID    core.Byte128    // 16 bytes
 	location   sixByteLocation // 6 bytes
-	dataSize   uint32          // Size of data in .dat file (used for deadsize tracking)
-	links      []core.Byte128  // Array of BlockIDs
+	DataSize   uint32          // Size of data in .dat file (used for deadsize tracking)
+	Links      []core.Byte128  // Array of BlockIDs
 }
 
-func (e *storageMetaEntry) BlockID() core.Byte128 {
-	return e.blockID
-}
-
-func (e *storageMetaEntry) Serialize(w io.Writer) (size int) {
+func (e *StorageMetaEntry) Serialize(w io.Writer) (size int) {
 	size += core.WriteUint32(w, storageDataMarker)
 	size += e.blockID.Serialize(w)
 	size += e.location.Serialize(w)
-	size += core.WriteUint32(w, e.dataSize)
-	size += core.WriteUint32(w, uint32(len(e.links)))
-	for i := range e.links {
-		size += e.links[i].Serialize(w)
+	size += core.WriteUint32(w, e.DataSize)
+	size += core.WriteUint32(w, uint32(len(e.Links)))
+	for i := range e.Links {
+		size += e.Links[i].Serialize(w)
 	}
 	return
 }
-func (e *storageMetaEntry) Unserialize(r io.Reader) (size int) {
+func (e *StorageMetaEntry) Unserialize(r io.Reader) (size int) {
 	size += core.ReadUint32(r, &e.datamarker)
 	if e.datamarker != storageDataMarker {
 		core.Abort("Incorrect metadata cache marker %x (should be %x)", e.datamarker, storageDataMarker)
 	}
 	size += e.blockID.Unserialize(r)
 	size += e.location.Unserialize(r)
-	size += core.ReadUint32(r, &e.dataSize)
+	size += core.ReadUint32(r, &e.DataSize)
 	var n uint32
 	size += core.ReadUint32(r, &n)
-	e.links = make([]core.Byte128, n)
+	e.Links = make([]core.Byte128, n)
 	for i := 0; i < int(n); i++ {
-		size += e.links[i].Unserialize(r)
+		size += e.Links[i].Unserialize(r)
 	}
 	return
 }
-func (e *storageMetaEntry) VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool {
+func (e *StorageMetaEntry) BlockID() core.Byte128 {
+	return e.blockID
+}
+func (e *StorageMetaEntry) VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool {
 	ixEntry, _, _, err := handler.readIXEntry(e.blockID)
 	core.AbortOn(err)
 	f, o := ixEntry.location.Get()
@@ -74,14 +73,14 @@ func (handler *Store) killMetaEntry(blockID core.Byte128, metaFileNumber int32, 
 		size += int64(entrySize)
 
 		dataFileNumber, _ := entry.location.Get()
-		handler.setDeadSpace(storageFileTypeData, dataFileNumber, int64(entry.dataSize), true)
-		size += int64(entry.dataSize)
+		handler.setDeadSpace(storageFileTypeData, dataFileNumber, int64(entry.DataSize), true)
+		size += int64(entry.DataSize)
 	} else {
 		core.Abort("Incorrect block %x (should be %x) read on metadata location %x:%x", entry.blockID[:], blockID[:], metaFileNumber, metaOffset)
 	}
 	return size
 }
-func (handler *Store) writeMetaEntry(metaFileNumber int32, metaOffset int64, entry *storageMetaEntry) (int32, int64) {
+func (handler *Store) writeMetaEntry(metaFileNumber int32, metaOffset int64, entry *StorageMetaEntry) (int32, int64) {
 	var data = new(bytes.Buffer)
 	entry.Serialize(data)
 
@@ -99,7 +98,7 @@ func (handler *Store) writeMetaEntry(metaFileNumber int32, metaOffset int64, ent
 
 	return metaFileNumber, metaOffset
 }
-func (handler *Store) readMetaEntry(metaFileNumber int32, metaOffset int64) (metaEntry *storageMetaEntry, err error) {
+func (handler *Store) readMetaEntry(metaFileNumber int32, metaOffset int64) (metaEntry *StorageMetaEntry, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = r.(error)
@@ -113,7 +112,7 @@ func (handler *Store) readMetaEntry(metaFileNumber int32, metaOffset int64) (met
 	}
 	metaFile.Reader.Seek(metaOffset, io.SeekStart)
 
-	metaEntry = new(storageMetaEntry)
+	metaEntry = new(StorageMetaEntry)
 	metaEntry.Unserialize(metaFile.Reader)
 	return
 }

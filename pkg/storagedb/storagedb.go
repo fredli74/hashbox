@@ -221,7 +221,6 @@ func (store *Store) ShowStorageDeadSpace() {
 	}
 }
 
-
 //***********************************************************************//
 //                                 Store                                 //
 //***********************************************************************//
@@ -231,7 +230,7 @@ type Store struct {
 	filedeadspace map[string]int64
 	topFileNumber []int32
 
-	DataDir string
+	DataDir  string
 	IndexDir string
 }
 
@@ -240,8 +239,8 @@ func NewStore(datDir, idxDir string) *Store {
 		filepool:      make(map[string]*core.BufferedFile),
 		filedeadspace: make(map[string]int64),
 		topFileNumber: []int32{0, 0, 0},
-		DataDir:  	   datDir,
-		IndexDir:  	   idxDir,
+		DataDir:       datDir,
+		IndexDir:      idxDir,
 	}
 }
 
@@ -262,6 +261,20 @@ func (store *Store) Close() {
 func (store *Store) DoesBlockExist(blockID core.Byte128) bool {
 	_, _, _, err := store.readIXEntry(blockID)
 	return err == nil
+}
+
+// ReadBlockMeta returns metadata for a block without loading its data payload.
+func (store *Store) ReadBlockMeta(blockID core.Byte128) *StorageMetaEntry {
+	ixEntry, _, _, err := store.readIXEntry(blockID)
+	if err != nil {
+		return nil
+	}
+	metaFileNumber, metaOffset := ixEntry.location.Get()
+	metaEntry, err := store.readMetaEntry(metaFileNumber, metaOffset)
+	if err != nil {
+		return nil
+	}
+	return metaEntry
 }
 
 func (store *Store) ReadBlock(blockID core.Byte128) *core.HashboxBlock {
