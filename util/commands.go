@@ -18,6 +18,9 @@ import (
 type commandSet struct {
 	dataDir string
 	idxDir  string
+
+	queueBytes int64
+	maxThreads int64
 }
 
 func newCommandSet(datDir, idxDir string) *commandSet {

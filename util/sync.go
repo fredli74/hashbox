@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fredli74/hashbox/pkg/accountdb"
 	"github.com/fredli74/hashbox/pkg/core"
@@ -79,7 +80,7 @@ func shouldInclude(acc, ds string, include, exclude []string) bool {
 	if !matchesPattern(acc, ds, include) {
 		return false
 	}
-	if matchesPattern(acc, ds, exclude) {
+	if len(exclude) > 0 && matchesPattern(acc, ds, exclude) {
 		return false
 	}
 	return true
@@ -91,31 +92,49 @@ func (c *commandSet) syncRun(remoteHost string, remotePort int, include, exclude
 	defer dataDB.Close()
 
 	sync := newSyncSession(accountDB, dataDB, remoteHost, remotePort)
+	sync.queueBytes = c.queueBytes
+	sync.maxThreads = c.maxThreads
+	sync.start = time.Now()
+	sync.nextStat = sync.start.Add(sync.statTick)
 	defer sync.close()
 
 	if dryRun {
 		sync.dryRun = true
 	}
 
+	core.Log(core.LogDebug, "Syncing started for remote server %s:%d", remoteHost, remotePort)
+
 	accounts, err := accountDB.ListAccounts()
 	core.AbortOn(err, "list accounts: %v", err)
+	if len(accounts) == 0 {
+		core.Log(core.LogWarning, "no accounts found under %s/account", c.dataDir)
+		return
+	}
+	core.Log(core.LogDebug, "found %d accounts", len(accounts))
 
 	// for each account in local data/account, check if it should be included
 	for _, acc := range accounts {
 		accName := string(acc.AccountName)
+		core.Log(core.LogTrace, "consider account %s (%s)", accName, formatHash(acc.AccountNameH))
 		if !shouldInclude(accName, "", include, exclude) {
+			core.Log(core.LogTrace, "skip account %s (filters)", accName)
 			continue
 		}
+		core.Log(core.LogDebug, "match account %s", accName)
 		datasets, err := accountDB.ListDatasets(&acc.AccountNameH)
 		core.AbortOn(err, "list datasets for %s: %v", accName, err)
+		core.Log(core.LogDebug, "found %d datasets for %s", len(datasets), accName)
 
 		// for each dataset in account, check if it should be included
 		for _, ds := range datasets {
 			dsName := string(ds.DatasetName)
+			core.Log(core.LogTrace, "consider dataset %s:%s", accName, dsName)
 			if !shouldInclude(accName, dsName, include, exclude) {
+				core.Log(core.LogTrace, "skip dataset %s:%s (filters)", accName, dsName)
 				continue
 			}
-			fmt.Printf("sync %s:%s -> %s:%d\n", accName, dsName, remoteHost, remotePort)
+			core.Log(core.LogDebug, "match dataset %s:%s", accName, dsName)
+			core.Log(core.LogInfo, "Syncing dataset %s:%s to %s:%d", accName, dsName, remoteHost, remotePort)
 			sync.processDataset(acc.AccountNameH, ds.DatasetName)
 		}
 	}
@@ -149,27 +168,29 @@ func getSyncStateWatermark(dataPath, syncID string, datasetName core.String) int
 	f, err := lockablefile.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			core.Log(core.LogTrace, "state file missing for %s, defaulting offset=0", path)
 			return 0
 		}
 		core.Abort("open %s: %v", path, err)
 	}
 	defer f.Close()
-	f.Lock()
+	f.LockShared()
 	defer f.Unlock()
 
 	state := readStateFile(f, path)
 	key := formatHash(core.Hash([]byte(datasetName)))
 	if v, ok := state[key]; ok {
+		core.Log(core.LogTrace, "state offset for %s[%s]=%d", path, datasetName, v)
 		return v
 	}
+	core.Log(core.LogTrace, "state offset for %s[%s] not found, defaulting offset=0", path, datasetName)
 	return 0
 }
 
 func setSyncStateWatermark(dataPath, syncID string, datasetName core.String, position int64) {
 	path := syncStatePath(dataPath, syncID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		core.Abort("mkdir %s: %v", filepath.Dir(path), err)
-	}
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	core.AbortOn(err, "mkdir %s: %v", filepath.Dir(path), err)
 	f, err := lockablefile.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	core.AbortOn(err, "open %s: %v", path, err)
 	defer f.Close()
@@ -204,6 +225,13 @@ type syncSession struct {
 	client     *core.Client
 	remoteHost string
 	remotePort int
+
+	start    time.Time
+	nextStat time.Time
+	statTick time.Duration
+
+	queueBytes int64
+	maxThreads int64
 }
 
 func newSyncSession(accountDB *accountdb.Store, dataDB *storagedb.Store, remoteHost string, remotePort int) *syncSession {
@@ -214,6 +242,7 @@ func newSyncSession(accountDB *accountdb.Store, dataDB *storagedb.Store, remoteH
 		dryRun:     false,
 		remoteHost: remoteHost,
 		remotePort: remotePort,
+		statTick:   10 * time.Second,
 	}
 }
 
@@ -224,10 +253,10 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 	defer reader.Close()
 
 	position := getSyncStateWatermark(sync.dataDB.DataDir, sync.syncID, datasetName)
+	core.Log(core.LogDebug, "sync start %s:%s from offset %d", sync.accountName(accountHash), datasetName, position)
 	if position > 0 {
-		if _, err := reader.Seek(position, io.SeekStart); err != nil {
-			core.Abort("seek trn %s:%s: %v", sync.accountName(accountHash), datasetName, err)
-		}
+		_, err := reader.Seek(position, io.SeekStart)
+		core.AbortOn(err, "seek trn %s:%s: %v", sync.accountName(accountHash), datasetName, err)
 	}
 	for {
 		tx := reader.Next()
@@ -288,11 +317,18 @@ func (sync *syncSession) ensureConnection(accHash core.Byte128) {
 		}
 		address := fmt.Sprintf("%s:%d", sync.remoteHost, sync.remotePort)
 		sync.client = core.NewClient(address, string(info.AccountName), info.AccessKey)
+		if sync.queueBytes > 0 {
+			sync.client.QueueMax = sync.queueBytes
+		}
+		if sync.maxThreads > 0 {
+			sync.client.ThreadMax = int32(sync.maxThreads)
+		}
 	}
 }
 
 func (sync *syncSession) sendDeleteTransaction(accountHash core.Byte128, datasetName core.String, stateID core.Byte128, ts int64) {
 	sync.ensureConnection(accountHash)
+	core.Log(core.LogInfo, "Deleting %s:%s stateID %x", sync.accountName(accountHash), datasetName, stateID[:])
 	if !sync.dryRun {
 		sync.client.RemoveDatasetState(string(datasetName), stateID)
 	}
@@ -300,21 +336,34 @@ func (sync *syncSession) sendDeleteTransaction(accountHash core.Byte128, dataset
 
 func (sync *syncSession) sendAddTransaction(accountHash core.Byte128, datasetName core.String, state core.DatasetState) {
 	sync.ensureConnection(accountHash)
-	sync.sendBlockTree(accountHash, datasetName, state.BlockID)
+	core.Log(core.LogInfo, "Sending block tree stateID=%x, root=%x, size=%s", state.StateID[:], state.BlockID[:], core.CompactHumanSize(state.Size))
+	sync.sendBlockTree(state.BlockID)
 	if !sync.dryRun {
+		core.Log(core.LogTrace, "commit blocks before dataset state %s:%s state=%x", sync.accountName(accountHash), datasetName, state.StateID[:])
+		sync.client.Commit()
+		core.Log(core.LogInfo, "Adding dataset state %s:%s stateID %x to remote server", sync.accountName(accountHash), datasetName, state.StateID[:])
 		sync.client.AddDatasetState(string(datasetName), state)
 	}
 }
 
-func (sync *syncSession) sendBlockTree(accountHash core.Byte128, datasetName core.String, root core.Byte128) {
+func (sync *syncSession) sendBlockTree(root core.Byte128) {
+	var skipped int32 = 0
 	queue := []core.Byte128{root}
-	i := 0
-	for i >= 0 {
+	index := 0
+	printUpdate := func(action string, block core.Byte128) {
+		fmt.Printf("\r\x1b[KSyncing %d/%d (skipped %d) %s %x\r", index+1, len(queue), skipped, action, block[:])
+	}
+	for len(queue) > 0 {
+		sync.reportStats()
 		var b core.Byte128
-		if i < len(queue) {
-			b = queue[i]
+		if index < len(queue) {
+			b = queue[index]
+			core.Log(core.LogTrace, "queue descend idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
 			if sync.client.VerifyBlock(b) {
-				queue = append(queue[:i], queue[i+1:]...)
+				core.Log(core.LogDebug, "skip existing block %x (queue=%d)", b[:], len(queue))
+				queue = append(queue[:index], queue[index+1:]...)
+				skipped++
+				printUpdate("-", b)
 				continue
 			}
 			meta := sync.dataDB.ReadBlockMeta(b)
@@ -323,29 +372,43 @@ func (sync *syncSession) sendBlockTree(accountHash core.Byte128, datasetName cor
 			}
 			links := meta.Links
 			if len(links) > 0 {
+				core.Log(core.LogDebug, "enqueue children for %x (links=%d queue=%d)", b[:], len(links), len(queue))
 				queue = append(queue, make([]core.Byte128, len(links))...)
-				copy(queue[i+len(links)+1:], queue[i+1:])
-				copy(queue[i+1:], links)
-				i++
+				copy(queue[index+len(links)+1:], queue[index+1:])
+				copy(queue[index+1:], links)
+				index++
+				printUpdate("*", b)
 				continue
 			}
 			// No links, fall through to send
 		} else {
-			i = len(queue) - 1
-			b = queue[i]
 			// draining queue, send block
+			index = len(queue) - 1
+			b = queue[index]
+			core.Log(core.LogTrace, "queue unwind idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
 		}
-
 		data := sync.dataDB.ReadBlock(b)
 		if data == nil {
 			core.Abort("block %x missing locally", b[:])
 		}
-		if !sync.dryRun {
+		core.Log(core.LogDebug, "send block %x size=%s queue=%d (%d/%d)", b[:], core.CompactHumanSize(int64(data.Data.Len())), len(queue), index+1, len(queue))
+		if sync.dryRun {
+			core.Log(core.LogTrace, "dry-run: skip send %x", b[:])
+			data.Release()
+		} else {
 			sync.client.StoreBlock(data)
 		}
-		data.Release()
-		queue = append(queue[:i], queue[i+1:]...)
+		printUpdate("+", b)
+		queue = append(queue[:index], queue[index+1:]...)
 	}
+	if _, _, queued, _ := sync.client.GetStats(); queued > 0 {
+		core.Log(core.LogInfo, "Waiting for queued blocks to be sent to remote server")
+	}
+	for !sync.client.Done() {
+		sync.reportStats()
+		time.Sleep(100 * time.Millisecond)
+	}
+	core.Log(core.LogInfo, "Sent all blocks for tree rooted at %x", root[:])
 }
 func (sync *syncSession) close() {
 	if sync.client != nil {
@@ -367,4 +430,19 @@ func (sync *syncSession) accountName(accHash core.Byte128) string {
 		return formatHash(accHash)
 	}
 	return string(info.AccountName)
+}
+
+func (sync *syncSession) reportStats() {
+	if sync.client == nil {
+		return
+	}
+	now := time.Now()
+	if now.Before(sync.nextStat) {
+		return
+	}
+	sent, skipped, queued, qsize := sync.client.GetStats()
+	fmt.Printf("\r\x1b[K>>> %.1f min, blocks sent %d/%d, queued:%d (%s)\n",
+		now.Sub(sync.start).Minutes(),
+		sent, sent+skipped, queued, core.HumanSize(qsize))
+	sync.nextStat = now.Add(sync.statTick)
 }

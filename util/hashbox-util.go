@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 
 	cmd "github.com/fredli74/cmdparser"
 	"github.com/fredli74/hashbox/pkg/core"
@@ -17,12 +18,16 @@ var (
 	syncInclude  string
 	syncExclude  string
 	syncDryRun   bool
+	syncQueueMB  int64 = 256
+	syncThreads  int64
+	logLevel     int64 = int64(core.LogInfo)
 )
 
 func main() {
 	defer func() {
 		if rec := recover(); rec != nil {
-			fmt.Fprintf(os.Stderr, "hashbox-util: %v\n", rec)
+			debug.PrintStack()
+			fmt.Fprintf(os.Stderr, "hashbox-util: %T %v\n", rec, rec)
 			os.Exit(1)
 		}
 	}()
@@ -33,6 +38,9 @@ func main() {
 	// Global options
 	cmd.StringOption("data", "", "<path>", "Path to data directory (contains account/)", &datDirectory, cmd.Standard)
 	cmd.StringOption("index", "", "<path>", "Path to index directory", &idxDirectory, cmd.Standard)
+	cmd.IntOption("loglevel", "", "<level>", "Set log level (0=errors, 1=warnings, 2=info, 3=debug, 4=trace)", &logLevel, cmd.Standard).OnChange(func() {
+		core.LogLevel = int(logLevel)
+	})
 
 	cmd.Command("list-accounts", "List all accounts", func() {
 		newCommandSet(datDirectory, idxDirectory).listAccounts()
@@ -116,6 +124,8 @@ func main() {
 	cmd.StringOption("include", "sync", "<acct[:dataset]>[,..]", "Include patterns for sync", &syncInclude, cmd.Standard)
 	cmd.StringOption("exclude", "sync", "<acct[:dataset]>[,..]", "Exclude patterns for sync", &syncExclude, cmd.Standard)
 	cmd.BoolOption("dry-run", "sync", "Do not write state or apply changes", &syncDryRun, cmd.Standard)
+	cmd.IntOption("queuesize", "sync", "<MiB>", "Change sending queue size", &syncQueueMB, cmd.Hidden)
+	cmd.IntOption("threads", "sync", "<num>", "Change sending queue max threads", &syncThreads, cmd.Hidden)
 	cmd.Command("sync", "<remoteHost> <remotePort>  Sync with remote server", func() {
 		if len(cmd.Args) < 4 {
 			core.Abort("remoteHost and remotePort required")
@@ -123,7 +133,12 @@ func main() {
 		include := parsePatterns(syncInclude)
 		exclude := parsePatterns(syncExclude)
 		port := parsePort(cmd.Args[3])
-		newCommandSet(datDirectory, idxDirectory).syncRun(cmd.Args[2], port, include, exclude, syncDryRun)
+		cs := newCommandSet(datDirectory, idxDirectory)
+		cs.queueBytes = syncQueueMB * 1024 * 1024
+		if syncThreads > 0 {
+			cs.maxThreads = syncThreads
+		}
+		cs.syncRun(cmd.Args[2], port, include, exclude, syncDryRun)
 	})
 
 	cmd.Command("", "", func() { cmd.Usage() })
