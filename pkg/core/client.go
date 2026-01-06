@@ -164,8 +164,6 @@ func (c *Client) sendQueue(what Byte128) {
 					c.dispatchMutex.Lock()
 					if len(c.sendqueue) > 0 {
 						if c.sendqueue[0].state == 2 { // compressed
-							c.blockqueuesize -= bytearray.ChunkQuantize(int64(c.sendqueue[0].block.UncompressedSize))
-							c.blockqueuesize += bytearray.ChunkQuantize(int64(c.sendqueue[0].block.CompressedSize))
 							workItem = c.sendqueue[0] // send it
 						} else if c.sendqueue[0].state == 4 { // sent
 							c.sendqueue = c.sendqueue[1:] // remove it
@@ -193,7 +191,11 @@ func (c *Client) sendQueue(what Byte128) {
 						case 0:
 							panic("ASSERT!")
 						case 1:
-							workItem.block.CompressData()
+							if !workItem.block.Compressed {
+								workItem.block.CompressData()
+								diff := bytearray.ChunkQuantize(int64(workItem.block.UncompressedSize)) - bytearray.ChunkQuantize(int64(workItem.block.CompressedSize))
+								atomic.AddInt64(&c.blockqueuesize, -diff)
+							}
 							atomic.AddInt32(&workItem.state, 1)
 						case 2:
 							panic("ASSERT!")
@@ -278,11 +280,12 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 		c.dispatchMutex.Lock()
 		block := c.blockbuffer[d.BlockID]
 		if block != nil {
-			if block.CompressedSize < 0 { // no encoded data = never sent
+			if block.Compressed {
+				c.blockqueuesize -= bytearray.ChunkQuantize(int64(block.CompressedSize))
+			} else {
+				// not compressed = never sent
 				skipped = true
 				c.blockqueuesize -= bytearray.ChunkQuantize(int64(block.UncompressedSize))
-			} else {
-				c.blockqueuesize -= bytearray.ChunkQuantize(int64(block.CompressedSize))
 			}
 			block.Release()
 			delete(c.blockbuffer, d.BlockID)
@@ -484,10 +487,18 @@ func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 			block.Release()
 			c.dispatchMutex.Unlock()
 			return block.BlockID
-		} else if c.blockqueuesize == 0 || c.blockqueuesize+bytearray.ChunkQuantize(int64(block.UncompressedSize))*2 < c.QueueMax {
-			c.blockbuffer[block.BlockID] = block
-			c.blockqueuesize += bytearray.ChunkQuantize(int64(block.UncompressedSize))
-			full = false
+		} else {
+			var size int64
+			if block.Compressed {
+				size = bytearray.ChunkQuantize(int64(block.CompressedSize))
+			} else {
+				size = bytearray.ChunkQuantize(int64(block.UncompressedSize))
+			}
+			if c.blockqueuesize == 0 || c.blockqueuesize+size*2 < c.QueueMax {
+				c.blockbuffer[block.BlockID] = block
+				c.blockqueuesize += size
+				full = false
+			}
 		}
 		c.dispatchMutex.Unlock()
 
