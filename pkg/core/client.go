@@ -59,7 +59,8 @@ type Client struct {
 	blockbuffer    map[Byte128]*HashboxBlock
 	blockqueuesize int64 // queue size in bytes
 
-	sendqueue []*sendQueueEntry
+	sendqueueMap map[Byte128]bool
+	sendqueue    []*sendQueueEntry
 
 	dispatchChannel chan *messageDispatch // input to goroutine; buffered list of outgoing messages to dispatch
 	storeChannel    chan *messageDispatch // input to goroutine; next block in queue to store
@@ -75,7 +76,8 @@ func NewClient(address string, account string, accesskey Byte128) *Client {
 		Session: Session{
 			AccountNameH: Hash([]byte(account)),
 		},
-		blockbuffer: make(map[Byte128]*HashboxBlock),
+		blockbuffer:  make(map[Byte128]*HashboxBlock),
+		sendqueueMap: make(map[Byte128]bool),
 
 		QueueMax:  DEFAULT_QUEUE_SIZE,
 		ThreadMax: int32(runtime.NumCPU() / 2),
@@ -140,8 +142,9 @@ func (c *Client) sendQueue(what Byte128) {
 	c.dispatchMutex.Lock()
 	defer c.dispatchMutex.Unlock()
 	block := c.blockbuffer[what]
-	if block != nil {
-		c.sendqueue = append(c.sendqueue, &sendQueueEntry{0, block})
+	if block != nil && !c.sendqueueMap[what] {
+		c.sendqueueMap[what] = true
+		c.sendqueue = append(c.sendqueue, &sendQueueEntry{state: 0, block: block})
 		//		fmt.Printf("+q=%d;", len(c.sendqueue))
 
 		if c.sendworkers < 1 || c.sendworkers < c.ThreadMax {
@@ -166,6 +169,9 @@ func (c *Client) sendQueue(what Byte128) {
 						if c.sendqueue[0].state == 2 { // compressed
 							workItem = c.sendqueue[0] // send it
 						} else if c.sendqueue[0].state == 4 { // sent
+							if c.sendqueue[0].block != nil {
+								delete(c.sendqueueMap, c.sendqueue[0].block.BlockID)
+							}
 							c.sendqueue = c.sendqueue[1:] // remove it
 							//							fmt.Printf("-q=%d;", len(c.sendqueue))
 						} else {
