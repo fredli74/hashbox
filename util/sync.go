@@ -354,7 +354,7 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 		fmt.Printf("\r\x1b[KSyncing %d/%d (skipped %d) %s %x\r", index+1, len(queue), skipped, action, block[:])
 	}
 	for len(queue) > 0 {
-		sync.reportStats()
+		sync.reportStats(false)
 		var b core.Byte128
 		if index < len(queue) {
 			b = queue[index]
@@ -405,8 +405,8 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 		core.Log(core.LogInfo, "Waiting for queued blocks to be sent to remote server")
 	}
 	for !sync.client.Done() {
-		sync.reportStats()
-		time.Sleep(100 * time.Millisecond)
+		sync.reportStats(true)
+		time.Sleep(50 * time.Millisecond)
 	}
 	core.Log(core.LogInfo, "Sent all blocks for tree rooted at %x", root[:])
 }
@@ -432,17 +432,24 @@ func (sync *syncSession) accountName(accHash core.Byte128) string {
 	return string(info.AccountName)
 }
 
-func (sync *syncSession) reportStats() {
+func (sync *syncSession) reportStats(force bool) {
 	if sync.client == nil {
 		return
 	}
 	now := time.Now()
-	if now.Before(sync.nextStat) {
+	if !force && now.Before(sync.nextStat) {
 		return
 	}
+
+	newline := "\n"
+	if force {
+		newline = "\r"
+	}
+
 	sent, skipped, queued, qsize := sync.client.GetStats()
-	fmt.Printf("\r\x1b[K>>> %.1f min, blocks sent %d/%d, queued:%d (%s)\n",
+	fmt.Printf("\r\x1b[K>>> %.1f min, blocks sent %d/%d, queued:%d (%s)%s",
 		now.Sub(sync.start).Minutes(),
-		sent, sent+skipped, queued, core.HumanSize(qsize))
+		sent, sent+skipped, queued, core.HumanSize(qsize), newline)
+		
 	sync.nextStat = now.Add(sync.statTick)
 }
