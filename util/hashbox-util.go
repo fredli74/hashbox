@@ -14,6 +14,9 @@ var (
 	datDirectory string
 	idxDirectory string
 	showDeleted  bool
+	syncInclude  string
+	syncExclude  string
+	syncDryRun   bool
 )
 
 func main() {
@@ -108,6 +111,19 @@ func main() {
 			dataset = cmd.Args[3]
 		}
 		newCommandSet(datDirectory, idxDirectory).rebuildDB(account, dataset)
+	})
+
+	cmd.StringOption("include", "sync", "<acct[:dataset]>[,..]", "Include patterns for sync", &syncInclude, cmd.Standard)
+	cmd.StringOption("exclude", "sync", "<acct[:dataset]>[,..]", "Exclude patterns for sync", &syncExclude, cmd.Standard)
+	cmd.BoolOption("dry-run", "sync", "Do not write state or apply changes", &syncDryRun, cmd.Standard)
+	cmd.Command("sync", "<remoteHost> <remotePort>  Sync with remote server", func() {
+		if len(cmd.Args) < 4 {
+			core.Abort("remoteHost and remotePort required")
+		}
+		include := parsePatterns(syncInclude)
+		exclude := parsePatterns(syncExclude)
+		port := parsePort(cmd.Args[3])
+		newCommandSet(datDirectory, idxDirectory).syncRun(cmd.Args[2], port, include, exclude, syncDryRun)
 	})
 
 	cmd.Command("", "", func() { cmd.Usage() })
