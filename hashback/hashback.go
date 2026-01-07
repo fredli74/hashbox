@@ -462,7 +462,7 @@ func main() {
 		}
 
 	})
-	cmd.Command("list", "<dataset> [(<backup id>|.) [\"<path>\"]]", func() {
+	cmd.Command("list", "<dataset> [(<backup-id>|.) [<path>]]", func() {
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))
 		}
@@ -545,7 +545,7 @@ func main() {
 	cmd.IntOption("interval", "store", "<minutes>", "Keep running backups every <minutes> until interrupted", &intervalBackup, cmd.Standard)
 	cmd.IntOption("retaindays", "store", "<days>", "Remove backups older than 24h but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard|cmd.Preference)
 	cmd.IntOption("retainweeks", "store", "<weeks>", "Remove backups older than 24h but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard|cmd.Preference)
-	cmd.Command("store", "<dataset> (<folder> | <file>)...", func() {
+	cmd.Command("store", "<dataset> (<folder>|<file>)...", func() {
 		ignoreList := append(DefaultIgnoreList, CustomIgnoreList...)
 		ignoreList = append(ignoreList, filepath.Join(LocalStoragePath, "*.cache*"))
 
@@ -629,7 +629,7 @@ func main() {
 		}
 	})
 
-	cmd.Command("restore", "<dataset> (<backup id>|.) [\"<path>\"...] <dest-folder>", func() {
+	cmd.Command("restore", "<dataset> (<backup-id>|.) [<path>...] <dest-folder>", func() {
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))
 		}
@@ -675,7 +675,7 @@ func main() {
 
 		session.Restore(list.States[found].State.BlockID, restorepath, restorelist...)
 	})
-	cmd.Command("diff", "<dataset> (<backup id>|.) [\"<path>\"...] <local-folder>", func() {
+	cmd.Command("diff", "<dataset> (<backup-id>|.) [<path>...] <local-folder>", func() {
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))
 		}
@@ -724,7 +724,7 @@ func main() {
 			os.Exit(2)
 		}
 	})
-	cmd.Command("remove", "<dataset> <backup id>", func() {
+	cmd.Command("remove", "<dataset> <backup-id>", func() {
 		if len(cmd.Args) < 3 {
 			panic(errors.New("Missing dataset argument"))
 		}

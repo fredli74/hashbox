@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
+	"strings"
 
 	cmd "github.com/fredli74/cmdparser"
 	"github.com/fredli74/hashbox/pkg/core"
@@ -22,6 +24,19 @@ var (
 	syncThreads  int64
 	logLevel     int64 = int64(core.LogInfo)
 )
+
+func parseHostString(input string) (host string, port int) {
+	host = input
+	port = core.DefaultServerPort
+	if idx := strings.LastIndex(input, ":"); idx != -1 {
+		host = input[:idx]
+		p, err := strconv.Atoi(input[idx+1:])
+		core.AbortOn(err, "invalid port %q: %v", input[idx+1:], err)
+		core.ASSERT(p > 0 && p < 65536, "port out of range")
+		port = p
+	}
+	return
+}
 
 func main() {
 	defer func() {
@@ -42,18 +57,18 @@ func main() {
 		core.LogLevel = int(logLevel)
 	})
 
-	cmd.Command("list-accounts", "List all accounts", func() {
+	cmd.Command("list-accounts", "", func() {
 		newCommandSet(datDirectory, idxDirectory).listAccounts()
 	})
 
-	cmd.Command("delete-account", "<account>  Append deletes for all datasets/states in an account", func() {
+	cmd.Command("delete-account", "<account>", func() {
 		if len(cmd.Args) < 3 {
 			core.Abort("account required")
 		}
 		newCommandSet(datDirectory, idxDirectory).deleteAccount(cmd.Args[2])
 	})
 
-	cmd.Command("list-datasets", "<account name>  List datasets for an account", func() {
+	cmd.Command("list-datasets", "<account>", func() {
 		if len(cmd.Args) < 3 {
 			core.Abort("account name required")
 		}
@@ -61,7 +76,7 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).listDatasets(accountName)
 	})
 
-	cmd.Command("move-dataset", "<srcAccount> <srcDataset> <dstAccount> [dstDataset]  Merge/relocate dataset", func() {
+	cmd.Command("move-dataset", "<src-account> <src-dataset> <dst-account> [dst-dataset]", func() {
 		if len(cmd.Args) < 5 {
 			core.Abort("srcAccount srcDataset dstAccount required")
 		}
@@ -72,7 +87,7 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).moveDataset(cmd.Args[2], cmd.Args[3], cmd.Args[4], dstDataset)
 	})
 
-	cmd.Command("delete-dataset", "<account> <dataset>  Append deletes for all states in a dataset", func() {
+	cmd.Command("delete-dataset", "<account> <dataset>", func() {
 		if len(cmd.Args) < 4 {
 			core.Abort("account and dataset required")
 		}
@@ -80,7 +95,7 @@ func main() {
 	})
 
 	cmd.BoolOption("show-deleted", "list-states", "Include deleted states when listing", &showDeleted, cmd.Standard)
-	cmd.Command("list-states", "<account name> <dataset name>  List states for a dataset", func() {
+	cmd.Command("list-states", "<account> <dataset>", func() {
 		if len(cmd.Args) < 4 {
 			core.Abort("account and dataset required")
 		}
@@ -89,28 +104,28 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).listStates(accountName, dataset)
 	})
 
-	cmd.Command("delete-state", "<account> <dataset> <stateID>  Append delete for a state", func() {
+	cmd.Command("delete-state", "<account> <dataset> <state-id>", func() {
 		if len(cmd.Args) < 5 {
 			core.Abort("account, dataset, and stateID required")
 		}
 		newCommandSet(datDirectory, idxDirectory).deleteState(cmd.Args[2], cmd.Args[3], cmd.Args[4])
 	})
 
-	cmd.Command("purge-states", "<account> <dataset>  Write purged .trn with only live states", func() {
+	cmd.Command("purge-states", "<account> <dataset>", func() {
 		if len(cmd.Args) < 4 {
 			core.Abort("account and dataset required")
 		}
 		newCommandSet(datDirectory, idxDirectory).purgeStates(cmd.Args[2], cmd.Args[3])
 	})
 
-	cmd.Command("block-info", "<block id>  Show block metadata", func() {
+	cmd.Command("block-info", "<block-id>", func() {
 		if len(cmd.Args) < 3 {
 			core.Abort("block id required")
 		}
 		newCommandSet(datDirectory, idxDirectory).showBlock(cmd.Args[2])
 	})
 
-	cmd.Command("rebuild-db", "[account] [dataset]  Rebuild .db caches (all or filtered)", func() {
+	cmd.Command("rebuild-db", "[account] [dataset]", func() {
 		var account, dataset string
 		if len(cmd.Args) >= 3 {
 			account = cmd.Args[2]
@@ -126,22 +141,22 @@ func main() {
 	cmd.BoolOption("dry-run", "sync", "Do not write state or apply changes", &syncDryRun, cmd.Standard)
 	cmd.IntOption("queuesize", "sync", "<MiB>", "Change sending queue size", &syncQueueMB, cmd.Hidden)
 	cmd.IntOption("threads", "sync", "<num>", "Change sending queue max threads", &syncThreads, cmd.Hidden)
-	cmd.Command("sync", "<remoteHost> <remotePort>  Sync with remote server", func() {
-		if len(cmd.Args) < 4 {
-			core.Abort("remoteHost and remotePort required")
+	cmd.Command("sync", "<remote-host[:port]>", func() {
+		if len(cmd.Args) < 3 {
+			core.Abort("remote host required")
 		}
+		host, port := parseHostString(cmd.Args[2])
+
 		include := parsePatterns(syncInclude)
 		exclude := parsePatterns(syncExclude)
-		port := parsePort(cmd.Args[3])
+
 		cs := newCommandSet(datDirectory, idxDirectory)
 		cs.queueBytes = syncQueueMB * 1024 * 1024
 		if syncThreads > 0 {
 			cs.maxThreads = syncThreads
 		}
-		cs.syncRun(cmd.Args[2], port, include, exclude, syncDryRun)
+		cs.syncRun(host, port, include, exclude, syncDryRun)
 	})
-
-	cmd.Command("", "", func() { cmd.Usage() })
 
 	err := cmd.Parse()
 	core.AbortOn(err, "command parse failed: %v", err)

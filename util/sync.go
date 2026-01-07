@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -44,13 +43,6 @@ func buildSyncID(host string, port int) string {
 	id = strings.ReplaceAll(id, ":", "_")
 	id = strings.ReplaceAll(id, "/", "_")
 	return id
-}
-
-func parsePort(input string) int {
-	p, err := strconv.Atoi(input)
-	core.AbortOn(err, "invalid port %q: %v", input, err)
-	core.ASSERT(p > 0 && p < 65536, "port out of range")
-	return p
 }
 
 func matchesPattern(acc, ds string, patterns []string) bool {

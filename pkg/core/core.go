@@ -25,6 +25,8 @@ type Serializer interface {
 // Byte128 is just an alias to a 16 byte array since we use a lot of 128-bit key and check values in Hashbox
 type Byte128 [16]byte
 
+const DefaultServerPort = 7411
+
 func (b Byte128) Serialize(w io.Writer) (size int) {
 	size += WriteBytes(w, b[:])
 	return

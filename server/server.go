@@ -35,7 +35,7 @@ import (
 
 var Version = "(dev-build)"
 
-const DEFAULT_SERVER_IP_PORT int = 7411
+const DEFAULT_SERVER_IP_PORT int = core.DefaultServerPort
 
 var datDirectory string
 var idxDirectory string
@@ -396,7 +396,7 @@ func run() (returnValue int) {
 		core.Log(core.LogInfo, "Garbage collection completed in %.1f minutes", time.Since(start).Minutes())
 	})
 
-	cmd.Command("recover", "[start file number] [end file number]", func() {
+	cmd.Command("recover", "[start-file-number] [end-file-number]", func() {
 		startfile := int32(0)
 		endfile := int32(-1)
 		if len(cmd.Args) > 2 {
