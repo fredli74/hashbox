@@ -20,35 +20,14 @@ func resolveAccount(store *accountdb.Store, input string) (core.String, core.Byt
 		return "", core.Byte128{}, fmt.Errorf("no accounts found")
 	}
 
-	var targetHash core.Byte128
-	var hashProvided bool
-	if strings.HasPrefix(input, "#") {
-		h, ok := parseHash(strings.TrimPrefix(input, "#"))
-		if !ok {
-			return "", core.Byte128{}, fmt.Errorf("invalid account hash %q", input)
-		}
-		targetHash = h
-		hashProvided = true
-	}
-	if !hashProvided {
-		if h, ok := parseHash(input); ok {
-			targetHash = h
-			hashProvided = true
-		}
-	}
+	nameInput := core.String(input)
+	hash, hashCompare := parseHash(input)
 
 	for _, acc := range accounts {
-		if hashProvided {
-			if acc.AccountNameH.Compare(targetHash) == 0 {
-				return acc.AccountName, acc.AccountNameH, nil
-			}
-			continue
-		}
-		if acc.AccountName == core.String(input) {
+		if acc.AccountName == nameInput {
 			return acc.AccountName, acc.AccountNameH, nil
 		}
-		nameHash := core.Hash([]byte(input))
-		if acc.AccountNameH.Compare(nameHash) == 0 {
+		if hashCompare && acc.AccountNameH.Compare(hash) == 0 {
 			return acc.AccountName, acc.AccountNameH, nil
 		}
 	}
@@ -66,24 +45,18 @@ func resolveDatasetName(store *accountdb.Store, accountNameH core.Byte128, input
 		return "", fmt.Errorf("no datasets found for account")
 	}
 
-	var hashInput core.Byte128
-	hashProvided := false
-	if h, ok := parseHash(input); ok {
-		hashInput = h
-		hashProvided = true
-	}
+	nameInput := core.String(input)
+	hash, hashCompare := parseHash(input)
 
 	for _, ds := range datasets {
-		if string(ds.DatasetName) == input {
+		if ds.DatasetName == nameInput {
 			return ds.DatasetName, nil
 		}
-		if hashProvided {
-			if hashInput.Compare(core.Hash([]byte(ds.DatasetName))) == 0 {
-				return ds.DatasetName, nil
-			}
+		// Try parsed hash (hex or base64) matches dataset name hash
+		if hashCompare && hash.Compare(core.Hash([]byte(ds.DatasetName))) == 0 {
+			return ds.DatasetName, nil
 		}
 	}
-
 	return "", fmt.Errorf("dataset %q not found", input)
 }
 
