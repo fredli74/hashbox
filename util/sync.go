@@ -115,26 +115,28 @@ func (c *commandSet) syncRun(remoteHost string, remotePort int, include, exclude
 	// for each account in local data/account, check if it should be included
 	for _, acc := range accounts {
 		accName := string(acc.AccountName)
-		core.Log(core.LogTrace, "consider account %s (%s)", accName, formatHash(acc.AccountNameH))
+		accDisp := escapeControls(accName)
+		core.Log(core.LogTrace, "consider account %s (%s)", accDisp, formatHash(acc.AccountNameH))
 		if !shouldInclude(accName, "", include, exclude) {
-			core.Log(core.LogTrace, "skip account %s (filters)", accName)
+			core.Log(core.LogTrace, "skip account %s (filters)", accDisp)
 			continue
 		}
-		core.Log(core.LogDebug, "match account %s", accName)
+		core.Log(core.LogDebug, "match account %s", accDisp)
 		datasets, err := accountDB.ListDatasets(&acc.AccountNameH)
-		core.AbortOn(err, "list datasets for %s: %v", accName, err)
-		core.Log(core.LogDebug, "found %d datasets for %s", len(datasets), accName)
+		core.AbortOn(err, "list datasets for %s: %v", accDisp, err)
+		core.Log(core.LogDebug, "found %d datasets for %s", len(datasets), accDisp)
 
 		// for each dataset in account, check if it should be included
 		for _, ds := range datasets {
 			dsName := string(ds.DatasetName)
-			core.Log(core.LogTrace, "consider dataset %s:%s", accName, dsName)
+			dsDisp := escapeControls(dsName)
+			core.Log(core.LogTrace, "consider dataset %s:%s", accDisp, dsDisp)
 			if !shouldInclude(accName, dsName, include, exclude) {
-				core.Log(core.LogTrace, "skip dataset %s:%s (filters)", accName, dsName)
+				core.Log(core.LogTrace, "skip dataset %s:%s (filters)", accDisp, dsDisp)
 				continue
 			}
-			core.Log(core.LogDebug, "match dataset %s:%s", accName, dsName)
-			core.Log(core.LogInfo, "Syncing dataset %s:%s to %s:%d", accName, dsName, remoteHost, remotePort)
+			core.Log(core.LogDebug, "match dataset %s:%s", accDisp, dsDisp)
+			core.Log(core.LogInfo, "Syncing dataset %s:%s to %s:%d", accDisp, dsDisp, remoteHost, remotePort)
 			sync.processDataset(acc.AccountNameH, ds.DatasetName)
 		}
 	}
@@ -253,7 +255,7 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 	defer reader.Close()
 
 	position := getSyncStateWatermark(sync.dataDB.DataDir, sync.syncID, datasetName)
-	core.Log(core.LogDebug, "sync start %s:%s from offset %d", sync.accountName(accountHash), datasetName, position)
+	core.Log(core.LogDebug, "sync start %s:%s from offset %d", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), position)
 	if position > 0 {
 		_, err := reader.Seek(position, io.SeekStart)
 		core.AbortOn(err, "seek trn %s:%s: %v", sync.accountName(accountHash), datasetName, err)
@@ -328,7 +330,7 @@ func (sync *syncSession) ensureConnection(accHash core.Byte128) {
 
 func (sync *syncSession) sendDeleteTransaction(accountHash core.Byte128, datasetName core.String, stateID core.Byte128, ts int64) {
 	sync.ensureConnection(accountHash)
-	core.Log(core.LogInfo, "Deleting %s:%s stateID %x", sync.accountName(accountHash), datasetName, stateID[:])
+	core.Log(core.LogInfo, "Deleting %s:%s stateID %x", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateID[:])
 	if !sync.dryRun {
 		sync.client.RemoveDatasetState(string(datasetName), stateID)
 	}
@@ -336,12 +338,12 @@ func (sync *syncSession) sendDeleteTransaction(accountHash core.Byte128, dataset
 
 func (sync *syncSession) sendAddTransaction(accountHash core.Byte128, datasetName core.String, state core.DatasetState) {
 	sync.ensureConnection(accountHash)
-	core.Log(core.LogInfo, "Sending block tree stateID=%x, root=%x, size=%s", state.StateID[:], state.BlockID[:], core.CompactHumanSize(state.Size))
+	core.Log(core.LogInfo, "Sending block tree %s:%s stateID=%x root=%x size=%s", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), state.StateID[:], state.BlockID[:], core.CompactHumanSize(state.Size))
 	sync.sendBlockTree(state.BlockID)
 	if !sync.dryRun {
-		core.Log(core.LogTrace, "commit blocks before dataset state %s:%s state=%x", sync.accountName(accountHash), datasetName, state.StateID[:])
+		core.Log(core.LogTrace, "commit blocks before dataset state %s:%s state=%x", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), state.StateID[:])
 		sync.client.Commit()
-		core.Log(core.LogInfo, "Adding dataset state %s:%s stateID %x to remote server", sync.accountName(accountHash), datasetName, state.StateID[:])
+		core.Log(core.LogInfo, "Adding dataset state %s:%s stateID %x to remote server", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), state.StateID[:])
 		sync.client.AddDatasetState(string(datasetName), state)
 	}
 }
@@ -450,6 +452,6 @@ func (sync *syncSession) reportStats(force bool) {
 	fmt.Printf("\r\x1b[K>>> %.1f min, blocks sent %d/%d, queued:%d (%s)%s",
 		now.Sub(sync.start).Minutes(),
 		sent, sent+skipped, queued, core.HumanSize(qsize), newline)
-		
+
 	sync.nextStat = now.Add(sync.statTick)
 }
