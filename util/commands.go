@@ -191,17 +191,22 @@ func (c *commandSet) showBlock(blockIDStr string) {
 	block.Release()
 }
 
-func (c *commandSet) deleteState(accountName, dataset, stateIDStr string) {
+func (c *commandSet) deleteStates(accountName, dataset string, stateIDStrs []string) {
 	store := accountdb.NewStore(c.dataDir)
 	_, accountNameH, err := resolveAccount(store, accountName)
 	core.AbortOn(err, "resolve account: %v", err)
 	datasetName, err := resolveDatasetName(store, accountNameH, dataset)
 	core.AbortOn(err, "resolve dataset: %v", err)
-	stateID, ok := parseHash(stateIDStr)
-	if !ok {
-		core.Abort("invalid state id %q", stateIDStr)
+	if len(stateIDStrs) == 0 {
+		core.Abort("at least one state id required")
 	}
-	store.AppendDelState(accountNameH, datasetName, stateID)
+	for _, stateIDStr := range stateIDStrs {
+		stateID, ok := parseHash(stateIDStr)
+		if !ok {
+			core.Abort("invalid state id %q", stateIDStr)
+		}
+		store.AppendDelState(accountNameH, datasetName, stateID)
+	}
 	store.RebuildDB(accountNameH, datasetName)
 }
 

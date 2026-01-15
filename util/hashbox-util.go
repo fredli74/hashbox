@@ -104,11 +104,11 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).listStates(accountName, dataset)
 	})
 
-	cmd.Command("delete-state", "<account> <dataset> <state-id>", func() {
+	cmd.Command("delete-state", "<account> <dataset> <state-id> [<state-id>...]", func() {
 		if len(cmd.Args) < 5 {
-			core.Abort("account, dataset, and stateID required")
+			core.Abort("account, dataset, and at least one stateID required")
 		}
-		newCommandSet(datDirectory, idxDirectory).deleteState(cmd.Args[2], cmd.Args[3], cmd.Args[4])
+		newCommandSet(datDirectory, idxDirectory).deleteStates(cmd.Args[2], cmd.Args[3], cmd.Args[4:])
 	})
 
 	cmd.Command("purge-states", "<account> <dataset>", func() {
