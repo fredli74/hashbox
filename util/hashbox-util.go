@@ -10,7 +10,6 @@ import (
 
 	cmd "github.com/fredli74/cmdparser"
 	"github.com/fredli74/hashbox/pkg/core"
-	"github.com/kardianos/osext"
 )
 
 var (
@@ -48,7 +47,11 @@ func main() {
 	}()
 	cmd.Title = "hashbox-util"
 
-	datDirectory, idxDirectory = defaultPaths()
+	var err error
+	datDirectory, err = filepath.Abs("data")
+	core.AbortOn(err, "abs data dir: %v", err)
+	idxDirectory, err = filepath.Abs("index")
+	core.AbortOn(err, "abs index dir: %v", err)
 
 	// Global options
 	cmd.StringOption("data", "", "<path>", "Path to data directory (contains account/)", &datDirectory, cmd.Standard)
@@ -166,48 +169,6 @@ func main() {
 		cs.syncRun(host, port, include, exclude, syncDryRun)
 	})
 
-	err := cmd.Parse()
+	err = cmd.Parse()
 	core.AbortOn(err, "command parse failed: %v", err)
-}
-
-// defaultPaths tries to pick a sensible default for data/index:
-// 1) current working directory
-// 2) $PWD
-// 3) directory next to the executable
-// 4) plain "data"/"index" fallback.
-func defaultPaths() (string, string) {
-	var bases []string
-	if wd, err := os.Getwd(); err == nil && wd != "" {
-		bases = append(bases, wd)
-	}
-	if envPwd := os.Getenv("PWD"); envPwd != "" && (len(bases) == 0 || bases[0] != envPwd) {
-		bases = append(bases, envPwd)
-	}
-	if exeDir, err := osext.ExecutableFolder(); err == nil && exeDir != "" {
-		duplicate := false
-		for _, b := range bases {
-			if b == exeDir {
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate {
-			bases = append(bases, exeDir)
-		}
-	}
-	bases = append(bases, ".")
-
-	for _, base := range bases {
-		dat := filepath.Join(base, "data")
-		idx := filepath.Join(base, "index")
-		if st, err := os.Stat(dat); err == nil && st.IsDir() {
-			if stIdx, err := os.Stat(idx); err == nil && stIdx.IsDir() {
-				return dat, idx
-			}
-		}
-	}
-	if len(bases) > 0 && bases[0] != "" {
-		return filepath.Join(bases[0], "data"), filepath.Join(bases[0], "index")
-	}
-	return "data", "index"
 }

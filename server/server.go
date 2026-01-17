@@ -30,7 +30,6 @@ import (
 	"github.com/fredli74/hashbox/pkg/accountdb"
 	"github.com/fredli74/hashbox/pkg/core"
 	"github.com/fredli74/lockfile"
-	"github.com/kardianos/osext"
 )
 
 var Version = "(dev-build)"
@@ -235,11 +234,11 @@ func run() (returnValue int) {
 
 	var err error
 
-	exeRoot, _ := osext.ExecutableFolder()
-
 	var serverPort int64 = int64(DEFAULT_SERVER_IP_PORT)
-	datDirectory = filepath.Join(exeRoot, "data")
-	idxDirectory = filepath.Join(exeRoot, "index")
+	datDirectory, err = filepath.Abs("data")
+	core.AbortOn(err, "abs data dir: %v", err)
+	idxDirectory, err = filepath.Abs("index")
+	core.AbortOn(err, "abs index dir: %v", err)
 
 	cmd.Title = fmt.Sprintf("Hashbox Server %s", Version)
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)

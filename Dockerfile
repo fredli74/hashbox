@@ -23,4 +23,6 @@ FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /out/hashbox-server /usr/local/bin/hashbox-server
 COPY --from=builder /out/hashbox-util /usr/local/bin/hashbox-util
 
+WORKDIR /
+
 EXPOSE 7411
