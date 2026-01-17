@@ -9,6 +9,7 @@ ARG HASHBOX_REVISION
 ARG HASHBOX_VERSION
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    echo "Building version ${HASHBOX_VERSION} (${HASHBOX_REVISION})"; \
     if [ -n "${HASHBOX_REVISION}" ]; then \
         LDFLAGS="-s -w -X main.Version=${HASHBOX_REVISION}"; \
     else \

@@ -15,5 +15,7 @@ if command -v git >/dev/null 2>&1; then
     fi
 fi
 
-HASHBOX_REVISION="$REVISION" HASHBOX_VERSION="$VERSION" \
-    docker build -t hashbox:local .
+docker build \
+    --build-arg HASHBOX_REVISION="$REVISION" \
+    --build-arg HASHBOX_VERSION="$VERSION" \
+    -t hashbox:local .
