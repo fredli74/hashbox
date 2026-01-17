@@ -9,8 +9,13 @@ ARG HASHBOX_REVISION
 ARG HASHBOX_VERSION
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -ldflags="-s -w -X main.Version=${HASHBOX_REVISION}" -o /out/hashbox-server ./server && \
-    go build -ldflags="-s -w -X main.Version=${HASHBOX_REVISION}" -o /out/hashbox-util ./util
+    if [ -n "${HASHBOX_REVISION}" ]; then \
+        LDFLAGS="-s -w -X main.Version=${HASHBOX_REVISION}"; \
+    else \
+        LDFLAGS="-s -w"; \
+    fi; \
+    go build -ldflags="$LDFLAGS" -o /out/hashbox-server ./server && \
+    go build -ldflags="$LDFLAGS" -o /out/hashbox-util ./util
 
 FROM gcr.io/distroless/static:nonroot
 

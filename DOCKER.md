@@ -9,7 +9,7 @@ host paths must be writable by the chosen UID/GID.
 - Ensure ownership for the container user:
   - `sudo chown -R 65532:65532 ./data ./index`
 - Build/run:
-  - `docker compose build`
+  - `./scripts/docker_build.sh`
   - `docker compose up -d`
 - Create the first Hashback user:
   - `docker compose run --rm hashbox /usr/local/bin/hashbox-server -data /data -index /index adduser <username> <password>`
