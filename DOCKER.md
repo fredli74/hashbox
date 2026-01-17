@@ -10,9 +10,10 @@ host paths must be writable by the chosen UID/GID.
   - `sudo chown -R 65532:65532 ./data ./index`
 - Build/run:
   - `./scripts/docker_build.sh`
-  - `docker compose up -d`
 - Create the first Hashback user:
-  - `docker compose run --rm hashbox /usr/local/bin/hashbox-server -data /data -index /index adduser <username> <password>`
+  - `docker compose run --rm hashbox adduser <username> <password>`
+- Start the server:
+  - `docker compose up -d`
 - Run GC:
   - `./scripts/docker_gc.sh`
 
@@ -21,3 +22,7 @@ host paths must be writable by the chosen UID/GID.
   `docker-compose.yml`. Override with `HASHBOX_DATA_DIR`/`HASHBOX_INDEX_DIR`
   via a `.env` file (see `.env.example`) or your shell environment.
 - `HASHBOX_UID`/`HASHBOX_GID` control the user inside the container.
+- `adduser` needs exclusive access to the data directory; stop the server before
+  running it if the container is already up.
+- For `docker compose run`, the service entrypoint is already set, so pass the
+  subcommand directly (omit `/usr/local/bin/hashbox-server`).

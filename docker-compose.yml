@@ -3,10 +3,6 @@ services:
     image: hashbox:local
     entrypoint: ["/usr/local/bin/hashbox-server"]
     command:
-      - "-data"
-      - "/data"
-      - "-index"
-      - "/index"
       - "-port"
       - "${HASHBOX_PORT:-7411}"
       - "-loglevel"
@@ -27,7 +23,6 @@ services:
   hashbox-util:
     image: hashbox:local
     entrypoint: ["/usr/local/bin/hashbox-util"]
-    command: ["-data", "/data", "-index", "/index"]
     user: "${HASHBOX_UID:-65532}:${HASHBOX_GID:-65532}"
     profiles: ["utility"]
     volumes:

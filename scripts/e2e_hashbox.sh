@@ -91,12 +91,18 @@ if [[ "$USE_DOCKER" -eq 1 ]]; then
     DOCKER_BUILDKIT=1 "$DOCKER_CMD" build -t hashbox:local "$ROOT"
   fi
 
+  echo "Checking compose entrypoint version..."
+  ( cd "$ROOT" && \
+    HASHBOX_DATA_DIR="$DATA_DIR" HASHBOX_INDEX_DIR="$IDX_DIR" \
+    HASHBOX_UID="$(id -u)" HASHBOX_GID="$(id -g)" \
+    "$DOCKER_CMD" compose run --rm hashbox -version )
+
   echo "Creating test user (docker)..."
   if ! "$DOCKER_CMD" run --rm \
     --user "$DOCKER_USER" \
     -v "$DATA_DIR:/data" \
     -v "$IDX_DIR:/index" \
-    hashbox:local /usr/local/bin/hashbox-server -data /data -index /index adduser "$USER" "$PASS" >/dev/null 2>&1; then
+    hashbox:local /usr/local/bin/hashbox-server adduser "$USER" "$PASS" >/dev/null 2>&1; then
     echo "User may already exist, continuing..."
   fi
 
@@ -106,7 +112,7 @@ if [[ "$USE_DOCKER" -eq 1 ]]; then
     -p "$PORT:$PORT" \
     -v "$DATA_DIR:/data" \
     -v "$IDX_DIR:/index" \
-    hashbox:local /usr/local/bin/hashbox-server -data /data -index /index -port "$PORT" -loglevel 2 >/dev/null
+    hashbox:local /usr/local/bin/hashbox-server -port "$PORT" -loglevel 2 >/dev/null
 else
   echo "Creating test user..."
   if ! "$SERVER_BIN" -data "$DATA_DIR" -index "$IDX_DIR" adduser "$USER" "$PASS" >/dev/null 2>&1; then
