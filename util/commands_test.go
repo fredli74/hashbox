@@ -17,7 +17,6 @@ import (
 
 func TestListAccountsIncludesHashAndName(t *testing.T) {
 	tmp := t.TempDir()
-	requireDirs(t, filepath.Join(tmp, "account"))
 
 	accName := core.String("alice")
 	accHash := core.Hash([]byte(accName))
@@ -36,7 +35,6 @@ func TestListAccountsIncludesHashAndName(t *testing.T) {
 
 func TestListDatasetsAndStates(t *testing.T) {
 	tmp := t.TempDir()
-	requireDirs(t, filepath.Join(tmp, "account"))
 
 	accName := core.String("alice")
 	accHash := core.Hash([]byte(accName))

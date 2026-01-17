@@ -50,6 +50,7 @@ func (fs *Store) ReadInfoFile(accountNameH core.Byte128) *AccountInfo {
 
 // WriteInfoFile writes an account .info file.
 func (fs *Store) WriteInfoFile(accountNameH core.Byte128, info AccountInfo) {
+	fs.ensureAccountDir()
 	file, err := os.OpenFile(fs.accountFilename(accountNameH)+".info", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer file.Close()

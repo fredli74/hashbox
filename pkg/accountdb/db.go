@@ -65,6 +65,7 @@ func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) 
 
 // WriteDBFile writes a .db cache file and updates the .info dataset list.
 func (fs *Store) WriteDBFile(accountNameH core.Byte128, datasetName core.String, c *DBStateCollection) {
+	fs.ensureAccountDir()
 	filename := fs.DatasetFilename(accountNameH, datasetName) + DbFileExtensionDatabase
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
 	core.AbortOn(err)

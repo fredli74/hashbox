@@ -8,7 +8,6 @@ package accountdb
 import (
 	"bytes"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/fredli74/hashbox/pkg/core"
@@ -17,9 +16,6 @@ import (
 func newTestStore(t *testing.T) (*Store, core.Byte128) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "account"), 0o755); err != nil {
-		t.Fatalf("create account dir: %v", err)
-	}
 	return NewStore(dir), core.Hash([]byte("account"))
 }
 

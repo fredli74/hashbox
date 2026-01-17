@@ -48,6 +48,7 @@ func (t *DbTx) Unserialize(r io.Reader) {
 // AppendTx appends a transaction to the dataset log.
 // Panics on unexpected IO/lock errors.
 func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx DbTx) {
+	fs.ensureAccountDir()
 	filename := fs.DatasetFilename(accountNameH, datasetName) + DbFileExtensionTransaction
 	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
 	core.AbortOn(err)
@@ -133,6 +134,7 @@ func (fs *Store) ReadTrnFile(accountNameH core.Byte128, datasetName core.String)
 
 // WriteTrnFile truncates and writes a transaction log exclusively.
 func (fs *Store) WriteTrnFile(accountNameH core.Byte128, datasetName core.String, txs []DbTx) {
+	fs.ensureAccountDir()
 	filename := fs.DatasetFilename(accountNameH, datasetName) + DbFileExtensionTransaction
 	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
 	core.AbortOn(err)

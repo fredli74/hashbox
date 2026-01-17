@@ -8,6 +8,7 @@ package accountdb
 import (
 	"encoding/base64"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/fredli74/hashbox/pkg/core"
@@ -53,6 +54,11 @@ func NewStore(datDir string) *Store {
 
 func base64filename(d []byte) string {
 	return base64.RawURLEncoding.EncodeToString(d)
+}
+
+func (fs *Store) ensureAccountDir() {
+	err := os.MkdirAll(filepath.Join(fs.DataDir, "account"), 0o755)
+	core.AbortOn(err, "mkdir %s/account: %v", fs.DataDir, err)
 }
 
 func (fs *Store) accountFilename(nameHash core.Byte128) string {
