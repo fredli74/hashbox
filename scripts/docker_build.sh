@@ -16,4 +16,4 @@ if command -v git >/dev/null 2>&1; then
 fi
 
 HASHBOX_REVISION="$REVISION" HASHBOX_VERSION="$VERSION" \
-    docker compose -f "$COMPOSE_FILE" build
+    docker build -t hashbox:local .
