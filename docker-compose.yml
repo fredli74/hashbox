@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        HASHBOX_REVISION: "${HASHBOX_REVISION:-}"
+        HASHBOX_VERSION: "${HASHBOX_VERSION:-}"
     image: hashbox:local
     entrypoint: ["/usr/local/bin/hashbox-server"]
     command:

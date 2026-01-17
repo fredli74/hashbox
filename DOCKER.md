@@ -11,6 +11,10 @@ host paths must be writable by the chosen UID/GID.
 - Build/run:
   - `docker compose build`
   - `docker compose up -d`
+- Create the first Hashback user:
+  - `docker compose run --rm hashbox /usr/local/bin/hashbox-server -data /data -index /index adduser <username> <password>`
+- Run GC:
+  - `./scripts/docker_gc.sh`
 
 ## Notes
 - Default bind mounts are `./data:/data` and `./index:/index` in

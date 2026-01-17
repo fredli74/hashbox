@@ -5,10 +5,12 @@ WORKDIR /src
 COPY . ./
 
 ENV CGO_ENABLED=0
+ARG HASHBOX_REVISION
+ARG HASHBOX_VERSION
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -ldflags="-s -w" -o /out/hashbox-server ./server && \
-    go build -ldflags="-s -w" -o /out/hashbox-util ./util
+    go build -ldflags="-s -w -X main.Version=${HASHBOX_REVISION}" -o /out/hashbox-server ./server && \
+    go build -ldflags="-s -w -X main.Version=${HASHBOX_REVISION}" -o /out/hashbox-util ./util
 
 FROM gcr.io/distroless/static:nonroot
 
