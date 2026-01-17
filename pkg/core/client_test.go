@@ -56,7 +56,7 @@ func TestClientInit(t *testing.T) {
 	c := FauxServer{hdump, pr}
 	client := NewClient("", "account name", Hash([]byte("password")))
 	client.connection = NewTimeoutConn(c, DEFAULT_CONNECTION_TIMEOUT)
-	client.Authorize(client.connection)
+	client.Authorize()
 
 	time.Sleep(1 * time.Second)
 	client.Close(true)

@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+
+FROM golang:1.22 AS builder
+WORKDIR /src
+COPY . ./
+
+ENV CGO_ENABLED=0
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w" -o /out/hashbox-server ./server && \
+    go build -ldflags="-s -w" -o /out/hashbox-util ./util
+
+FROM gcr.io/distroless/static:nonroot
+
+COPY --from=builder /out/hashbox-server /usr/local/bin/hashbox-server
+COPY --from=builder /out/hashbox-util /usr/local/bin/hashbox-util
+
+EXPOSE 7411
