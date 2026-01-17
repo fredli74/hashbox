@@ -191,6 +191,16 @@ func (c *commandSet) showBlock(blockIDStr string) {
 	block.Release()
 }
 
+func (c *commandSet) ping(host string, port int) {
+	core.ASSERT(host != "", "host required")
+	address := fmt.Sprintf("%s:%d", host, port)
+	client := core.NewClient("", "", core.Byte128{})
+	client.ServerAddress = address
+	client.Dial()
+	client.Handshake()
+	client.Close(true)
+}
+
 func (c *commandSet) deleteStates(accountName, dataset string, stateIDStrs []string) {
 	store := accountdb.NewStore(c.dataDir)
 	_, accountNameH, err := resolveAccount(store, accountName)

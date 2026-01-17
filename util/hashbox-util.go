@@ -125,6 +125,14 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).showBlock(cmd.Args[2])
 	})
 
+	cmd.Command("ping", "<host[:port]>", func() {
+		if len(cmd.Args) < 3 {
+			core.Abort("host required")
+		}
+		host, port := parseHostString(cmd.Args[2])
+		newCommandSet(datDirectory, idxDirectory).ping(host, port)
+	})
+
 	cmd.Command("rebuild-db", "[account] [dataset]", func() {
 		var account, dataset string
 		if len(cmd.Args) >= 3 {

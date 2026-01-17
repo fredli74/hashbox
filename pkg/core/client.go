@@ -225,41 +225,50 @@ func (c *Client) sendQueue(what Byte128) {
 	}
 }
 
-func (c *Client) Authorize(connection *TimeoutConn) {
-	{ // Say hello
-		data := c.singleExchange(connection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeGreeting, Data: &MsgClientGreeting{Version: ProtocolVersion}}}).Data
-		if data == nil {
-			panic(errors.New("Server did not respond correctly to handshake"))
-		}
-		r := data.(*MsgServerGreeting)
-		clientTime := uint64(time.Now().Unix())
-		serverTime := binary.BigEndian.Uint64(r.SessionNonce[:]) / 1000000000
-		if clientTime < serverTime-600 || clientTime > serverTime+600 {
-			panic(errors.New("Connection refused, system time difference between client and server is more than 10 minutes"))
-		}
-
-		c.SessionNonce = r.SessionNonce
-		c.GenerateSessionKey(c.AccessKey)
+func (c *Client) handshake(connection *TimeoutConn) {
+	data := c.singleExchange(connection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeGreeting, Data: &MsgClientGreeting{Version: ProtocolVersion}}}).Data
+	if data == nil {
+		panic(errors.New("Server did not respond correctly to handshake"))
+	}
+	r := data.(*MsgServerGreeting)
+	clientTime := uint64(time.Now().Unix())
+	serverTime := binary.BigEndian.Uint64(r.SessionNonce[:]) / 1000000000
+	if clientTime < serverTime-600 || clientTime > serverTime+600 {
+		panic(errors.New("Connection refused, system time difference between client and server is more than 10 minutes"))
 	}
 
-	{ // Authenticate
-		c.singleExchange(connection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeAuthenticate, Data: &MsgClientAuthenticate{
-			AccountNameH:    c.AccountNameH,
-			AuthenticationH: DeepHmac(1, c.AccountNameH[:], c.SessionKey),
-		}}})
-	}
+	c.SessionNonce = r.SessionNonce
 }
-func (c *Client) Connect() {
+
+func (c *Client) authenticate(connection *TimeoutConn) {
+	c.GenerateSessionKey(c.AccessKey)
+	c.singleExchange(connection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeAuthenticate, Data: &MsgClientAuthenticate{
+		AccountNameH:    c.AccountNameH,
+		AuthenticationH: DeepHmac(1, c.AccountNameH[:], c.SessionKey),
+	}}})
+}
+
+func (c *Client) Handshake() {
+	c.handshake(c.connection)
+}
+
+func (c *Client) Authorize() {
+	c.handshake(c.connection)
+	c.authenticate(c.connection)
+}
+
+// Dial opens a new socket connection and wraps it in a TimeoutConn.
+func (c *Client) Dial() {
 	c.connection = nil // Drop previous connection object
 
 	conn, err := net.Dial("tcp", c.ServerAddress)
 	AbortOn(err)
-	newConnection := NewTimeoutConn(conn, DEFAULT_CONNECTION_TIMEOUT)
+	c.connection = NewTimeoutConn(conn, DEFAULT_CONNECTION_TIMEOUT)
+}
 
-	c.Authorize(newConnection)
-
-	// If we reached here, we're all good
-	c.connection = newConnection
+func (c *Client) Connect() {
+	c.Dial()
+	c.Authorize()
 }
 func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispatch) *ProtocolMessage {
 	// Send an outgoing message
