@@ -1,8 +1,6 @@
 github.com/fredli74/bytearray v0.0.0-20160519123742-883b9d2bdcd6 h1:JLylN6PxKYv/XRa6aFHY9i5Xem7unSOxtCQkBe2/YOY=
 github.com/fredli74/bytearray v0.0.0-20160519123742-883b9d2bdcd6/go.mod h1:27kEbKG5J4c9EYkGw+aBEZS60pSh9Q/LstJGBJySubA=
-github.com/fredli74/cmdparser v0.0.0-20160519131828-8835ce0e2af2 h1:ChTpMja0gkCrj5OLQgqyBCB4Noq5oUwFZlL8wG5LqIg=
-github.com/fredli74/cmdparser v0.0.0-20160519131828-8835ce0e2af2/go.mod h1:jIe/wes27xwVRnRzEdrNOp1QsUcRqrWsFCEyFs2ztbI=
-github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0 h1:iQTw/8FWTuc7uiaSepXwyf3o52HaUYcV+Tu66S3F5GA=
-github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0/go.mod h1:1NbS8ALrpOvjt0rHPNLyCIeMtbizbir8U//inJ+zuB8=
+github.com/fredli74/cmdparser v0.0.0-20260118112638-58bac3b91ce4 h1:Ky7qCb+u5HL3/VVPB/8SVptH3sh51WgUGbY03Ww/wkE=
+github.com/fredli74/cmdparser v0.0.0-20260118112638-58bac3b91ce4/go.mod h1:ck3YzlJGNXbDI376+EhSifdXw907p0yiovNlt/oPVGU=
 golang.org/x/sys v0.21.0 h1:rF+pYz3DAGSQAxAu1CbC7catZg4ebC4UIeIhKxBZvws=
 golang.org/x/sys v0.21.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
