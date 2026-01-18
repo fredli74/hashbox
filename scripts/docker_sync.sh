@@ -6,8 +6,9 @@ if [ ! -f docker-compose.yml ]; then
   exit 1
 fi
 
+REMOTE="$1"
 if [ -z "$REMOTE" ]; then
-  echo "Error: remote host required (e.g. 10.0.0.5:7411)"
+  echo "Usage: $0 <remote> (e.g. 10.0.0.5:7411)"
   exit 1
 fi
 
