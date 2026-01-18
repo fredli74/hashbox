@@ -3,18 +3,16 @@ services:
     image: hashbox:local
     entrypoint: ["/usr/local/bin/hashbox-server"]
     command:
-      - "-port"
-      - "${HASHBOX_PORT:-7411}"
       - "-loglevel"
       - "${HASHBOX_LOGLEVEL:-2}"
     user: "${HASHBOX_UID:-65532}:${HASHBOX_GID:-65532}"
     ports:
-      - "${HASHBOX_PORT:-7411}:${HASHBOX_PORT:-7411}"
+      - "${HASHBOX_PORT:-7411}:7411"
     volumes:
       - ${HASHBOX_DATA_DIR:-./data}:/data
       - ${HASHBOX_INDEX_DIR:-./index}:/index
     healthcheck:
-      test: ["CMD", "/usr/local/bin/hashbox-util", "ping", "127.0.0.1:${HASHBOX_PORT:-7411}"]
+      test: ["CMD", "/usr/local/bin/hashbox-util", "ping", "127.0.0.1:7411"]
       interval: 600s
       timeout: 10s
       retries: 6
