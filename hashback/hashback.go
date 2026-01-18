@@ -362,6 +362,7 @@ func main() {
 	session := NewBackupSession()
 
 	cmd.Title = fmt.Sprintf("Hashback %s (Hashbox Backup Client)", Version)
+	cmd.ShowCurrentDefaults = true
 
 	cmd.OptionsFile = filepath.Join(LocalStoragePath, "options.json")
 

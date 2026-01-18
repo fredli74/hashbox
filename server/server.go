@@ -241,6 +241,7 @@ func run() (returnValue int) {
 	core.AbortOn(err, "abs index dir: %v", err)
 
 	cmd.Title = fmt.Sprintf("Hashbox Server %s", Version)
+	cmd.ShowCurrentDefaults = true
 	cmd.IntOption("port", "", "<port>", "Server listening port", &serverPort, cmd.Standard)
 	cmd.StringOption("data", "", "<path>", "Full path to dat files", &datDirectory, cmd.Standard)
 	cmd.StringOption("index", "", "<path>", "Full path to idx and meta files", &idxDirectory, cmd.Standard)

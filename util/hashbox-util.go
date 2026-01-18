@@ -46,6 +46,7 @@ func main() {
 		}
 	}()
 	cmd.Title = "hashbox-util"
+	cmd.ShowCurrentDefaults = true
 
 	var err error
 	datDirectory, err = filepath.Abs("data")
