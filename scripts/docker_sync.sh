@@ -1,22 +1,21 @@
 #!/bin/sh
 set -e
 
-COMPOSE_FILE=${COMPOSE_FILE:-docker-compose.yml}
-SERVICE=${SERVICE:-hashbox-util}
-REMOTE=${REMOTE:?remote host required (e.g. 10.0.0.5:7411)}
-INCLUDE=${INCLUDE:-}
-EXCLUDE=${EXCLUDE:-}
-DRY_RUN=${DRY_RUN:-}
+if [ ! -f docker-compose.yml ]; then
+  echo "Error: Run from directory with docker-compose.yml"
+  exit 1
+fi
 
-# Move to repo root (docker-compose.yml lives alongside docker/)
-cd "$(dirname "$0")/.."
+if [ -z "$REMOTE" ]; then
+  echo "Error: remote host required (e.g. 10.0.0.5:7411)"
+  exit 1
+fi
 
-set --
-[ -n "$INCLUDE" ] && set -- "$@" --include "$INCLUDE"
-[ -n "$EXCLUDE" ] && set -- "$@" --exclude "$EXCLUDE"
-[ -n "$DRY_RUN" ] && set -- "$@" --dry-run
+INCLUDE_OPT=${INCLUDE:+--include "$INCLUDE"}
+EXCLUDE_OPT=${EXCLUDE:+--exclude "$EXCLUDE"}
+DRY_RUN_OPT=${DRY_RUN:+--dry-run}
 
 echo "Running sync to $REMOTE..."
-docker compose -f "$COMPOSE_FILE" run --rm "$SERVICE" sync "$REMOTE" "$@"
+docker compose run --rm hashbox-util sync "$REMOTE" $INCLUDE_OPT $EXCLUDE_OPT $DRY_RUN_OPT
 
 echo "Sync complete."
