@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.24.12 AS builder
+FROM golang:1.25.6 AS builder
 WORKDIR /src
 COPY . ./
 
@@ -15,8 +15,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     else \
         LDFLAGS="-s -w"; \
     fi; \
-    go build -ldflags="$LDFLAGS" -o /out/hashbox-server ./server && \
-    go build -ldflags="$LDFLAGS" -o /out/hashbox-util ./util
+    (cd server && go build -ldflags="$LDFLAGS" -o /out/hashbox-server .) && \
+    (cd util && go build -ldflags="$LDFLAGS" -o /out/hashbox-util .)
 
 FROM gcr.io/distroless/static:nonroot
 

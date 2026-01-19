@@ -11,12 +11,12 @@ import (
 	"github.com/fredli74/hashbox/pkg/core"
 
 	"bytes"
+	"crypto/rand"
 	"crypto/md5"
 	_ "encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"os"
 	"reflect"
@@ -89,9 +89,8 @@ func TestClientServerAuthentication(t *testing.T) {
 }
 
 func randomByte128() (b core.Byte128) {
-	for i := 0; i < 16; i++ {
-		b[i] = byte(rand.Uint32())
-	}
+	_, err := rand.Read(b[:])
+	core.AbortOn(err)
 	return
 }
 

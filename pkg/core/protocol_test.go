@@ -8,32 +8,53 @@ package core
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	_ "io"
-	"math/rand"
+	"math/big"
 	_ "os"
 	"reflect"
 	"testing"
 )
 
 func randomUint32() Uint32 {
-	return Uint32(rand.Uint32())
+	var b [4]byte
+	_, err := rand.Read(b[:])
+	AbortOn(err, "rand.Read: %v", err)
+	return Uint32(binary.BigEndian.Uint32(b[:]))
+}
+func randomInt63() int64 {
+	var b [8]byte
+	_, err := rand.Read(b[:])
+	AbortOn(err, "rand.Read: %v", err)
+	v := int64(binary.BigEndian.Uint64(b[:]) & ^(uint64(1) << 63))
+	return v
+}
+func randomUint8() uint8 {
+	var b [1]byte
+	_, err := rand.Read(b[:])
+	AbortOn(err, "rand.Read: %v", err)
+	return b[0]
 }
 func randomByte128() (b Byte128) {
-	for i := 0; i < 16; i++ {
-		b[i] = byte(rand.Uint32())
-	}
+	_, err := rand.Read(b[:])
+	AbortOn(err, "rand.Read: %v", err)
 	return
 }
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 func randomMsgString() String {
-	b := make([]byte, rand.Intn(32)+8)
+	n, err := rand.Int(rand.Reader, big.NewInt(32))
+	AbortOn(err, "rand.Int: %v", err)
+	b := make([]byte, int(n.Int64())+8)
 	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(letterBytes))))
+		AbortOn(err, "rand.Int: %v", err)
+		b[i] = letterBytes[idx.Int64()]
 	}
 	return String("RandomString>" + string(b) + "<")
 }
@@ -54,7 +75,9 @@ func protocolPipeCompare(msgType uint32, msgData interface{}) (isEqual bool, dum
 		}
 	}()
 	buf := new(bytes.Buffer)
-	msg := &ProtocolMessage{Num: uint16(rand.Uint32()), Type: msgType, Data: msgData}
+	num, err := rand.Int(rand.Reader, big.NewInt(1<<16))
+	AbortOn(err, "rand.Int: %v", err)
+	msg := &ProtocolMessage{Num: uint16(num.Int64()), Type: msgType, Data: msgData}
 	WriteMessage(buf, msg)
 	dump = hex.Dump(buf.Bytes())
 	R := ReadMessage(buf)
@@ -190,7 +213,7 @@ func TestMessageSerialization(t *testing.T) {
 		}
 	}
 
-	if ok, dump := protocolPipeCompare(MsgTypeAccountInfo&MsgTypeServerMask, &MsgServerAccountInfo{[]Dataset{Dataset{Name: randomMsgString(), Size: rand.Int63(), ListH: randomByte128()}}}); !ok {
+	if ok, dump := protocolPipeCompare(MsgTypeAccountInfo&MsgTypeServerMask, &MsgServerAccountInfo{[]Dataset{Dataset{Name: randomMsgString(), Size: randomInt63(), ListH: randomByte128()}}}); !ok {
 		t.Errorf("MsgServerAccountInfo did not pass serialization / deserialization test:\n%s", dump)
 	} else {
 		if testing.Verbose() {
@@ -209,12 +232,12 @@ func TestMessageSerialization(t *testing.T) {
 	if ok, dump := protocolPipeCompare(MsgTypeListDataset&MsgTypeServerMask, &MsgServerListDataset{
 		States: DatasetStateArray{
 			DatasetStateEntry{
-				StateFlags: uint8(rand.Uint32()),
+				StateFlags: randomUint8(),
 				State: DatasetState{
 					StateID:    randomByte128(),
 					BlockID:    randomByte128(),
-					Size:       rand.Int63(),
-					UniqueSize: rand.Int63(),
+					Size:       randomInt63(),
+					UniqueSize: randomInt63(),
 				},
 			},
 		},
@@ -226,7 +249,7 @@ func TestMessageSerialization(t *testing.T) {
 		}
 	}
 
-	if ok, dump := protocolPipeCompare(MsgTypeAddDatasetState, &MsgClientAddDatasetState{AccountNameH: randomByte128(), DatasetName: randomMsgString(), State: DatasetState{StateID: randomByte128(), BlockID: randomByte128(), Size: rand.Int63(), UniqueSize: rand.Int63()}}); !ok {
+	if ok, dump := protocolPipeCompare(MsgTypeAddDatasetState, &MsgClientAddDatasetState{AccountNameH: randomByte128(), DatasetName: randomMsgString(), State: DatasetState{StateID: randomByte128(), BlockID: randomByte128(), Size: randomInt63(), UniqueSize: randomInt63()}}); !ok {
 		t.Errorf("MsgClientAddDatasetState did not pass serialization / deserialization test:\n%s", dump)
 	} else {
 		if testing.Verbose() {
