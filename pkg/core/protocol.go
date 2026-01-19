@@ -14,9 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"reflect"
-	"time"
 )
 
 type Session struct {
@@ -327,8 +325,4 @@ func ReadMessage(r io.Reader) *ProtocolMessage {
 }
 func WriteMessage(w io.Writer, msg *ProtocolMessage) {
 	msg.Serialize(w)
-}
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
 }

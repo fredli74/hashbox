@@ -64,7 +64,7 @@ func BenchmarkGoHmac(b *testing.B) {
 	b.SetBytes(size)
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, a := range hmacTests {
 
 			H := hmac.New(md5.New, a.key[:])
@@ -83,7 +83,7 @@ func BenchmarkDeepHmac(b *testing.B) {
 	b.SetBytes(size)
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, a := range hmacTests {
 			copy(key[:], a.key)
 			DeepHmac(1, a.text, key)
@@ -98,7 +98,7 @@ func Benchmark20kGoHmac(b *testing.B) {
 	b.SetBytes(size)
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, a := range hmacTests {
 
 			var data []byte = a.text
@@ -122,7 +122,7 @@ func Benchmark20kDeepHmac(b *testing.B) {
 	b.SetBytes(size)
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, a := range hmacTests {
 			copy(key[:], a.key)
 			DeepHmac(20000, a.text, key)

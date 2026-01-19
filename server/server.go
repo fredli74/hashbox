@@ -8,10 +8,10 @@ package main
 import (
 	//"github.com/davecheney/profile"
 	"bytes"
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"github.com/fredli74/hashbox/pkg/storagedb"
-	"math/rand"
 	"net"
 	"os"
 	"os/signal"
@@ -90,8 +90,7 @@ func handleConnection(conn net.Conn) {
 				} else {
 					// Create server nonce using  64-bit time and 64-bit random
 					binary.BigEndian.PutUint64(clientSession.SessionNonce[0:], uint64(time.Now().UnixNano()))
-					binary.BigEndian.PutUint32(clientSession.SessionNonce[8:], rand.Uint32())
-					binary.BigEndian.PutUint32(clientSession.SessionNonce[12:], rand.Uint32())
+					rand.Read(clientSession.SessionNonce[8:])
 					reply.Data = &core.MsgServerGreeting{SessionNonce: clientSession.SessionNonce}
 				}
 			case core.MsgTypeAuthenticate:
