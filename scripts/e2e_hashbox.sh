@@ -57,10 +57,10 @@ echo "Building client..."
 GOFLAGS=${GOFLAGS:-}
 if [[ "$USE_DOCKER" -eq 1 ]]; then
   DOCKER_USER="$(id -u):$(id -g)"
-  ( cd "$ROOT/hashback" && GOWORK=off go build $GOFLAGS -o "$CLIENT_BIN" ./ )
+  ( cd "$ROOT/hashback" && go build $GOFLAGS -o "$CLIENT_BIN" ./ )
 else
-  go build $GOFLAGS -o "$SERVER_BIN" "$ROOT/server"
-  go build $GOFLAGS -o "$CLIENT_BIN" "$ROOT/hashback"
+  ( cd "$ROOT/server" && go build $GOFLAGS -o "$SERVER_BIN" ./ )
+  ( cd "$ROOT/hashback" && go build $GOFLAGS -o "$CLIENT_BIN" ./ )
 fi
 
 USER="testuser"
