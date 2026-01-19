@@ -7,9 +7,9 @@ fi
 echo "Stopping hashbox..."
 docker compose stop hashbox || true
 echo "Running GC..."
-docker compose run --rm hashbox gc -loglevel=4 2>&1 | tee gc.log | grep -v "........ ..:..:.. [(?] " || true
+docker compose run --rm hashbox -compact -loglevel=4 gc 2>&1 | tee gc.log | grep -v "........ ..:..:.. [(?] " || true
 echo "Starting hashbox..."
 docker compose start hashbox
 echo "Running verify..."
-docker compose run --rm hashbox verify -content -readonly 2>&1 | tee verify.log | grep -v "........ ..:..:.. [(?] " || true
+docker compose run --rm hashbox -content -readonly verify 2>&1 | tee verify.log | grep -v "........ ..:..:.. [(?] " || true
 echo "GC + verify complete."
