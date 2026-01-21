@@ -22,6 +22,7 @@ var (
 	syncQueueMB  int64 = 256
 	syncThreads  int64
 	logLevel     int64 = int64(core.LogInfo)
+	blockInfoVerify bool
 )
 
 func parseHostString(input string) (host string, port int) {
@@ -122,11 +123,12 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).purgeStates(cmd.Args[2], cmd.Args[3])
 	})
 
+	cmd.BoolOption("verify", "block-info", "Uncompress and verify block content", &blockInfoVerify, cmd.Standard)
 	cmd.Command("block-info", "<block-id>", func() {
 		if len(cmd.Args) < 3 {
 			core.Abort("block id required")
 		}
-		newCommandSet(datDirectory, idxDirectory).showBlock(cmd.Args[2])
+		newCommandSet(datDirectory, idxDirectory).showBlock(cmd.Args[2], blockInfoVerify)
 	})
 
 	cmd.Command("ping", "<host[:port]>", func() {

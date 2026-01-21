@@ -98,10 +98,17 @@ func TestShowBlock(t *testing.T) {
 
 	cmds := newCommandSet(dataDir, idxDir)
 	out := captureOutput(t, func() {
-		cmds.showBlock(fmtHash(block.BlockID[:]))
+		cmds.showBlock(fmtHash(block.BlockID[:]), false)
 	})
 	if !strings.Contains(out, "Size: 5B (raw data)") {
 		t.Fatalf("unexpected show-block output: %s", out)
+	}
+
+	verifyOut := captureOutput(t, func() {
+		cmds.showBlock(fmtHash(block.BlockID[:]), true)
+	})
+	if !strings.Contains(verifyOut, "Verify: OK") {
+		t.Fatalf("unexpected show-block verify output: %s", verifyOut)
 	}
 }
 

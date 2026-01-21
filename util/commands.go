@@ -157,7 +157,7 @@ func (c *commandSet) rebuildDB(account, dataset string) {
 	fmt.Printf("Rebuilt %d datasets across %d accounts (%d states)\n", datasetCount, len(accounts), stateCount)
 }
 
-func (c *commandSet) showBlock(blockIDStr string) {
+func (c *commandSet) showBlock(blockIDStr string, verify bool) {
 	blockID, ok := parseHash(blockIDStr)
 	if !ok {
 		core.Abort("invalid block id %q", blockIDStr)
@@ -184,6 +184,24 @@ func (c *commandSet) showBlock(blockIDStr string) {
 		sizeLine += " (raw data)"
 	}
 	fmt.Println(sizeLine)
+	if verify {
+		var verifyErr interface{}
+		ok := func() bool {
+			defer func() {
+				if r := recover(); r != nil {
+					verifyErr = r
+				}
+			}()
+			return block.VerifyBlock()
+		}()
+		if verifyErr != nil {
+			fmt.Printf("Verify: FAILED (%v)\n", verifyErr)
+		} else if ok {
+			fmt.Printf("Verify: OK\n")
+		} else {
+			fmt.Printf("Verify: FAILED\n")
+		}
+	}
 	fmt.Printf("Links (%d):\n", len(block.Links))
 	for _, l := range block.Links {
 		fmt.Printf("  %x\n", l[:])
