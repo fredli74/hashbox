@@ -115,11 +115,11 @@ func (b *HashboxBlock) UncompressData() {
 		case BlockDataTypeRaw:
 			// Do nothing, data is already uncompressed
 			b.Compressed = false
-		case BlockDataTypeZlib:
-			c := ZlibUncompress(b.Data)
-			b.Data.Release()
-			b.Data = c
-			b.Compressed = false
+	case BlockDataTypeZlib:
+		c := b.zlibUncompress()
+		b.Data.Release()
+		b.Data = c
+		b.Compressed = false
 		default:
 			panic(errors.New("Unsupported Block Data Type"))
 		}
@@ -133,11 +133,11 @@ func (b *HashboxBlock) CompressData() {
 		switch b.DataType {
 		case BlockDataTypeRaw:
 			// DO nothing data does not compress
-		case BlockDataTypeZlib:
-			c := ZlibCompress(b.Data)
-			b.Data.Release()
-			b.Data = c
-			b.Compressed = true
+	case BlockDataTypeZlib:
+		c := b.zlibCompress()
+		b.Data.Release()
+		b.Data = c
+		b.Compressed = true
 		default:
 			panic(errors.New("Unsupported Block Data Type"))
 		}
@@ -153,11 +153,11 @@ func (b *HashboxBlock) VerifyBlock() bool {
 		case BlockDataTypeRaw:
 			b.Compressed = false
 			verifyID = b.HashData()
-		case BlockDataTypeZlib:
-			c := ZlibUncompress(b.Data)
-			hash := md5.New()
-			b.SerializeLinks(hash)
-			WriteUint32(hash, uint32(c.Len()))
+	case BlockDataTypeZlib:
+		c := b.zlibUncompress()
+		hash := md5.New()
+		b.SerializeLinks(hash)
+		WriteUint32(hash, uint32(c.Len()))
 			CopyOrPanic(hash, &c)
 			copy(verifyID[:], hash.Sum(nil)[:16])
 			c.Release()
@@ -170,24 +170,26 @@ func (b *HashboxBlock) VerifyBlock() bool {
 	return bytes.Equal(verifyID[:], b.BlockID[:])
 }
 
-func ZlibCompress(src bytearray.ByteArray) (dst bytearray.ByteArray) {
-	src.ReadSeek(0, bytearray.SEEK_SET)
+func (b *HashboxBlock) zlibCompress() (dst bytearray.ByteArray) {
+	b.Data.ReadSeek(0, bytearray.SEEK_SET)
 	zw := zpool.GetWriter(&dst)
-	CopyOrPanic(zw, &src)
+	CopyOrPanic(zw, &b.Data)
 	err := zw.Close()
 	AbortOn(err)
 	zpool.PutWriter(zw)
 	return dst
 }
-func ZlibUncompress(src bytearray.ByteArray) (dst bytearray.ByteArray) {
-	src.ReadSeek(0, bytearray.SEEK_SET)
-	zr, err := zlib.NewReader(&src)
-	AbortOn(err)
+func (b *HashboxBlock) zlibUncompress() bytearray.ByteArray {
+	b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	zr, err := zlib.NewReader(&b.Data)
+	AbortOn(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	defer func() {
 		err := zr.Close()
-		AbortOn(err)
+		AbortOn(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	}()
-	CopyOrPanic(&dst, zr)
+	var dst bytearray.ByteArray
+	_, err = io.Copy(&dst, zr)
+	AbortOn(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	return dst
 }
 
