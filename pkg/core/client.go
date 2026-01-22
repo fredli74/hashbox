@@ -318,10 +318,6 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 			atomic.AddInt32(&c.skippedBlocks, 1) //c.skippedBlocks++
 			c.Paint("-")
 		}
-	case *MsgServerReadBlock:
-		c.sendQueue(d.BlockID)
-	case *MsgServerWriteBlock:
-	}
 	return incoming
 }
 
@@ -535,7 +531,17 @@ func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 	}
 
 	// Put an allocate block on the line
-	c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: block.BlockID}, nil)
+	waiter := make(chan interface{}, 1)
+	c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: block.BlockID}, waiter)
+	go func(id Byte128, rc <-chan interface{}) {
+		if r, ok := <-rc; ok {
+			if t, ok := r.(*ProtocolMessage); ok {
+				if _, ok := t.Data.(*MsgServerReadBlock); ok {
+					c.sendQueue(id)
+				}
+			}
+		}
+	}(block.BlockID, waiter)
 	return block.BlockID
 }
 func (c *Client) ReadBlock(blockID Byte128) *HashboxBlock {
