@@ -334,31 +334,31 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 
 			defer func() {
 				if (retry) {
-				err := recover()
-				if err == nil {
-					return
-				}
-
-				c.connection = nil
-				switch e := err.(type) {
-				case net.Error:
-					Log(LogError, e.Error())
-					Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
-					return // Network error, retry and retry again
-				case error:
-					if e == io.EOF {
-						Log(LogError, "Lost connection with server (%v)", e.Error())
-						Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
-						return // Network stream closed, non fatal
+					err := recover()
+					if err == nil {
+						return
 					}
-					Log(LogError, e.Error())
-					Log(LogError, fmt.Sprint(e))
-				default:
-					Log(LogError, "Unknown error in client communication")
-					Log(LogError, fmt.Sprint(e))
-				}
+
+					c.connection = nil
+					switch e := err.(type) {
+					case net.Error:
+						Log(LogError, e.Error())
+						Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
+						return // Network error, retry and retry again
+					case error:
+						if e == io.EOF {
+							Log(LogError, "Lost connection with server (%v)", e.Error())
+							Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
+							return // Network stream closed, non fatal
+						}
+						Log(LogError, e.Error())
+						Log(LogError, fmt.Sprint(e))
+					default:
+						Log(LogError, "Unknown error in client communication")
+						Log(LogError, fmt.Sprint(e))
+					}
 					// Any other error is fatal
-				panic(err)
+					panic(err)
 				}
 			}()
 
@@ -392,18 +392,27 @@ func (c *Client) ioHandler() {
 
 	for {
 		select {
-		case outgoing, ok := <-c.storeChannel:
-			if !ok {
-				// Channel is closed
-				return
-			}
-			c.retryingExchange(outgoing)
 		case outgoing, ok := <-c.dispatchChannel:
 			if !ok {
 				// Channel is closed
 				return
 			}
 			c.retryingExchange(outgoing)
+		default:
+			select {
+			case outgoing, ok := <-c.dispatchChannel:
+				if !ok {
+					// Channel is closed
+					return
+				}
+				c.retryingExchange(outgoing)
+			case outgoing, ok := <-c.storeChannel:
+				if !ok {
+					// Channel is closed
+					return
+				}
+				c.retryingExchange(outgoing)
+			}
 		}
 	}
 }
