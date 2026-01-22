@@ -23,16 +23,23 @@ else
   PERSIST_ROOT=0
 fi
 PID_FILE="$TMP_ROOT/server.pid"
+SYNC_PID_FILE="$TMP_ROOT/server-sync.pid"
 cleanup() {
   if [[ "$USE_DOCKER" -eq 1 ]]; then
     "$DOCKER_CMD" rm -f hashbox-e2e >/dev/null 2>&1 || true
+    "$DOCKER_CMD" rm -f hashbox-e2e-sync >/dev/null 2>&1 || true
   else
     if [[ -n "${SERVER_PID:-}" ]]; then
       kill "$SERVER_PID" >/dev/null 2>&1 || true
       wait "$SERVER_PID" 2>/dev/null || true
     fi
+    if [[ -n "${SYNC_SERVER_PID:-}" ]]; then
+      kill "$SYNC_SERVER_PID" >/dev/null 2>&1 || true
+      wait "$SYNC_SERVER_PID" 2>/dev/null || true
+    fi
   fi
   rm -f "$PID_FILE" >/dev/null 2>&1 || true
+  rm -f "$SYNC_PID_FILE" >/dev/null 2>&1 || true
   chmod -R u+w "$TMP_ROOT" >/dev/null 2>&1 || true
   if [[ "$PERSIST_ROOT" -eq 0 ]]; then
     rm -rf "$TMP_ROOT"
@@ -42,25 +49,33 @@ trap cleanup EXIT
 
 DATA_DIR="$TMP_ROOT/data"
 IDX_DIR="$TMP_ROOT/index"
+SYNC_DATA_DIR="$TMP_ROOT/sync-data"
+SYNC_IDX_DIR="$TMP_ROOT/sync-index"
 LOG_DIR="$TMP_ROOT/logs"
 FIXTURE_DIR="$TMP_ROOT/fixture"
 RESTORE_DIR="$TMP_ROOT/restore"
 HB_HOME="$TMP_ROOT/home"
 rm -rf "$FIXTURE_DIR" "$RESTORE_DIR" "$HB_HOME"
+rm -rf "$SYNC_DATA_DIR" "$SYNC_IDX_DIR"
 mkdir -p "$DATA_DIR" "$IDX_DIR" "$LOG_DIR" "$FIXTURE_DIR" "$RESTORE_DIR" "$HB_HOME"
+mkdir -p "$SYNC_DATA_DIR" "$SYNC_IDX_DIR"
 
 SERVER_BIN="$TMP_ROOT/hashbox-server"
 CLIENT_BIN="$TMP_ROOT/hashback"
+UTIL_BIN="$TMP_ROOT/hashbox-util"
 SERVER_LOG="$LOG_DIR/server.log"
+SYNC_SERVER_LOG="$LOG_DIR/server-sync.log"
 
 echo "Building client..."
 GOFLAGS=${GOFLAGS:-}
 if [[ "$USE_DOCKER" -eq 1 ]]; then
   DOCKER_USER="$(id -u):$(id -g)"
   ( cd "$ROOT/hashback" && go build $GOFLAGS -o "$CLIENT_BIN" ./ )
+  ( cd "$ROOT/util" && go build $GOFLAGS -o "$UTIL_BIN" ./ )
 else
   ( cd "$ROOT/server" && go build $GOFLAGS -o "$SERVER_BIN" ./ )
   ( cd "$ROOT/hashback" && go build $GOFLAGS -o "$CLIENT_BIN" ./ )
+  ( cd "$ROOT/util" && go build $GOFLAGS -o "$UTIL_BIN" ./ )
 fi
 
 USER="testuser"
@@ -70,6 +85,7 @@ PORT="${E2E_PORT:-}"
 if [[ -z "$PORT" ]]; then
   PORT=$(shuf -i 15000-25000 -n 1)
 fi
+SYNC_PORT=$(shuf -i 25001-35000 -n 1)
 
 SOURCE_DIR="${E2E_SOURCE_DIR:-}"
 if [[ -z "$SOURCE_DIR" ]]; then
@@ -190,6 +206,57 @@ HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" restore "$DATASET" . "$RESTOR
 
 echo "Running diff against restore..."
 HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" diff "$DATASET" . "$RESTORE_DIR"
+
+if [[ "$USE_DOCKER" -eq 1 ]]; then
+  echo "Creating test user on sync server (docker)..."
+  if ! "$DOCKER_CMD" run --rm \
+    --user "$DOCKER_USER" \
+    -v "$SYNC_DATA_DIR:/data" \
+    -v "$SYNC_IDX_DIR:/index" \
+    hashbox:local /usr/local/bin/hashbox-server adduser "$USER" "$PASS" >/dev/null 2>&1; then
+    echo "User may already exist, continuing..."
+  fi
+  echo "Starting sync server on 127.0.0.1:$SYNC_PORT ..."
+  "$DOCKER_CMD" run -d --name hashbox-e2e-sync \
+    --user "$DOCKER_USER" \
+    -p "$SYNC_PORT:$SYNC_PORT" \
+    -v "$SYNC_DATA_DIR:/data" \
+    -v "$SYNC_IDX_DIR:/index" \
+    hashbox:local /usr/local/bin/hashbox-server -port "$SYNC_PORT" -loglevel 2 >/dev/null
+  for _ in {1..50}; do
+    if "$DOCKER_CMD" logs hashbox-e2e-sync 2>/dev/null | grep -q "listening on"; then
+      break
+    fi
+    sleep 0.1
+  done
+else
+  echo "Creating test user on sync server..."
+  if ! "$SERVER_BIN" -data "$SYNC_DATA_DIR" -index "$SYNC_IDX_DIR" adduser "$USER" "$PASS" >/dev/null 2>&1; then
+    echo "User may already exist, continuing..."
+  fi
+  echo "Starting sync server on 127.0.0.1:$SYNC_PORT ..."
+  if [[ -f "$SYNC_PID_FILE" ]]; then
+    OLD_PID="$(cat "$SYNC_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" >/dev/null 2>&1; then
+      echo "Stopping previous sync server pid $OLD_PID"
+      kill "$OLD_PID" >/dev/null 2>&1 || true
+      sleep 0.2
+    fi
+    rm -f "$SYNC_PID_FILE"
+  fi
+  "$SERVER_BIN" -data "$SYNC_DATA_DIR" -index "$SYNC_IDX_DIR" -port "$SYNC_PORT" -loglevel 2 >"$SYNC_SERVER_LOG" 2>&1 &
+  SYNC_SERVER_PID=$!
+  echo "$SYNC_SERVER_PID" >"$SYNC_PID_FILE"
+  for _ in {1..50}; do
+    if grep -q "listening on" "$SYNC_SERVER_LOG" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+fi
+
+echo "Running sync..."
+"$UTIL_BIN" -data "$DATA_DIR" -index "$IDX_DIR" sync "127.0.0.1:$SYNC_PORT"
 
 echo "Server log:"
 if [[ "$USE_DOCKER" -eq 1 ]]; then
