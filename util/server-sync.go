@@ -87,7 +87,6 @@ func (c *commandSet) syncRun(remoteHost string, remotePort int, include, exclude
 	sync.queueBytes = c.queueBytes
 	sync.maxThreads = c.maxThreads
 	sync.start = time.Now()
-	sync.nextStat = sync.start.Add(sync.statTick)
 	defer sync.close()
 
 	if dryRun {
@@ -221,7 +220,6 @@ type syncSession struct {
 	remotePort int
 
 	start    time.Time
-	nextStat time.Time
 	statTick time.Duration
 
 	queueBytes int64
@@ -344,43 +342,54 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 	var skipped int32 = 0
 	queue := []core.Byte128{root}
 	index := 0
-	printUpdate := func(action string, block core.Byte128) {
-		fmt.Printf("\r\x1b[KSyncing %d/%d (skipped %d) %s %x\r", index+1, len(queue), skipped, action, block[:])
+	type progressEvent struct {
+		action   string
+		block    core.Byte128
+		index    int
+		queueLen int
+		skipped  int32
 	}
-	for len(queue) > 0 {
-		sync.reportStats(false)
-		var b core.Byte128
-		if index < len(queue) {
-			b = queue[index]
-			core.Log(core.LogTrace, "queue descend idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
-			if sync.client.VerifyBlock(b) {
-				core.Log(core.LogDebug, "skip existing block %x (queue=%d)", b[:], len(queue))
-				queue = append(queue[:index], queue[index+1:]...)
-				skipped++
-				printUpdate("-", b)
-				continue
+	progressCh := make(chan progressEvent, 64)
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		defer close(progressCh)
+		for {
+			if len(queue) == 0 {
+				return
 			}
-			meta := sync.dataDB.ReadBlockMeta(b)
-			if meta == nil {
-				core.Abort("block %x metadata missing locally", b[:])
+			var b core.Byte128
+			if index < len(queue) {
+				b = queue[index]
+				core.Log(core.LogTrace, "queue descend idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
+				if sync.client.VerifyBlock(b) {
+					core.Log(core.LogDebug, "skip existing block %x (queue=%d)", b[:], len(queue))
+					queue = append(queue[:index], queue[index+1:]...)
+					skipped++
+					progressCh <- progressEvent{action: "-", block: b, index: index, queueLen: len(queue), skipped: skipped}
+					continue
+				}
+				meta := sync.dataDB.ReadBlockMeta(b)
+				if meta == nil {
+					core.Abort("block %x metadata missing locally", b[:])
+				}
+				links := meta.Links
+				if len(links) > 0 {
+					core.Log(core.LogDebug, "enqueue children for %x (links=%d queue=%d)", b[:], len(links), len(queue))
+					queue = append(queue, make([]core.Byte128, len(links))...)
+					copy(queue[index+len(links)+1:], queue[index+1:])
+					copy(queue[index+1:], links)
+					index++
+					progressCh <- progressEvent{action: "*", block: b, index: index, queueLen: len(queue), skipped: skipped}
+					continue
+				}
+				// No links, fall through to send
+			} else {
+				// draining queue, send block
+				index = len(queue) - 1
+				b = queue[index]
+				core.Log(core.LogTrace, "queue unwind idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
 			}
-			links := meta.Links
-			if len(links) > 0 {
-				core.Log(core.LogDebug, "enqueue children for %x (links=%d queue=%d)", b[:], len(links), len(queue))
-				queue = append(queue, make([]core.Byte128, len(links))...)
-				copy(queue[index+len(links)+1:], queue[index+1:])
-				copy(queue[index+1:], links)
-				index++
-				printUpdate("*", b)
-				continue
-			}
-			// No links, fall through to send
-		} else {
-			// draining queue, send block
-			index = len(queue) - 1
-			b = queue[index]
-			core.Log(core.LogTrace, "queue unwind idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
-		}
 		data := sync.dataDB.ReadBlock(b)
 		if data == nil {
 			core.Abort("block %x missing locally", b[:])
@@ -392,9 +401,30 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 		} else {
 			sync.client.StoreBlock(data)
 		}
-		printUpdate("+", b)
-		queue = append(queue[:index], queue[index+1:]...)
+			progressCh <- progressEvent{action: "+", block: b, index: index, queueLen: len(queue), skipped: skipped}
+			queue = append(queue[:index], queue[index+1:]...)
+		}
+	}()
+
+	printUpdate := func(ev progressEvent) {
+		fmt.Printf("\r\x1b[KSyncing %d/%d (skipped %d) %s %x\r", ev.index+1, ev.queueLen, ev.skipped, ev.action, ev.block[:])
 	}
+	ticker := time.NewTicker(sync.statTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case ev, ok := <-progressCh:
+			if ok {
+				printUpdate(ev)
+			}
+		case <-ticker.C:
+			sync.reportStats(false)
+		case <-doneCh:
+			goto waitQueue
+		}
+	}
+
+waitQueue:
 	if _, _, queued, _ := sync.client.GetStats(); queued > 0 {
 		core.Log(core.LogInfo, "Waiting for queued blocks to be sent to remote server")
 	}
@@ -426,17 +456,14 @@ func (sync *syncSession) accountName(accHash core.Byte128) string {
 	return string(info.AccountName)
 }
 
-func (sync *syncSession) reportStats(force bool) {
+func (sync *syncSession) reportStats(overwriteLine bool) {
 	if sync.client == nil {
 		return
 	}
 	now := time.Now()
-	if !force && now.Before(sync.nextStat) {
-		return
-	}
 
 	newline := "\n"
-	if force {
+	if overwriteLine {
 		newline = "\r"
 	}
 
@@ -444,6 +471,4 @@ func (sync *syncSession) reportStats(force bool) {
 	fmt.Printf("\r\x1b[K>>> %.1f min, blocks sent %d/%d, queued:%d (%s)%s",
 		now.Sub(sync.start).Minutes(),
 		sent, sent+skipped, queued, core.HumanSize(qsize), newline)
-
-	sync.nextStat = now.Add(sync.statTick)
 }
