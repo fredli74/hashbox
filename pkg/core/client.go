@@ -212,14 +212,15 @@ func (c *Client) sendQueue(what Byte128) {
 							atomic.AddInt32(&workItem.state, 1)
 						case 2:
 							panic("ASSERT!")
-						case 3:
-							atomic.AddInt64(&c.WriteData, int64(workItem.block.UncompressedSize))
-							atomic.AddInt64(&c.WriteDataCompressed, int64(workItem.block.CompressedSize))
-							atomic.AddInt32(&c.transmittedBlocks, 1) //	c.transmittedBlocks++
-							c.Paint("*")
-							msg := &ProtocolMessage{Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: workItem.block}}
-							c.storeChannel <- &messageDispatch{msg: msg}
-							atomic.AddInt32(&workItem.state, 1)
+							case 3:
+								atomic.AddInt64(&c.WriteData, int64(workItem.block.UncompressedSize))
+								atomic.AddInt64(&c.WriteDataCompressed, int64(workItem.block.CompressedSize))
+								atomic.AddInt32(&c.transmittedBlocks, 1) //	c.transmittedBlocks++
+								c.Paint("*")
+								Log(LogTrace, "Upload block %x (links=%d, size=%d, compressed=%d)", workItem.block.BlockID, len(workItem.block.Links), workItem.block.UncompressedSize, workItem.block.CompressedSize)
+								msg := &ProtocolMessage{Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: workItem.block}}
+								c.storeChannel <- &messageDispatch{msg: msg}
+								atomic.AddInt32(&workItem.state, 1)
 						default:
 							panic("ASSERT!")
 						}

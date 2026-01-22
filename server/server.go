@@ -178,12 +178,12 @@ func handleConnection(conn net.Conn) {
 						c := incoming.Data.(*core.MsgClientWriteBlock)
 						if c.Block.VerifyBlock() {
 							for _, l := range c.Block.Links {
-								if !storageHandler.doesBlockExist(l) {
-									reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-									reply.Data = &core.MsgServerError{ErrorMessage: "Linked to non existent block"}
-									break
+									if !storageHandler.doesBlockExist(l) {
+										reply.Type = core.MsgTypeError & core.MsgTypeServerMask
+										reply.Data = &core.MsgServerError{ErrorMessage: core.String(fmt.Sprintf("Linked to non existent block: block=%x link=%x", c.Block.BlockID, l))}
+										break
+									}
 								}
-							}
 							if !storageHandler.store.CheckFree(int64(c.Block.Data.Len())) {
 								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
 								reply.Data = &core.MsgServerError{ErrorMessage: "Write permission is denied because the server is out of space"}

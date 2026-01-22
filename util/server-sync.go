@@ -308,8 +308,8 @@ func (sync *syncSession) ensureConnection(accHash core.Byte128) {
 			core.Abort("account info missing for %x", accHash[:])
 		}
 		address := fmt.Sprintf("%s:%d", sync.remoteHost, sync.remotePort)
-		sync.client = core.NewClient(address, string(info.AccountName), info.AccessKey)
-		sync.client.RetryMax = 0
+			sync.client = core.NewClient(address, string(info.AccountName), info.AccessKey)
+			sync.client.RetryMax = 3
 		if sync.queueBytes > 0 {
 			sync.client.QueueMax = sync.queueBytes
 		}
