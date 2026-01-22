@@ -50,6 +50,10 @@ type Client struct {
 
 	QueueMax  int64 // max size of the outgoing block queue (in bytes)
 	ThreadMax int32 // maximum number of goroutines started by send queue (defaults to runtime.NumCPU)
+	Retry     bool          // retry on network errors/EOF
+	RetryMax  int           // max retry attempts; -1 means retry forever, 0 disables retries
+	RetryWait time.Duration // interval between retries
+	retryCount int          // total retries this session
 
 	sendMutex sync.Mutex // protects from two threads sending at the same time
 
@@ -81,6 +85,9 @@ func NewClient(address string, account string, accesskey Byte128) *Client {
 
 		QueueMax:  DEFAULT_QUEUE_SIZE,
 		ThreadMax: int32(runtime.NumCPU() / 2),
+		Retry:     true,
+		RetryMax:  -1,
+		RetryWait: 15 * time.Second,
 
 		dispatchChannel: make(chan *messageDispatch, 1024),
 		storeChannel:    make(chan *messageDispatch, 1),
@@ -326,9 +333,11 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 
 	for ever := true; ever && !c.closing; {
 		ever = func() (retry bool) {
-			retry = outgoing.msg.Type != MsgTypeGreeting && outgoing.msg.Type != MsgTypeGoodbye && outgoing.msg.Type != MsgTypeAuthenticate
+			retry = outgoing.msg.Type != MsgTypeGreeting && outgoing.msg.Type != MsgTypeGoodbye && outgoing.msg.Type != MsgTypeAuthenticate && 
+				(c.RetryMax < 0 || c.retryCount < c.RetryMax)
 
 			defer func() {
+				if (retry) {
 				err := recover()
 				if err == nil {
 					return
@@ -352,13 +361,16 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 					Log(LogError, "Unknown error in client communication")
 					Log(LogError, fmt.Sprint(e))
 				}
+					// Any other error is fatal
 				panic(err)
+				}
 			}()
 
 			if c.connection == nil {
 				if retry {
-					Log(LogInfo, "Retrying connection in 15 seconds")
-					time.Sleep(15 * time.Second)
+					c.retryCount++
+					Log(LogInfo, "Retrying connection in %s", c.RetryWait)
+					time.Sleep(c.RetryWait)
 					Log(LogInfo, "Reconnecting to server")
 					c.Connect()
 				}

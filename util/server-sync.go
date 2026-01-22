@@ -309,6 +309,7 @@ func (sync *syncSession) ensureConnection(accHash core.Byte128) {
 		}
 		address := fmt.Sprintf("%s:%d", sync.remoteHost, sync.remotePort)
 		sync.client = core.NewClient(address, string(info.AccountName), info.AccessKey)
+		sync.client.RetryMax = 0
 		if sync.queueBytes > 0 {
 			sync.client.QueueMax = sync.queueBytes
 		}
