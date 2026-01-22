@@ -318,6 +318,7 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 			atomic.AddInt32(&c.skippedBlocks, 1) //c.skippedBlocks++
 			c.Paint("-")
 		}
+	}
 	return incoming
 }
 
