@@ -60,7 +60,7 @@ type Client struct {
 	// mutex protected
 	dispatchMutex  sync.Mutex
 	closing        bool
-	blockqueuesize int64 // queue size in bytes
+	blockQueueSize int64 // queue size in bytes
 	blockQueueMap  map[Byte128]*blockQueueEntry
 	blockQueueList []*blockQueueEntry
 
@@ -152,16 +152,29 @@ type blockQueueEntry struct {
 	block *HashboxBlock
 }
 
-func (c *Client) queueBlock(block *HashboxBlock) {
+func (c *Client) queueBlock(block *HashboxBlock) bool {
 	c.dispatchMutex.Lock()
 	if c.blockQueueMap[block.BlockID] != nil {
 		c.dispatchMutex.Unlock()
 		Abort("ASSERT! Block %x already in queue", block.BlockID)
 	}
 
+	var size int64
+	if block.Compressed {
+		size = bytearray.ChunkQuantize(int64(block.CompressedSize))
+	} else {
+		size = bytearray.ChunkQuantize(int64(block.UncompressedSize))
+	}
+	if c.blockQueueSize+size > c.QueueMax {
+		c.dispatchMutex.Unlock()
+		return false // Queue full, retry later
+	}
+
 	entry := &blockQueueEntry{state: int32(blockStateNew), block: block}
 	c.blockQueueMap[block.BlockID] = entry
 	c.blockQueueList = append(c.blockQueueList, entry)
+	c.blockQueueSize += size
+
 	Log(LogTrace, "Queue block %x (queue=%d)", block.BlockID, len(c.blockQueueList))
 
 	if c.sendworkers < 1 || c.sendworkers < c.ThreadMax {
@@ -202,6 +215,11 @@ func (c *Client) queueBlock(block *HashboxBlock) {
 					case blockStateQueued: // skip, waiting to be sent
 					case blockStateSending: // skip, waiting for ACK
 					case blockStateCompleted:
+						if entry.block.Compressed {
+							c.blockQueueSize -= bytearray.ChunkQuantize(int64(entry.block.CompressedSize))
+						} else {
+							c.blockQueueSize -= bytearray.ChunkQuantize(int64(entry.block.UncompressedSize))
+						}
 						entry.block.Release()
 						delete(c.blockQueueMap, entry.block.BlockID)
 						c.blockQueueList = append(c.blockQueueList[:i], c.blockQueueList[i+1:]...)
@@ -231,7 +249,7 @@ func (c *Client) queueBlock(block *HashboxBlock) {
 						if !workItem.block.Compressed {
 							workItem.block.CompressData()
 							diff := bytearray.ChunkQuantize(int64(workItem.block.UncompressedSize)) - bytearray.ChunkQuantize(int64(workItem.block.CompressedSize))
-							atomic.AddInt64(&c.blockqueuesize, -diff)
+							atomic.AddInt64(&c.blockQueueSize, -diff)
 						}
 						atomic.AddInt32(&workItem.state, 1)
 					case blockStateProcessed:
@@ -256,9 +274,8 @@ func (c *Client) queueBlock(block *HashboxBlock) {
 	}
 
 	c.dispatchMutex.Unlock()
-
-	Log(LogTrace, "Sending allocate block message %x", block.BlockID)
 	c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: block.BlockID}, nil)
+	return true
 }
 
 func (c *Client) handshake(connection *TimeoutConn) {
@@ -327,7 +344,7 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 	case *MsgServerReadBlock:
 		c.dispatchMutex.Lock()
 		q := c.blockQueueMap[d.BlockID]
-		if q != nil {
+		if q != nil && q.state == blockStateNew {
 			q.state = blockStateRequested
 		}
 		c.dispatchMutex.Unlock()
@@ -337,12 +354,9 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 		c.dispatchMutex.Lock()
 		q := c.blockQueueMap[d.BlockID]
 		if q != nil {
-			if q.block.Compressed {
-				c.blockqueuesize -= bytearray.ChunkQuantize(int64(q.block.CompressedSize))
-			} else {
-				// not compressed = never sent
+			if q.state == blockStateNew {
+				// Block was not sent
 				skipped = true
-				c.blockqueuesize -= bytearray.ChunkQuantize(int64(q.block.UncompressedSize))
 			}
 			q.state = blockStateCompleted
 		}
@@ -542,15 +556,8 @@ func (c *Client) StoreData(dataType byte, data bytearray.ByteArray, links []Byte
 
 // StoreBlock is blocking if the block queue is full
 func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
-	var size int64
-	if block.Compressed {
-		size = bytearray.ChunkQuantize(int64(block.CompressedSize))
-	} else {
-		size = bytearray.ChunkQuantize(int64(block.UncompressedSize))
-	}
-
 	// Add the block to the io queue
-	for full := true; full; {
+	for queued := false; !queued; {
 		c.dispatchMutex.Lock()
 		if c.closing {
 			c.dispatchMutex.Unlock()
@@ -562,18 +569,13 @@ func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 			block.Release()
 			return block.BlockID
 		}
-		if c.blockqueuesize == 0 || c.blockqueuesize+size*2 < c.QueueMax {
-			c.blockqueuesize += size
-			full = false
-		}
 		c.dispatchMutex.Unlock()
-
-		if full {
+		// Try to queue the block
+		queued = c.queueBlock(block)
+		if !queued {
 			time.Sleep(25 * time.Millisecond)
 		}
 	}
-
-	c.queueBlock(block)
 	return block.BlockID
 }
 func (c *Client) ReadBlock(blockID Byte128) *HashboxBlock {
@@ -605,5 +607,5 @@ const hashPadding_accesskey = "*ACCESS*KEY*PAD*" // TODO: move to client source
 func (c *Client) GetStats() (tranismitted int32, skipped int32, queued int32, queuesize int64) {
 	c.dispatchMutex.Lock()
 	defer c.dispatchMutex.Unlock()
-	return c.transmittedBlocks, c.skippedBlocks, int32(len(c.blockQueueMap)), c.blockqueuesize
+	return c.transmittedBlocks, c.skippedBlocks, int32(len(c.blockQueueMap)), c.blockQueueSize
 }
