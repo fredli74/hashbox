@@ -152,6 +152,7 @@ func (c *Client) sendQueue(what Byte128) {
 	if block != nil && !c.sendqueueMap[what] {
 		c.sendqueueMap[what] = true
 		c.sendqueue = append(c.sendqueue, &sendQueueEntry{state: 0, block: block})
+		Log(LogTrace, "Queue block %x (queue=%d)", what, len(c.sendqueue))
 		//		fmt.Printf("+q=%d;", len(c.sendqueue))
 
 		if c.sendworkers < 1 || c.sendworkers < c.ThreadMax {
@@ -543,11 +544,13 @@ func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 
 	// Put an allocate block on the line
 	waiter := make(chan interface{}, 1)
+	Log(LogTrace, "Allocate block %x", block.BlockID)
 	c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: block.BlockID}, waiter)
 	go func(id Byte128, rc <-chan interface{}) {
 		if r, ok := <-rc; ok {
 			if t, ok := r.(*ProtocolMessage); ok {
 				if _, ok := t.Data.(*MsgServerReadBlock); ok {
+					Log(LogTrace, "Allocate response READ %x", id)
 					c.sendQueue(id)
 				}
 			}

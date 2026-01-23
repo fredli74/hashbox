@@ -25,6 +25,8 @@ var (
 	blockInfoVerify bool
 )
 
+var Version = "(dev-build)"
+
 func parseHostString(input string) (host string, port int) {
 	host = input
 	port = core.DefaultServerPort
@@ -46,7 +48,7 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-	cmd.Title = "hashbox-util"
+	cmd.Title = fmt.Sprintf("Hashbox Util %s", Version)
 	cmd.ShowCurrentDefaults = true
 
 	var err error
