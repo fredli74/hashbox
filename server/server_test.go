@@ -11,8 +11,8 @@ import (
 	"github.com/fredli74/hashbox/pkg/core"
 
 	"bytes"
-	"crypto/rand"
 	"crypto/md5"
+	"crypto/rand"
 	_ "encoding/hex"
 	"encoding/json"
 	"fmt"

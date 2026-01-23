@@ -13,15 +13,15 @@ import (
 )
 
 var (
-	datDirectory string
-	idxDirectory string
-	showDeleted  bool
-	syncInclude  string
-	syncExclude  string
-	syncDryRun   bool
-	syncQueueMB  int64 = 256
-	syncThreads  int64
-	logLevel     int64 = int64(core.LogInfo)
+	datDirectory    string
+	idxDirectory    string
+	showDeleted     bool
+	syncInclude     string
+	syncExclude     string
+	syncDryRun      bool
+	syncQueueMB     int64 = 256
+	syncThreads     int64
+	logLevel        int64 = int64(core.LogInfo)
 	blockInfoVerify bool
 )
 

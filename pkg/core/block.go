@@ -115,11 +115,11 @@ func (b *HashboxBlock) UncompressData() {
 		case BlockDataTypeRaw:
 			// Do nothing, data is already uncompressed
 			b.Compressed = false
-	case BlockDataTypeZlib:
-		c := b.zlibUncompress()
-		b.Data.Release()
-		b.Data = c
-		b.Compressed = false
+		case BlockDataTypeZlib:
+			c := b.zlibUncompress()
+			b.Data.Release()
+			b.Data = c
+			b.Compressed = false
 		default:
 			panic(errors.New("Unsupported Block Data Type"))
 		}
@@ -133,11 +133,11 @@ func (b *HashboxBlock) CompressData() {
 		switch b.DataType {
 		case BlockDataTypeRaw:
 			// DO nothing data does not compress
-	case BlockDataTypeZlib:
-		c := b.zlibCompress()
-		b.Data.Release()
-		b.Data = c
-		b.Compressed = true
+		case BlockDataTypeZlib:
+			c := b.zlibCompress()
+			b.Data.Release()
+			b.Data = c
+			b.Compressed = true
 		default:
 			panic(errors.New("Unsupported Block Data Type"))
 		}
@@ -153,11 +153,11 @@ func (b *HashboxBlock) VerifyBlock() bool {
 		case BlockDataTypeRaw:
 			b.Compressed = false
 			verifyID = b.HashData()
-	case BlockDataTypeZlib:
-		c := b.zlibUncompress()
-		hash := md5.New()
-		b.SerializeLinks(hash)
-		WriteUint32(hash, uint32(c.Len()))
+		case BlockDataTypeZlib:
+			c := b.zlibUncompress()
+			hash := md5.New()
+			b.SerializeLinks(hash)
+			WriteUint32(hash, uint32(c.Len()))
 			CopyOrPanic(hash, &c)
 			copy(verifyID[:], hash.Sum(nil)[:16])
 			c.Release()

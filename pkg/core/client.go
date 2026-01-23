@@ -48,12 +48,12 @@ type Client struct {
 	wg          sync.WaitGroup
 	EnablePaint bool
 
-	QueueMax  int64 // max size of the outgoing block queue (in bytes)
-	ThreadMax int32 // maximum number of goroutines started by send queue (defaults to runtime.NumCPU)
-	Retry     bool          // retry on network errors/EOF
-	RetryMax  int           // max retry attempts; -1 means retry forever, 0 disables retries
-	RetryWait time.Duration // interval between retries
-	retryCount int          // total retries this session
+	QueueMax   int64         // max size of the outgoing block queue (in bytes)
+	ThreadMax  int32         // maximum number of goroutines started by send queue (defaults to runtime.NumCPU)
+	Retry      bool          // retry on network errors/EOF
+	RetryMax   int           // max retry attempts; -1 means retry forever, 0 disables retries
+	RetryWait  time.Duration // interval between retries
+	retryCount int           // total retries this session
 
 	sendMutex sync.Mutex // protects from two threads sending at the same time
 

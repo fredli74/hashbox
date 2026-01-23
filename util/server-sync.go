@@ -308,8 +308,8 @@ func (sync *syncSession) ensureConnection(accHash core.Byte128) {
 			core.Abort("account info missing for %x", accHash[:])
 		}
 		address := fmt.Sprintf("%s:%d", sync.remoteHost, sync.remotePort)
-			sync.client = core.NewClient(address, string(info.AccountName), info.AccessKey)
-			sync.client.RetryMax = 3
+		sync.client = core.NewClient(address, string(info.AccountName), info.AccessKey)
+		sync.client.RetryMax = 3
 		if sync.queueBytes > 0 {
 			sync.client.QueueMax = sync.queueBytes
 		}
@@ -391,17 +391,17 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 				b = queue[index]
 				core.Log(core.LogTrace, "queue unwind idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
 			}
-		data := sync.dataDB.ReadBlock(b)
-		if data == nil {
-			core.Abort("block %x missing locally", b[:])
-		}
-		core.Log(core.LogDebug, "send block %x size=%s queue=%d (%d/%d)", b[:], core.CompactHumanSize(int64(data.Data.Len())), len(queue), index+1, len(queue))
-		if sync.dryRun {
-			core.Log(core.LogTrace, "dry-run: skip send %x", b[:])
-			data.Release()
-		} else {
-			sync.client.StoreBlock(data)
-		}
+			data := sync.dataDB.ReadBlock(b)
+			if data == nil {
+				core.Abort("block %x missing locally", b[:])
+			}
+			core.Log(core.LogDebug, "send block %x size=%s queue=%d (%d/%d)", b[:], core.CompactHumanSize(int64(data.Data.Len())), len(queue), index+1, len(queue))
+			if sync.dryRun {
+				core.Log(core.LogTrace, "dry-run: skip send %x", b[:])
+				data.Release()
+			} else {
+				sync.client.StoreBlock(data)
+			}
 			progressCh <- progressEvent{action: "+", block: b, index: index, queueLen: len(queue), skipped: skipped}
 			queue = append(queue[:index], queue[index+1:]...)
 		}
