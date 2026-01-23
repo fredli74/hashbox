@@ -15,6 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 USE_DOCKER="${E2E_DOCKER:-0}"
 DOCKER_CMD="${E2E_DOCKER_CMD:-docker}"
 DOCKER_BUILD="${E2E_DOCKER_BUILD:-1}"
+LOG_LEVEL="${E2E_LOGLEVEL:-4}"
 if [[ -n "${E2E_TMP_ROOT:-}" ]]; then
   TMP_ROOT="$(mkdir -p "${E2E_TMP_ROOT}" && cd "${E2E_TMP_ROOT}" && pwd)"
   PERSIST_ROOT=1
@@ -128,7 +129,7 @@ if [[ "$USE_DOCKER" -eq 1 ]]; then
     -p "$PORT:$PORT" \
     -v "$DATA_DIR:/data" \
     -v "$IDX_DIR:/index" \
-    hashbox:local /usr/local/bin/hashbox-server -port "$PORT" -loglevel 2 >/dev/null
+    hashbox:local /usr/local/bin/hashbox-server -port "$PORT" -loglevel "$LOG_LEVEL" >/dev/null
 else
   echo "Creating test user..."
   if ! "$SERVER_BIN" -data "$DATA_DIR" -index "$IDX_DIR" adduser "$USER" "$PASS" >/dev/null 2>&1; then
@@ -147,7 +148,7 @@ else
   fi
 
   echo "Starting server on 127.0.0.1:$PORT ..."
-  "$SERVER_BIN" -data "$DATA_DIR" -index "$IDX_DIR" -port "$PORT" -loglevel 2 >"$SERVER_LOG" 2>&1 &
+  "$SERVER_BIN" -data "$DATA_DIR" -index "$IDX_DIR" -port "$PORT" -loglevel "$LOG_LEVEL" >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   echo "$SERVER_PID" >"$PID_FILE"
 fi
@@ -180,6 +181,9 @@ else
 fi
 
 CLIENT_FLAGS=(-verbose -user "$USER" -password "$PASS" -server "127.0.0.1:$PORT")
+if [[ "$LOG_LEVEL" -ge 4 ]]; then
+  CLIENT_FLAGS+=(-debug)
+fi
 
 echo "Running backup..."
 HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" store "$DATASET" "$SOURCE_DIR"
@@ -222,7 +226,7 @@ if [[ "$USE_DOCKER" -eq 1 ]]; then
     -p "$SYNC_PORT:$SYNC_PORT" \
     -v "$SYNC_DATA_DIR:/data" \
     -v "$SYNC_IDX_DIR:/index" \
-    hashbox:local /usr/local/bin/hashbox-server -port "$SYNC_PORT" -loglevel 2 >/dev/null
+    hashbox:local /usr/local/bin/hashbox-server -port "$SYNC_PORT" -loglevel "$LOG_LEVEL" >/dev/null
   for _ in {1..50}; do
     if "$DOCKER_CMD" logs hashbox-e2e-sync 2>/dev/null | grep -q "listening on"; then
       break
@@ -244,7 +248,7 @@ else
     fi
     rm -f "$SYNC_PID_FILE"
   fi
-  "$SERVER_BIN" -data "$SYNC_DATA_DIR" -index "$SYNC_IDX_DIR" -port "$SYNC_PORT" -loglevel 2 >"$SYNC_SERVER_LOG" 2>&1 &
+  "$SERVER_BIN" -data "$SYNC_DATA_DIR" -index "$SYNC_IDX_DIR" -port "$SYNC_PORT" -loglevel "$LOG_LEVEL" >"$SYNC_SERVER_LOG" 2>&1 &
   SYNC_SERVER_PID=$!
   echo "$SYNC_SERVER_PID" >"$SYNC_PID_FILE"
   for _ in {1..50}; do
