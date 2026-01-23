@@ -354,8 +354,7 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 							Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
 							return // Network stream closed, non fatal
 						}
-						Log(LogError, e.Error())
-						Log(LogError, fmt.Sprint(e))
+						Log(LogError, "%v", e)
 					default:
 						Log(LogError, "Unknown error in client communication")
 						Log(LogError, fmt.Sprint(e))
@@ -571,6 +570,9 @@ func (c *Client) Commit() {
 	}
 }
 func (c *Client) Done() bool {
+	if c.lastError != nil {
+		panic(c.lastError)
+	}
 	c.dispatchMutex.Lock()
 	defer c.dispatchMutex.Unlock()
 	return c.closing || len(c.blockbuffer) == 0
