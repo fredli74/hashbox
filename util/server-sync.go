@@ -131,6 +131,7 @@ func (c *commandSet) syncRun(remoteHost string, remotePort int, include, exclude
 			sync.processDataset(acc.AccountNameH, ds.DatasetName)
 		}
 	}
+	core.Log(core.LogInfo, "Sync summary: added %d states, deleted %d states", sync.addedStates, sync.deletedStates)
 }
 
 // ******** SYNC STATE HANDLING ********
@@ -224,6 +225,9 @@ type syncSession struct {
 
 	queueBytes int64
 	maxThreads int64
+
+	addedStates   int64
+	deletedStates int64
 }
 
 func newSyncSession(accountDB *accountdb.Store, dataDB *storagedb.Store, remoteHost string, remotePort int) *syncSession {
@@ -238,17 +242,39 @@ func newSyncSession(accountDB *accountdb.Store, dataDB *storagedb.Store, remoteH
 	}
 }
 
-func (sync *syncSession) remoteStateExists(accHash core.Byte128, datasetName core.String, stateID core.Byte128) bool {
-	list := sync.client.ListDataset(string(datasetName))
-	for _, entry := range list.States {
-		if entry.State.StateID.Compare(stateID) == 0 {
-			return true
-		}
+type remoteStateCache struct {
+	session   *syncSession
+	states    map[core.Byte128]bool
+	fetchedAt time.Time
+}
+
+func newRemoteStateCache(session *syncSession) *remoteStateCache {
+	return &remoteStateCache{session: session}
+}
+
+func (cache *remoteStateCache) hasState(accountHash core.Byte128, datasetName core.String, stateID core.Byte128) bool {
+	cache.session.ensureConnection(accountHash)
+	if cache.states != nil && !cache.fetchedAt.IsZero() && time.Since(cache.fetchedAt) < time.Minute {
+		return cache.states[stateID]
 	}
-	return false
+	list := cache.session.client.ListDataset(string(datasetName))
+	states := make(map[core.Byte128]bool, len(list.States))
+	for _, entry := range list.States {
+		states[entry.State.StateID] = true
+	}
+	cache.states = states
+	cache.fetchedAt = time.Now()
+	return cache.states[stateID]
+}
+
+func (cache *remoteStateCache) invalidate() {
+	cache.states = nil
+	cache.fetchedAt = time.Time{}
 }
 
 func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName core.String) {
+	remoteStateCache := newRemoteStateCache(sync)
+
 	// open local dataset transaction log
 	reader, err := sync.accountDB.NewTxReader(accountHash, datasetName)
 	core.AbortOn(err, "open trn %s:%s", sync.accountName(accountHash), datasetName)
@@ -268,13 +294,23 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 		switch tx.TxType {
 		case accountdb.DbTxTypeDel:
 			stateID := tx.Data.(core.Byte128)
+			if !remoteStateCache.hasState(accountHash, datasetName, stateID) {
+				core.Log(core.LogInfo, "Skipping delete %s:%s stateID %x (remote missing)", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateID[:])
+				continue
+			}
 			sync.sendDeleteTransaction(accountHash, datasetName, stateID, tx.Timestamp)
+			remoteStateCache.invalidate()
 		case accountdb.DbTxTypeAdd:
 			stateObj := tx.Data.(core.DatasetState)
 			if sync.hasLaterDelete(reader, stateObj.StateID) {
 				continue
 			}
+			if remoteStateCache.hasState(accountHash, datasetName, stateObj.StateID) {
+				core.Log(core.LogInfo, "Skipping add %s:%s stateID %x (remote exists)", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateObj.StateID[:])
+				continue
+			}
 			sync.sendAddTransaction(accountHash, datasetName, stateObj)
+			remoteStateCache.invalidate()
 		default:
 			core.Abort("unknown tx type %x in sync for %s:%s", tx.TxType, sync.accountName(accountHash), datasetName)
 		}
@@ -331,22 +367,15 @@ func (sync *syncSession) ensureConnection(accHash core.Byte128) {
 
 func (sync *syncSession) sendDeleteTransaction(accountHash core.Byte128, datasetName core.String, stateID core.Byte128, ts int64) {
 	sync.ensureConnection(accountHash)
-	if !sync.remoteStateExists(accountHash, datasetName, stateID) {
-		core.Log(core.LogInfo, "Skipping delete %s:%s stateID %x (remote missing)", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateID[:])
-		return
-	}
 	core.Log(core.LogInfo, "Deleting %s:%s stateID %x", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateID[:])
 	if !sync.dryRun {
 		sync.client.RemoveDatasetState(string(datasetName), stateID)
+		sync.deletedStates++
 	}
 }
 
 func (sync *syncSession) sendAddTransaction(accountHash core.Byte128, datasetName core.String, state core.DatasetState) {
 	sync.ensureConnection(accountHash)
-	if sync.remoteStateExists(accountHash, datasetName, state.StateID) {
-		core.Log(core.LogInfo, "Skipping add %s:%s stateID %x (remote exists)", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), state.StateID[:])
-		return
-	}
 	core.Log(core.LogInfo, "Sending block tree %s:%s stateID=%x root=%x size=%s", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), state.StateID[:], state.BlockID[:], core.CompactHumanSize(state.Size))
 	sync.sendBlockTree(state.BlockID)
 	if !sync.dryRun {
@@ -354,6 +383,7 @@ func (sync *syncSession) sendAddTransaction(accountHash core.Byte128, datasetNam
 		sync.client.Commit()
 		core.Log(core.LogInfo, "Adding dataset state %s:%s stateID %x to remote server", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), state.StateID[:])
 		sync.client.AddDatasetState(string(datasetName), state)
+		sync.addedStates++
 	}
 }
 
