@@ -341,6 +341,7 @@ func (sync *syncSession) sendAddTransaction(accountHash core.Byte128, datasetNam
 
 func (sync *syncSession) sendBlockTree(root core.Byte128) {
 	var skipped int32 = 0
+	var sent int32 = 0
 	queue := []core.Byte128{root}
 	index := 0
 	type progressEvent struct {
@@ -349,6 +350,7 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 		index    int
 		queueLen int
 		skipped  int32
+		sent     int32
 	}
 	progressCh := make(chan progressEvent, 64)
 	doneCh := make(chan struct{})
@@ -364,10 +366,10 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 				b = queue[index]
 				core.Log(core.LogTrace, "queue descend idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
 				if sync.client.VerifyBlock(b) {
-					core.Log(core.LogDebug, "skip existing block %x (queue=%d)", b[:], len(queue))
+					core.Log(core.LogTrace, "skip existing block %x (queue=%d)", b[:], len(queue))
 					queue = append(queue[:index], queue[index+1:]...)
 					skipped++
-					progressCh <- progressEvent{action: "-", block: b, index: index, queueLen: len(queue), skipped: skipped}
+					progressCh <- progressEvent{action: "-", block: b, index: index, queueLen: len(queue), skipped: skipped, sent: sent}
 					continue
 				}
 				meta := sync.dataDB.ReadBlockMeta(b)
@@ -381,7 +383,7 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 					copy(queue[index+len(links)+1:], queue[index+1:])
 					copy(queue[index+1:], links)
 					index++
-					progressCh <- progressEvent{action: "*", block: b, index: index, queueLen: len(queue), skipped: skipped}
+					progressCh <- progressEvent{action: "*", block: b, index: index, queueLen: len(queue), skipped: skipped, sent: sent}
 					continue
 				}
 				// No links, fall through to send
@@ -402,13 +404,14 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 			} else {
 				sync.client.StoreBlock(data)
 			}
-			progressCh <- progressEvent{action: "+", block: b, index: index, queueLen: len(queue), skipped: skipped}
+			sent++
+			progressCh <- progressEvent{action: "+", block: b, index: index, queueLen: len(queue), skipped: skipped, sent: sent}
 			queue = append(queue[:index], queue[index+1:]...)
 		}
 	}()
 
 	printUpdate := func(ev progressEvent) {
-		fmt.Printf("\r\x1b[KSyncing %d/%d (skipped %d) %s %x\r", ev.index+1, ev.queueLen, ev.skipped, ev.action, ev.block[:])
+		fmt.Printf("\r\x1b[KSyncing %d/%d (sent %d, skipped %d) %s %x\r", ev.index+1, ev.queueLen, ev.sent, ev.skipped, ev.action, ev.block[:])
 	}
 	ticker := time.NewTicker(sync.statTick)
 	defer ticker.Stop()
@@ -433,7 +436,7 @@ waitQueue:
 		sync.reportStats(true)
 		time.Sleep(50 * time.Millisecond)
 	}
-	core.Log(core.LogInfo, "Sent all blocks for tree rooted at %x", root[:])
+	core.Log(core.LogInfo, "Sent all blocks for tree rooted at %x (sent %d, skipped %d)", root[:], sent, skipped)
 }
 func (sync *syncSession) close() {
 	if sync.client != nil {
