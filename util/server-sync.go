@@ -238,6 +238,16 @@ func newSyncSession(accountDB *accountdb.Store, dataDB *storagedb.Store, remoteH
 	}
 }
 
+func (sync *syncSession) remoteStateExists(accHash core.Byte128, datasetName core.String, stateID core.Byte128) bool {
+	list := sync.client.ListDataset(string(datasetName))
+	for _, entry := range list.States {
+		if entry.State.StateID.Compare(stateID) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName core.String) {
 	// open local dataset transaction log
 	reader, err := sync.accountDB.NewTxReader(accountHash, datasetName)
@@ -321,6 +331,10 @@ func (sync *syncSession) ensureConnection(accHash core.Byte128) {
 
 func (sync *syncSession) sendDeleteTransaction(accountHash core.Byte128, datasetName core.String, stateID core.Byte128, ts int64) {
 	sync.ensureConnection(accountHash)
+	if !sync.remoteStateExists(accountHash, datasetName, stateID) {
+		core.Log(core.LogInfo, "Skipping delete %s:%s stateID %x (remote missing)", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateID[:])
+		return
+	}
 	core.Log(core.LogInfo, "Deleting %s:%s stateID %x", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateID[:])
 	if !sync.dryRun {
 		sync.client.RemoveDatasetState(string(datasetName), stateID)
@@ -329,6 +343,10 @@ func (sync *syncSession) sendDeleteTransaction(accountHash core.Byte128, dataset
 
 func (sync *syncSession) sendAddTransaction(accountHash core.Byte128, datasetName core.String, state core.DatasetState) {
 	sync.ensureConnection(accountHash)
+	if sync.remoteStateExists(accountHash, datasetName, state.StateID) {
+		core.Log(core.LogInfo, "Skipping add %s:%s stateID %x (remote exists)", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), state.StateID[:])
+		return
+	}
 	core.Log(core.LogInfo, "Sending block tree %s:%s stateID=%x root=%x size=%s", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), state.StateID[:], state.BlockID[:], core.CompactHumanSize(state.Size))
 	sync.sendBlockTree(state.BlockID)
 	if !sync.dryRun {
