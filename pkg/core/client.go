@@ -211,7 +211,9 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 						workItem = entry
 					case blockStateProcessing: // skip, being compressed
 					case blockStateProcessed:
-						workItem = entry
+						if i == 0 {
+							workItem = entry
+						}
 					case blockStateQueued: // skip, waiting to be sent
 					case blockStateSending: // skip, waiting for ACK
 					case blockStateCompleted:
