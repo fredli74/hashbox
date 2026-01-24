@@ -390,6 +390,7 @@ func (sync *syncSession) sendAddTransaction(accountHash core.Byte128, datasetNam
 func (sync *syncSession) sendBlockTree(root core.Byte128) {
 	var skipped int32 = 0
 	var sent int32 = 0
+	var sentBytes int64 = 0
 	queue := []core.Byte128{root}
 	index := 0
 	type progressEvent struct {
@@ -445,6 +446,7 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 			if data == nil {
 				core.Abort("block %x missing locally", b[:])
 			}
+			sentBytes += int64(data.Data.Len())
 			core.Log(core.LogDebug, "send block %x size=%s queue=%d (%d/%d)", b[:], core.CompactHumanSize(int64(data.Data.Len())), len(queue), index+1, len(queue))
 			if sync.dryRun {
 				core.Log(core.LogTrace, "dry-run: skip send %x", b[:])
@@ -484,7 +486,7 @@ waitQueue:
 		sync.reportStats(true)
 		time.Sleep(50 * time.Millisecond)
 	}
-	core.Log(core.LogInfo, "Sent all blocks for tree rooted at %x (sent %d, skipped %d)", root[:], sent, skipped)
+	core.Log(core.LogInfo, "Sent all blocks for tree rooted at %x (sent %d, data %s)", root[:], sent, core.HumanSize(sentBytes))
 }
 func (sync *syncSession) close() {
 	if sync.client != nil {
