@@ -296,18 +296,19 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 			stateID := tx.Data.(core.Byte128)
 			if !remoteStateCache.hasState(accountHash, datasetName, stateID) {
 				core.Log(core.LogInfo, "Skipping delete %s:%s stateID %x (remote missing)", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateID[:])
-				continue
+				break
 			}
 			sync.sendDeleteTransaction(accountHash, datasetName, stateID, tx.Timestamp)
 			remoteStateCache.invalidate()
 		case accountdb.DbTxTypeAdd:
 			stateObj := tx.Data.(core.DatasetState)
 			if sync.hasLaterDelete(reader, stateObj.StateID) {
-				continue
+				core.Log(core.LogTrace, "Skipping add %s:%s stateID %x (later delete exists)", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateObj.StateID[:])
+				break
 			}
 			if remoteStateCache.hasState(accountHash, datasetName, stateObj.StateID) {
 				core.Log(core.LogInfo, "Skipping add %s:%s stateID %x (remote exists)", escapeControls(sync.accountName(accountHash)), escapeControls(string(datasetName)), stateObj.StateID[:])
-				continue
+				break
 			}
 			sync.sendAddTransaction(accountHash, datasetName, stateObj)
 			remoteStateCache.invalidate()
