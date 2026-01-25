@@ -108,16 +108,52 @@ const (
 )
 
 var LogLevel int = LogInfo
-var logMarks []string = []string{"!", "*", ".", "(", "?"}
+var logMarks = []string{"!", "*", ".", "(", "?"}
 
 var LogMutex sync.Mutex
+
+func Escape(v interface{}) string {
+	var s string
+	switch t := v.(type) {
+	case string:
+		s = t
+	case String:
+		s = string(t)
+	default:
+		panic(fmt.Errorf("Escape expects string or core.String"))
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r < 32 || r == 127 {
+			fmt.Fprintf(&b, "\\x%02x", r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
 
 func Log(level int, format string, a ...interface{}) {
 	LogMutex.Lock()
 	defer LogMutex.Unlock()
-	if level <= LogLevel {
-		fmt.Printf("%s %s "+format+"\n", append([]interface{}{time.Now().UTC().Format(LOGTIMEFORMAT), logMarks[level]}, a...)...)
+	if level > LogLevel {
+		return
 	}
+
+	args := make([]interface{}, len(a))
+	for i, v := range a {
+		switch s := v.(type) {
+		case string:
+			args[i] = Escape(s)
+		case String:
+			args[i] = Escape(s)
+		default:
+			args[i] = v
+		}
+	}
+
+	prefix := []interface{}{time.Now().UTC().Format(LOGTIMEFORMAT), logMarks[level]}
+	fmt.Printf("%s %s "+format+"\n", append(prefix, args...)...)
 }
 
 var shortHumanUnitName []string = []string{"B", "K", "M", "G", "T", "P", "E"}

@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/fredli74/hashbox/pkg/accountdb"
 	"github.com/fredli74/hashbox/pkg/core"
@@ -58,19 +57,6 @@ func resolveDatasetName(store *accountdb.Store, accountNameH core.Byte128, input
 		}
 	}
 	return "", fmt.Errorf("dataset %q not found", input)
-}
-
-// escapeControls renders control characters as \xNN to avoid terminal bell/side effects.
-func escapeControls(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r < 32 || r == 127 {
-			fmt.Fprintf(&b, "\\x%02x", r)
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 func parseHash(input string) (core.Byte128, bool) {

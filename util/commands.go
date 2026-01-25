@@ -39,7 +39,7 @@ func (c *commandSet) listAccounts() {
 		if name == "" {
 			name = core.String("<unknown>")
 		}
-		fmt.Printf("[%s] %s\t(%d datasets)\n", formatHash(acc.AccountNameH), escapeControls(string(name)), len(acc.Datasets))
+		fmt.Printf("[%s] %s\t(%d datasets)\n", formatHash(acc.AccountNameH), core.Escape(name), len(acc.Datasets))
 	}
 }
 
@@ -57,19 +57,19 @@ func (c *commandSet) listDatasets(accountName string) {
 
 	sort.Slice(datasets, func(i, j int) bool { return datasets[i].DatasetName < datasets[j].DatasetName })
 
-	fmt.Printf("Account: [%s] %s\n", formatHash(accountNameH), escapeControls(string(accName)))
+	fmt.Printf("Account: [%s] %s\n", formatHash(accountNameH), core.Escape(accName))
 	for _, ds := range datasets {
 		datasetHash := formatHash(core.Hash([]byte(ds.DatasetName)))
 		if collection := store.ReadDBFile(accountNameH, ds.DatasetName); collection != nil {
 			if len(collection.States) > 0 {
 				latest := collection.States[len(collection.States)-1]
-				fmt.Printf("- [%s] %s states=%d size=%s latest=%x\n", datasetHash, escapeControls(string(ds.DatasetName)), len(collection.States), compactHumanSize(collection.Size), latest.State.StateID[:])
+				fmt.Printf("- [%s] %s states=%d size=%s latest=%x\n", datasetHash, core.Escape(ds.DatasetName), len(collection.States), compactHumanSize(collection.Size), latest.State.StateID[:])
 				continue
 			}
-			fmt.Printf("- [%s] %s states=0\n", datasetHash, escapeControls(string(ds.DatasetName)))
+			fmt.Printf("- [%s] %s states=0\n", datasetHash, core.Escape(ds.DatasetName))
 			continue
 		}
-		fmt.Printf("- [%s] %s\n", datasetHash, escapeControls(string(ds.DatasetName)))
+		fmt.Printf("- [%s] %s\n", datasetHash, core.Escape(ds.DatasetName))
 	}
 }
 
@@ -93,8 +93,8 @@ func (c *commandSet) listStates(accountName string, dataset string) {
 		}
 	}
 
-	fmt.Printf("Account: [%s] %s\n", formatHash(accountNameH), escapeControls(string(accName)))
-	fmt.Printf("Dataset: [%s] %s\n", formatHash(core.Hash([]byte(datasetName))), escapeControls(string(datasetName)))
+	fmt.Printf("Account: [%s] %s\n", formatHash(accountNameH), core.Escape(accName))
+	fmt.Printf("Dataset: [%s] %s\n", formatHash(core.Hash([]byte(datasetName))), core.Escape(datasetName))
 	for _, tx := range txs {
 		switch tx.TxType {
 		case accountdb.DbTxTypeAdd:
@@ -251,7 +251,7 @@ func (c *commandSet) deleteDataset(accountName, dataset string) {
 
 	renameIfExists(dbPath, dbPath+".bak")
 	store.RebuildAccount(accountNameH)
-	fmt.Printf("Deleted dataset %s from account %s\n", escapeControls(string(datasetName)), escapeControls(string(accName)))
+	fmt.Printf("Deleted dataset %s from account %s\n", core.Escape(datasetName), core.Escape(accName))
 }
 
 func (c *commandSet) deleteAccount(accountName string) {
@@ -272,7 +272,7 @@ func (c *commandSet) deleteAccount(accountName string) {
 		renameIfExists(full, full+".bak")
 	}
 
-	fmt.Printf("Deleted account %s\n", escapeControls(string(accName)))
+	fmt.Printf("Deleted account %s\n", core.Escape(accName))
 }
 
 func (c *commandSet) moveDataset(srcAccount, srcDataset, dstAccount, dstDataset string) {
@@ -316,7 +316,7 @@ func (c *commandSet) moveDataset(srcAccount, srcDataset, dstAccount, dstDataset 
 		c.deleteDataset(srcAccount, string(srcDatasetName))
 	}
 
-	fmt.Printf("Moved dataset %s:%s -> %s:%s\n", escapeControls(string(srcAccount)), escapeControls(string(srcDatasetName)), escapeControls(string(dstAccount)), escapeControls(string(dstDatasetName)))
+	fmt.Printf("Moved dataset %s:%s -> %s:%s\n", core.Escape(srcAccount), core.Escape(srcDatasetName), core.Escape(dstAccount), core.Escape(dstDatasetName))
 }
 
 func (c *commandSet) purgeStates(accountName, dataset string) {
@@ -357,5 +357,5 @@ outer:
 
 	store.WriteTrnFile(accH, datasetName, txs)
 	store.RebuildDB(accH, datasetName)
-	fmt.Printf("Purged deleted states from dataset %s\n", escapeControls(string(datasetName)))
+	fmt.Printf("Purged deleted states from dataset %s\n", core.Escape(datasetName))
 }
