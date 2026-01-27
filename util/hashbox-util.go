@@ -94,11 +94,16 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).moveDataset(cmd.Args[2], cmd.Args[3], cmd.Args[4], dstDataset)
 	})
 
-	cmd.Command("delete-dataset", "<account> <dataset>", func() {
+	cmd.Command("delete-dataset", "<account> <dataset> [<dataset>...]", func() {
 		if len(cmd.Args) < 4 {
-			core.Abort("account and dataset required")
+			core.Abort("account and at least one dataset required")
 		}
-		newCommandSet(datDirectory, idxDirectory).deleteDataset(cmd.Args[2], cmd.Args[3])
+		accountName := cmd.Args[2]
+		datasets := cmd.Args[3:]
+		cmds := newCommandSet(datDirectory, idxDirectory)
+		for _, datasetName := range datasets {
+			cmds.deleteDataset(accountName, datasetName)
+		}
 	})
 
 	cmd.BoolOption("show-deleted", "list-states", "Include deleted states when listing", &showDeleted, cmd.Standard)
