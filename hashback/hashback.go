@@ -540,12 +540,14 @@ func main() {
 	var pidName string = ""
 	var retainWeeks int64 = 0
 	var retainDays int64 = 0
+	var retainYearly bool = false
 	var intervalBackup int64 = 0
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &CustomIgnoreList, cmd.Standard|cmd.Preference)
 	cmd.IntOption("interval", "store", "<minutes>", "Keep running backups every <minutes> until interrupted", &intervalBackup, cmd.Standard)
 	cmd.IntOption("retaindays", "store", "<days>", "Remove backups older than 24h but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard|cmd.Preference)
 	cmd.IntOption("retainweeks", "store", "<weeks>", "Remove backups older than 24h but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard|cmd.Preference)
+	cmd.BoolOption("retainyearly", "store", "Remove backups older than 24h but keep one per year", &retainYearly, cmd.Standard|cmd.Preference)
 	cmd.Command("store", "<dataset> (<folder>|<file>)...", func() {
 		ignoreList := append(DefaultIgnoreList, CustomIgnoreList...)
 		ignoreList = append(ignoreList, filepath.Join(LocalStoragePath, "*.cache*"))
@@ -599,8 +601,8 @@ func main() {
 				if latestBackup > 0 || intervalBackup == 0 {
 					session.State = &core.DatasetState{StateID: session.Client.SessionNonce}
 					session.Store(cmd.Args[2], cmd.Args[3:]...)
-					if retainWeeks > 0 || retainDays > 0 {
-						session.Retention(cmd.Args[2], int(retainDays), int(retainWeeks))
+					if retainWeeks > 0 || retainDays > 0 || retainYearly {
+						session.Retention(cmd.Args[2], int(retainDays), int(retainWeeks), retainYearly)
 					}
 					latestBackup = binary.BigEndian.Uint64(session.State.StateID[:])
 					date := time.Unix(0, int64(latestBackup))

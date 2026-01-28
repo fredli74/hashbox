@@ -518,7 +518,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 func truncateSecondsToDay(t int64) int64 {
 	return (t / (24 * 60 * 60)) * 24 * 60 * 60
 }
-func (session *BackupSession) Retention(datasetName string, retainDays int, retainWeeks int) {
+func (session *BackupSession) Retention(datasetName string, retainDays int, retainWeeks int, retainYearly bool) {
 	var timenow int64 = time.Now().Unix()
 	var today = truncateSecondsToDay(timenow) // 00:00:00 today
 	var dailyLimit int64
@@ -530,47 +530,48 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 		weeklyLimit = today - (int64(retainWeeks) * 7 * 24 * 60 * 60)
 	}
 
-	var lastbackup int64 = 0
+	var lastbackup int64
+	var lastbackupYear int
+	var lastbackupDate int64
 
 	list := session.Client.ListDataset(datasetName)
-	for i, e := range list.States {
-		if i >= len(list.States)-2 { // Always keep the last two
-			break
-		}
-
+	for i := len(list.States) - 1; i >= 0; i-- {
+		e := list.States[i]
 		// Extract the backup date from the stateID
 		timestamp := int64(binary.BigEndian.Uint64(e.State.StateID[:]) / 1e9) // nano timestamp in seconds
-
-		age := (timenow - timestamp)
-		interval := (timestamp - truncateSecondsToDay(lastbackup)) // interval from last backup
+		backuptime := time.Unix(int64(timestamp), 0)
+		year := backuptime.Year()
+		date := truncateSecondsToDay(timestamp)
 
 		var throwAway bool
 		var reason string
 
-		if interval < (24*60*60) && age > 24*60*60 {
-			throwAway = true
-			reason = fmt.Sprintf("keeping only one daily, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
-		}
-		if interval < (7*24*60*60) && timestamp < dailyLimit {
-			throwAway = true
-			reason = fmt.Sprintf("keeping only one weekly, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
-		}
-		if weeklyLimit < dailyLimit && timestamp < weeklyLimit {
-			throwAway = true
-			reason = fmt.Sprintf("older than %d weeks", retainWeeks)
-		}
-		if weeklyLimit >= dailyLimit && timestamp < dailyLimit {
-			throwAway = true
-			reason = fmt.Sprintf("older than %d days", retainDays)
+		if i < len(list.States)-2 && (timenow - timestamp) > (24*60*60)  && (!retainYearly || year == lastbackupYear) {
+			// Not the last or current backup, older than 1 day and not the last of the year (if yearly retention is on)
+			
+			if date == lastbackupDate {
+				throwAway = true
+				reason = fmt.Sprintf("keeping only one daily, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
+			} else if lastbackupDate - date < 7*24*60*60 && date < dailyLimit {
+				throwAway = true
+				reason = fmt.Sprintf("keeping only one weekly, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
+			} else if weeklyLimit < dailyLimit && date < weeklyLimit {
+				throwAway = true
+				reason = fmt.Sprintf("older than %d weeks", retainWeeks)
+			} else if weeklyLimit >= dailyLimit && date < dailyLimit {
+				throwAway = true
+				reason = fmt.Sprintf("older than %d days", retainDays)
+			}
 		}
 
-		date := time.Unix(int64(timestamp), 0)
 		if throwAway {
-			session.Log("Removing backup %s (%s)", date.Format(time.RFC3339), reason)
+			session.Log("Removing backup %s (%s)", backuptime.Format(time.RFC3339), reason)
 			session.Client.RemoveDatasetState(datasetName, e.State.StateID)
 		} else {
-			core.Log(core.LogDebug, "Keeping backup %s", date.Format(time.RFC3339))
+			core.Log(core.LogDebug, "Keeping backup %s", backuptime.Format(time.RFC3339))
 			lastbackup = timestamp
+			lastbackupYear = year
+			lastbackupDate = date
 		}
 	}
 }
