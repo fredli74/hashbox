@@ -10,6 +10,4 @@ require (
 	github.com/smtc/rollsum v0.0.0-20150721100732-39e98d252100
 )
 
-replace (
-	github.com/fredli74/hashbox/pkg/core => ../pkg/core
-)
+replace github.com/fredli74/hashbox/pkg/core => ../pkg/core
