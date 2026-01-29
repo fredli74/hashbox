@@ -17,7 +17,7 @@ Hashbox is a cross-platform, general-purpose data block storage system with an e
 
 ## Tech Stack
 
-- **Language:** Go 1.22.5
+- **Language:** Go (minimum 1.22.1, most modules use 1.22.5)
 - **Core libraries:**
   - `github.com/fredli74/bytearray` - Byte array handling
   - `github.com/fredli74/cmdparser` - Command-line parsing
