@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Hashbox is a cross-platform, general-purpose data block storage system with an efficient backup client (Hashback) featuring full data de-duplication. The project is a derivate of a proprietary backup system (BUP) invented around 2001.
+Hashbox is a cross-platform, general-purpose data block storage system with an efficient backup client (Hashback) featuring full data de-duplication. The project is a derivative of a proprietary backup system (BUP) invented around 2001.
 
 **Key features:**
 - Variable-length block storage with optional compression
@@ -47,7 +47,7 @@ hashbox/
 - Prioritize performance and efficiency for large-scale data operations
 
 ### Code Organization
-- Keep platform-specific code in separate files: `*_windows.go`, `*_unix.go`, `*_mac.go`
+- Keep platform-specific code in separate files: `*_windows.go`, `*_unix.go`, and specific files like `hashback_mac.go` when additional platform differentiation is needed
 - Use build tags when necessary for platform-specific functionality
 - Minimize external dependencies (per project design goals)
 
