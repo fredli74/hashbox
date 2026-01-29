@@ -88,29 +88,37 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 		var lastProgress = -1
 		brokenSpot := int64(0)
 		for offset := int64(storageFileHeaderSize); offset < datSize; {
-			offset += skipDataGap(datFile.Reader)
-
 			blockOffset := offset
-
 			skipToNextBlock := false
-			if err := func() (err interface{}) {
-				defer func() { err = recover() }()
-				offset += int64(dataEntry.Unserialize(datFile.Reader))
-				return nil
-			}(); err != nil {
-				err := fmt.Errorf("Error reading dataEntry at %x:%x (%s)", datFileNumber, blockOffset, err)
-				core.Log(core.LogError, "%v", err)
+
+			skip, err := skipDataGap(datFile.Reader)
+			if err != nil {
+				core.Log(core.LogError, "Error reading data gap at %x:%x (%s)", datFileNumber, blockOffset, err)
 				skipToNextBlock = true
-			} else if err := func() (err interface{}) {
-				defer func() { err = recover() }()
-				if !dataEntry.block.VerifyBlock() {
-					panic(errors.New("Content verification failed"))
+			} else {
+				offset += skip
+				blockOffset = offset
+			}
+			if !skipToNextBlock {
+				if err := func() (err interface{}) {
+					defer func() { err = recover() }()
+					offset += int64(dataEntry.Unserialize(datFile.Reader))
+					return nil
+				}(); err != nil {
+					err := fmt.Errorf("Error reading dataEntry at %x:%x (%s)", datFileNumber, blockOffset, err)
+					core.Log(core.LogError, "%v", err)
+					skipToNextBlock = true
+				} else if err := func() (err interface{}) {
+					defer func() { err = recover() }()
+					if !dataEntry.block.VerifyBlock() {
+						panic(errors.New("Content verification failed"))
+					}
+					return nil
+				}(); err != nil {
+					err := fmt.Errorf("Error verifying block %x (type %d, size %d) at %x:%x (%s)", dataEntry.block.BlockID, dataEntry.block.DataType, dataEntry.block.Data.Len(), datFileNumber, blockOffset, err)
+					core.Log(core.LogError, "%v", err)
+					skipToNextBlock = true
 				}
-				return nil
-			}(); err != nil {
-				err := fmt.Errorf("Error verifying block %x (type %d, size %d) at %x:%x (%s)", dataEntry.block.BlockID, dataEntry.block.DataType, dataEntry.block.Data.Len(), datFileNumber, blockOffset, err)
-				core.Log(core.LogError, "%v", err)
-				skipToNextBlock = true
 			}
 			if skipToNextBlock {
 				if brokenSpot == 0 {

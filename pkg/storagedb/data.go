@@ -144,10 +144,12 @@ func writeDataGap(writer *core.BufferedWriter, size int64) {
 	core.WriteInt64(writer, size)
 }
 
-func skipDataGap(reader *core.BufferedReader) int64 {
+func skipDataGap(reader *core.BufferedReader) (int64, error) {
 	offset := int64(0)
 	peek, err := reader.Peek(12)
-	core.AbortOn(err)
+	if err != nil {
+		return 0, err
+	}
 	if bytes.Equal(peek[:4], []byte("Cgap")) {
 		skip := core.BytesInt64(peek[4:12])
 		core.Log(core.LogDebug, "Cgap marker found in %s, jumping %d bytes", reader.File.Name(), skip)
@@ -158,5 +160,5 @@ func skipDataGap(reader *core.BufferedReader) int64 {
 			skip -= int64(n)
 		}
 	}
-	return offset
+	return offset, nil
 }

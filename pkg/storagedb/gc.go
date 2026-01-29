@@ -235,7 +235,8 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 	deleted, moved := int64(0), int64(0)
 	offset, highWaterMark := int64(storageFileHeaderSize), int64(storageFileHeaderSize)
 	for offset < fileSize {
-		skip := skipDataGap(reader)
+		skip, err := skipDataGap(reader)
+		core.AbortOn(err)
 		deleted += skip
 		offset += skip
 
