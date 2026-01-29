@@ -1,0 +1,33 @@
+name: Lint
+
+on: [push, pull_request]
+
+jobs:
+  detect-modules:
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.set-modules.outputs.modules }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - id: set-modules
+        run: echo "modules=$(find . -name go.mod -exec dirname {} \; | jq -R -s -c 'split(\"\n\")[:-1]')" >> $GITHUB_OUTPUT
+
+  lint:
+    needs: detect-modules
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Lint ${{ matrix.modules }}
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v1.60
+          working-directory: ${{ matrix.modules }}
