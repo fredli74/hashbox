@@ -13,7 +13,9 @@ jobs:
         with:
           go-version: stable
       - id: set-modules
-        run: echo "modules=$(find . -name go.mod -exec dirname {} \; | jq -R -s -c 'split(\"\n\")[:-1]')" >> $GITHUB_OUTPUT
+        run: |
+          modules=$(find . -name go.mod -exec dirname {} \; | jq -R -s -c 'split("\n")[:-1]')
+          echo "modules=$modules" >> "$GITHUB_OUTPUT"
 
   lint:
     needs: detect-modules
