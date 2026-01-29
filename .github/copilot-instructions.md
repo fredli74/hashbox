@@ -34,6 +34,7 @@ hashbox/
 ├── server/         - Server implementation with storage and account management
 ├── hashback/       - Backup client with store, restore, and diff operations
 ├── docs/           - Documentation and setup guides
+├── scripts/        - Test scripts including E2E smoke tests
 └── build_all.sh    - Multi-platform build script
 ```
 
@@ -111,14 +112,28 @@ hashbox/
 
 ### Running tests
 ```bash
-# Test core library
-cd core && go test -v
+# Test per module (default approach)
+cd core && go test ./...
+cd server && go test ./...
+cd hashback && go test ./...
 
-# Test server
+# Or test a specific package
 cd server && go test -v
+```
 
-# Format code
-go fmt
+### End-to-End Smoke Tests
+```bash
+# Run E2E smoke test from repository root (local mode)
+./scripts/e2e_hashbox.sh
+
+# Run E2E smoke test in Docker mode
+E2E_DOCKER=1 ./scripts/e2e_hashbox.sh
+
+# Environment variable overrides available:
+# - E2E_SOURCE_DIR: Source directory for backup tests
+# - E2E_DATASET: Dataset name for tests
+# - E2E_TMP_ROOT: Temporary directory root
+# See script header for full documentation
 ```
 
 ### Running the server
