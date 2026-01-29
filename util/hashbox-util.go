@@ -33,7 +33,7 @@ func parseHostString(input string) (host string, port int) {
 	if idx := strings.LastIndex(input, ":"); idx != -1 {
 		host = input[:idx]
 		p, err := strconv.Atoi(input[idx+1:])
-		core.AbortOn(err, "invalid port %q: %v", input[idx+1:], err)
+		core.AbortOnError(err, "invalid port %q: %v", input[idx+1:], err)
 		core.ASSERT(p > 0 && p < 65536, "port out of range")
 		port = p
 	}
@@ -53,9 +53,9 @@ func main() {
 
 	var err error
 	datDirectory, err = filepath.Abs("data")
-	core.AbortOn(err, "abs data dir: %v", err)
+	core.AbortOnError(err, "abs data dir: %v", err)
 	idxDirectory, err = filepath.Abs("index")
-	core.AbortOn(err, "abs index dir: %v", err)
+	core.AbortOnError(err, "abs index dir: %v", err)
 
 	// Global options
 	cmd.StringOption("data", "", "<path>", "Path to data directory (contains account/)", &datDirectory, cmd.Standard)
@@ -180,5 +180,5 @@ func main() {
 	})
 
 	err = cmd.Parse()
-	core.AbortOn(err, "command parse failed: %v", err)
+	core.AbortOnError(err, "command parse failed: %v", err)
 }

@@ -181,7 +181,7 @@ func (store *Store) findFreeOffset(fileType int, ignore int32) (freeFileNum int3
 			freeFile = store.getNumberedFile(fileType, store.topFileNumber[fileType], true)
 			var err error
 			freeOffset, err = freeFile.Writer.Seek(0, io.SeekEnd)
-			core.AbortOn(err)
+			core.AbortOnError(err)
 			if freeOffset <= storageOffsetLimit {
 				break
 			}
@@ -208,7 +208,7 @@ func (store *Store) setDeadSpace(fileType int, fileNumber int32, size int64, add
 
 	// Write new deadspace to file
 	_, err := file.Writer.Seek(storageFileDeadspaceOffset, io.SeekStart)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	core.WriteInt64(file.Writer, store.filedeadspace[name])
 }
 
@@ -219,7 +219,7 @@ func (store *Store) ShowStorageDeadSpace() {
 			break // no more data
 		}
 		fileSize, deadSpace, err := store.getNumberedFileSize(storageFileTypeData, datFileNumber)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 		core.Log(core.LogInfo, "File %s, %s (est. dead data %s)", datFile.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace))
 	}
 }
@@ -250,8 +250,7 @@ func NewStore(datDir, idxDir string) *Store {
 func (store *Store) SyncAll() {
 	for s, f := range store.filepool {
 		core.Log(core.LogDebug, "Syncing %s", s)
-		err := f.Sync()
-		core.AbortOn(err)
+		core.AbortOnError(f.Sync())
 	}
 }
 

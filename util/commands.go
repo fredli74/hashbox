@@ -30,7 +30,7 @@ func newCommandSet(datDir, idxDir string) *commandSet {
 func (c *commandSet) listAccounts() {
 	store := accountdb.NewStore(c.dataDir)
 	accounts, err := store.ListAccounts()
-	core.AbortOn(err, "list accounts: %v", err)
+	core.AbortOnError(err, "list accounts: %v", err)
 
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].AccountName < accounts[j].AccountName })
 
@@ -46,10 +46,10 @@ func (c *commandSet) listAccounts() {
 func (c *commandSet) listDatasets(accountName string) {
 	store := accountdb.NewStore(c.dataDir)
 	accName, accountNameH, err := resolveAccount(store, accountName)
-	core.AbortOn(err, "resolve account: %v", err)
+	core.AbortOnError(err, "resolve account: %v", err)
 
 	datasets, err := store.ListDatasets(&accountNameH)
-	core.AbortOn(err, "list datasets: %v", err)
+	core.AbortOnError(err, "list datasets: %v", err)
 	if len(datasets) == 0 {
 		fmt.Println("No datasets found")
 		return
@@ -76,9 +76,9 @@ func (c *commandSet) listDatasets(accountName string) {
 func (c *commandSet) listStates(accountName string, dataset string) {
 	store := accountdb.NewStore(c.dataDir)
 	accName, accountNameH, err := resolveAccount(store, accountName)
-	core.AbortOn(err, "resolve account: %v", err)
+	core.AbortOnError(err, "resolve account: %v", err)
 	datasetName, err := resolveDatasetName(store, accountNameH, dataset)
-	core.AbortOn(err, "resolve dataset: %v", err)
+	core.AbortOnError(err, "resolve dataset: %v", err)
 
 	txs := store.ReadTrnFile(accountNameH, datasetName)
 	if len(txs) == 0 {
@@ -125,7 +125,7 @@ func (c *commandSet) listStates(accountName string, dataset string) {
 func (c *commandSet) rebuildDB(account, dataset string) {
 	store := accountdb.NewStore(c.dataDir)
 	accounts, err := store.ListAccounts()
-	core.AbortOn(err, "list accounts: %v", err)
+	core.AbortOnError(err, "list accounts: %v", err)
 	datasetCount := 0
 	stateCount := 0
 	for _, acc := range accounts {
@@ -140,7 +140,7 @@ func (c *commandSet) rebuildDB(account, dataset string) {
 			core.Abort("account info missing for %s", acc.Filename)
 		}
 		datasets, err := store.ListDatasets(&acc.AccountNameH)
-		core.AbortOn(err, "list datasets for %s: %v", info.AccountName, err)
+		core.AbortOnError(err, "list datasets for %s: %v", info.AccountName, err)
 		for _, ds := range datasets {
 			if dataset != "" {
 				want := core.Hash([]byte(dataset))
@@ -222,9 +222,9 @@ func (c *commandSet) ping(host string, port int) {
 func (c *commandSet) deleteStates(accountName, dataset string, stateIDStrs []string) {
 	store := accountdb.NewStore(c.dataDir)
 	_, accountNameH, err := resolveAccount(store, accountName)
-	core.AbortOn(err, "resolve account: %v", err)
+	core.AbortOnError(err, "resolve account: %v", err)
 	datasetName, err := resolveDatasetName(store, accountNameH, dataset)
-	core.AbortOn(err, "resolve dataset: %v", err)
+	core.AbortOnError(err, "resolve dataset: %v", err)
 	if len(stateIDStrs) == 0 {
 		core.Abort("at least one state id required")
 	}
@@ -241,9 +241,9 @@ func (c *commandSet) deleteStates(accountName, dataset string, stateIDStrs []str
 func (c *commandSet) deleteDataset(accountName, dataset string) {
 	store := accountdb.NewStore(c.dataDir)
 	accName, accountNameH, err := resolveAccount(store, accountName)
-	core.AbortOn(err, "resolve account: %v", err)
+	core.AbortOnError(err, "resolve account: %v", err)
 	datasetName, err := resolveDatasetName(store, accountNameH, dataset)
-	core.AbortOn(err, "resolve dataset: %v", err)
+	core.AbortOnError(err, "resolve dataset: %v", err)
 	txPath := store.DatasetFilepath(accountNameH, datasetName) + accountdb.DbFileExtensionTransaction
 
 	renameIfExists(txPath, txPath+".bak")
@@ -257,12 +257,12 @@ func (c *commandSet) deleteDataset(accountName, dataset string) {
 func (c *commandSet) deleteAccount(accountName string) {
 	store := accountdb.NewStore(c.dataDir)
 	accName, accountNameH, err := resolveAccount(store, accountName)
-	core.AbortOn(err, "resolve account: %v", err)
+	core.AbortOnError(err, "resolve account: %v", err)
 
 	accountDir := filepath.Join(c.dataDir, "account")
 	accPrefix := base64.RawURLEncoding.EncodeToString(accountNameH[:]) + "."
 	entries, err := os.ReadDir(accountDir)
-	core.AbortOn(err, "read account dir: %v", err)
+	core.AbortOnError(err, "read account dir: %v", err)
 	for _, e := range entries {
 		name := e.Name()
 		if !strings.HasPrefix(name, accPrefix) || strings.HasSuffix(name, ".bak") {
@@ -279,11 +279,11 @@ func (c *commandSet) moveDataset(srcAccount, srcDataset, dstAccount, dstDataset 
 	core.ASSERT(dstDataset != "", "destination dataset name cannot be empty")
 	store := accountdb.NewStore(c.dataDir)
 	_, srcAccH, err := resolveAccount(store, srcAccount)
-	core.AbortOn(err, "resolve src account: %v", err)
+	core.AbortOnError(err, "resolve src account: %v", err)
 	srcDatasetName, err := resolveDatasetName(store, srcAccH, srcDataset)
-	core.AbortOn(err, "resolve src dataset: %v", err)
+	core.AbortOnError(err, "resolve src dataset: %v", err)
 	_, dstAccH, err := resolveAccount(store, dstAccount)
-	core.AbortOn(err, "resolve dst account: %v", err)
+	core.AbortOnError(err, "resolve dst account: %v", err)
 	dstDatasetName := core.String(dstDataset)
 	if resolved, err := resolveDatasetName(store, dstAccH, dstDataset); err == nil {
 		dstDatasetName = resolved
@@ -323,9 +323,9 @@ func (c *commandSet) moveDataset(srcAccount, srcDataset, dstAccount, dstDataset 
 func (c *commandSet) purgeStates(accountName, dataset string) {
 	store := accountdb.NewStore(c.dataDir)
 	_, accH, err := resolveAccount(store, accountName)
-	core.AbortOn(err, "resolve account: %v", err)
+	core.AbortOnError(err, "resolve account: %v", err)
 	datasetName, err := resolveDatasetName(store, accH, dataset)
-	core.AbortOn(err, "resolve dataset: %v", err)
+	core.AbortOnError(err, "resolve dataset: %v", err)
 
 	txs := store.ReadTrnFile(accH, datasetName)
 	path := store.DatasetFilepath(accH, datasetName) + accountdb.DbFileExtensionTransaction

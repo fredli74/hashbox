@@ -58,7 +58,7 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 
 	d := block.Data
 	_, err := d.ReadSeek(0, io.SeekStart)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	core.CopyOrPanic(f, &d)
 	session.WriteData += int64(d.Len())
 	d.Release()
@@ -109,7 +109,9 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 			if err != nil {
 				return err
 			}
-			defer fil.Close()
+			defer func() {
+				core.AbortOnError(fil.Close())
+			}()
 
 			switch e.ContentType {
 			case ContentTypeEmpty:
@@ -178,21 +180,19 @@ func (session *BackupSession) changeDir(blockID core.Byte128, pathList []string)
 
 func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath string, restorelist ...string) {
 	if err := os.MkdirAll(restorepath, 0777); err != nil {
-		core.AbortOn(err)
+		core.AbortOnError(err)
 	}
 
 	if len(restorelist) > 0 {
 		for _, r := range restorelist {
 			list, err := session.findPathMatch(rootBlockID, r)
-			core.AbortOn(err)
+			core.AbortOnError(err)
 			for _, e := range list {
-				err := session.restoreEntry(e, restorepath)
-				core.AbortOn(err)
+				core.AbortOnError(session.restoreEntry(e, restorepath))
 			}
 		}
 	} else {
-		err := session.restoreDir(rootBlockID, restorepath)
-		core.AbortOn(err)
+		core.AbortOnError(session.restoreDir(rootBlockID, restorepath))
 	}
 	session.PrintRestoreProgress()
 }
@@ -224,14 +224,14 @@ func (session *BackupSession) diffAndPrint(startOffset int64, A io.Reader, B io.
 	for offset := startOffset; ; {
 		nA, errA := A.Read(bufA)
 		if errA != nil && errA != io.EOF {
-			core.AbortOn(errA)
+			core.AbortOnError(errA)
 		}
 		if nA == 0 {
 			return true
 		}
 		nB, errB := B.Read(bufB[:nA])
 		if errB != nil && errB != io.EOF {
-			core.AbortOn(errB)
+			core.AbortOnError(errB)
 		}
 		if nA != nB {
 			panic(errors.New("Unable to read local file"))
@@ -264,9 +264,9 @@ func (session *BackupSession) diffFileData(f *os.File, blockID core.Byte128, Dec
 	defer d.Release()
 
 	_, err := d.ReadSeek(0, io.SeekStart)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	offset, err := f.Seek(0, io.SeekCurrent)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	if !session.diffAndPrint(offset, &d, f) {
 		return false
@@ -335,7 +335,9 @@ func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, e
 			if err != nil {
 				return false, err
 			}
-			defer fil.Close()
+			defer func() {
+				core.AbortOnError(fil.Close())
+			}()
 
 			switch e.ContentType {
 			case ContentTypeEmpty:
@@ -375,11 +377,13 @@ func (session *BackupSession) diffDir(blockID core.Byte128, path string) {
 	blockData.Release()
 
 	fil, err := os.Open(path)
-	core.AbortOn(err)
-	defer fil.Close()
+	core.AbortOnError(err)
+	defer func() {
+		core.AbortOnError(fil.Close())
+	}()
 
 	fl, err := fil.Readdir(-1)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	sort.Sort(FileInfoSlice(fl))
 
 	iL, iR := 0, 0
@@ -411,7 +415,7 @@ func (session *BackupSession) diffDir(blockID core.Byte128, path string) {
 
 func (session *BackupSession) DiffRestore(rootBlockID core.Byte128, restorepath string, restorelist ...string) {
 	info, err := os.Stat(restorepath)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	if !info.IsDir() {
 		panic(fmt.Errorf("%s is not a directory", restorepath))
@@ -420,7 +424,7 @@ func (session *BackupSession) DiffRestore(rootBlockID core.Byte128, restorepath 
 	if len(restorelist) > 0 {
 		for _, r := range restorelist {
 			list, err := session.findPathMatch(rootBlockID, r)
-			core.AbortOn(err)
+			core.AbortOnError(err)
 			for _, e := range list {
 				same, err := session.diffEntry(e, restorepath)
 				if !same {

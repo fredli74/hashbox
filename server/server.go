@@ -62,7 +62,7 @@ func handleConnection(conn net.Conn) {
 
 	for keepAlive := true; keepAlive; {
 		if err := conn.SetReadDeadline(time.Now().Add(10 * time.Minute)); err != nil {
-			core.AbortOn(err)
+			core.AbortOnError(err)
 		} // max size 512kb over 10 minutes is slower than 9600bps so we should be safe
 		// TODO: testing non-idle of 10s between commands
 
@@ -91,7 +91,7 @@ func handleConnection(conn net.Conn) {
 					// Create server nonce using  64-bit time and 64-bit random
 					binary.BigEndian.PutUint64(clientSession.SessionNonce[0:], uint64(time.Now().UnixNano()))
 					_, err := rand.Read(clientSession.SessionNonce[8:])
-					core.AbortOn(err)
+					core.AbortOnError(err)
 					reply.Data = &core.MsgServerGreeting{SessionNonce: clientSession.SessionNonce}
 				}
 			case core.MsgTypeAuthenticate:
@@ -118,8 +118,7 @@ func handleConnection(conn net.Conn) {
 								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
 								reply.Data = &core.MsgServerError{ErrorMessage: "Dataset pointing to a non existent block"}
 							} else {
-								err := accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State)
-								core.AbortOn(err)
+								core.AbortOnError(accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State))
 								// No need to set any data in reply
 							}
 						}
@@ -127,8 +126,7 @@ func handleConnection(conn net.Conn) {
 						c := incoming.Data.(*core.MsgClientRemoveDatasetState)
 						unauthorized = c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
 						if !unauthorized {
-							err := accountHandler.RemoveDatasetState(c.AccountNameH, c.DatasetName, c.StateID)
-							core.AbortOn(err)
+							core.AbortOnError(accountHandler.RemoveDatasetState(c.AccountNameH, c.DatasetName, c.StateID))
 							// No need to set any data in reply
 						}
 					case core.MsgTypeListDataset:
@@ -238,9 +236,9 @@ func run() (returnValue int) {
 
 	var serverPort int64 = int64(DEFAULT_SERVER_IP_PORT)
 	datDirectory, err = filepath.Abs("data")
-	core.AbortOn(err, "abs data dir: %v", err)
+	core.AbortOnError(err, "abs data dir: %v", err)
 	idxDirectory, err = filepath.Abs("index")
-	core.AbortOn(err, "abs index dir: %v", err)
+	core.AbortOnError(err, "abs index dir: %v", err)
 
 	cmd.Title = fmt.Sprintf("Hashbox Server %s", Version)
 	cmd.ShowCurrentDefaults = true
@@ -346,14 +344,13 @@ func run() (returnValue int) {
 
 		var blockData bytearray.ByteArray
 		if _, err := blockData.Write(dataEncryptionKey[:]); err != nil {
-			core.AbortOn(err)
+			core.AbortOnError(err)
 		}
 		block := core.NewHashboxBlock(core.BlockDataTypeRaw, blockData, nil)
 		if !storageHandler.writeBlock(block) {
 			core.Abort("Error writing key block")
 		}
-		err := accountHandler.AddDatasetState(accountNameH, core.String("\x07HASHBACK_DEK"), core.DatasetState{BlockID: block.BlockID})
-		core.AbortOn(err)
+		core.AbortOnError(accountHandler.AddDatasetState(accountNameH, core.String("\x07HASHBACK_DEK"), core.DatasetState{BlockID: block.BlockID}))
 
 		block.Release()
 		core.Log(core.LogInfo, "User added")
@@ -404,13 +401,13 @@ func run() (returnValue int) {
 		endfile := int32(-1)
 		if len(cmd.Args) > 2 {
 			i, err := strconv.ParseInt(cmd.Args[2], 0, 32)
-			core.AbortOn(err)
+			core.AbortOnError(err)
 			startfile = int32(i)
 			core.Log(core.LogInfo, "Starting from file #%d (%08x)", startfile, startfile)
 		}
 		if len(cmd.Args) > 3 {
 			i, err := strconv.ParseInt(cmd.Args[3], 0, 32)
-			core.AbortOn(err)
+			core.AbortOnError(err)
 			endfile = int32(i)
 			core.Log(core.LogInfo, "Stopping after file #%d (%08x)", endfile, endfile)
 		}
@@ -499,8 +496,7 @@ func run() (returnValue int) {
 		}
 	})
 
-	err = cmd.Parse()
-	core.AbortOn(err)
+	core.AbortOnError(cmd.Parse())
 
 	fmt.Println(core.MemoryStats())
 

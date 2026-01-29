@@ -49,7 +49,9 @@ func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) 
 	if err != nil {
 		return nil
 	}
-	defer file.Close()
+	defer func() {
+		core.AbortOnError(file.Close())
+	}()
 	var header dbFileHeader
 	header.Unserialize(file)
 	if header.filetype != DbFileTypeDatabase {
@@ -68,8 +70,10 @@ func (fs *Store) WriteDBFile(accountNameH core.Byte128, datasetName core.String,
 	fs.ensureAccountDir()
 	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionDatabase
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
-	core.AbortOn(err)
-	defer file.Close()
+	core.AbortOnError(err)
+	defer func() {
+		core.AbortOnError(file.Close())
+	}()
 
 	header := dbFileHeader{filetype: DbFileTypeDatabase, version: DbVersion, datasetName: datasetName}
 	header.Serialize(file)

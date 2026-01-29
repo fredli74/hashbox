@@ -34,12 +34,12 @@ func (handler *Store) MarkIndexes(roots []core.Byte128, Paint bool) {
 		chain = chain[1:]
 		if !visited[blockID] {
 			entry, ixFileNumber, ixOffset, err := handler.readIXEntry(blockID)
-			core.AbortOn(err)
+			core.AbortOnError(err)
 
 			if entry.flags&entryFlagNoLinks == 0 {
 				metaFileNumber, metaOffset := entry.location.Get()
 				metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-				core.AbortOn(err)
+				core.AbortOnError(err)
 				chain = append(chain, metaEntry.Links...)
 			}
 
@@ -50,7 +50,7 @@ func (handler *Store) MarkIndexes(roots []core.Byte128, Paint bool) {
 			}
 
 			_, err = ixFile.Writer.Seek(ixOffset, io.SeekStart)
-			core.AbortOn(err)
+			core.AbortOnError(err)
 			core.WriteUint16(ixFile.Writer, entry.flags)
 
 			visited[blockID] = true // Mark that we do not need to check this block again
@@ -84,9 +84,9 @@ func (handler *Store) SweepIndexes(Paint bool) {
 
 		// Open a separate reader that is not moved by any other routines
 		reader, err := core.OpenBufferedReader(ixFile.Path, 32768, ixFile.Flag)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 		_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 
 		var lastProgress = -1
 		for offset := int64(storageFileHeaderSize); offset < ixSize; offset += storageIXEntrySize {
@@ -126,7 +126,7 @@ func (handler *Store) SweepIndexes(Paint bool) {
 					}
 				}
 				_, err = ixFile.Writer.Seek(offset, io.SeekStart)
-				core.AbortOn(err)
+				core.AbortOnError(err)
 				core.WriteUint16(ixFile.Writer, entry.flags)
 			}
 
@@ -161,7 +161,7 @@ func (handler *Store) CompactIndexes(Paint bool) {
 		}
 
 		_, err = ixFile.Reader.Seek(storageFileHeaderSize, io.SeekStart)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 
 		truncPoint := int64(storageFileHeaderSize)
 
@@ -173,7 +173,7 @@ func (handler *Store) CompactIndexes(Paint bool) {
 			if entry.flags&entryFlagInvalid == entryFlagInvalid {
 				clearedBlocks++
 				_, err = ixFile.Writer.Seek(offset, io.SeekStart)
-				core.AbortOn(err)
+				core.AbortOnError(err)
 				blankEntry.Serialize(ixFile.Writer)
 				core.Log(core.LogDebug, "Cleared index at %x:%x", ixFileNumber, offset)
 			} else if entry.flags&entryFlagExists == entryFlagExists {
@@ -191,8 +191,7 @@ func (handler *Store) CompactIndexes(Paint bool) {
 
 		if truncPoint < ixSize {
 			core.Log(core.LogDebug, "Truncating index file #%d at %x", ixFileNumber, truncPoint)
-			err := ixFile.Writer.File.Truncate(truncPoint)
-			core.AbortOn(err)
+			core.AbortOnError(ixFile.Writer.File.Truncate(truncPoint))
 		}
 	}
 	if Paint {
@@ -214,13 +213,13 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 
 	file := handler.getNumberedFile(fileType, fileNumber, false)
 	fileSize, deadSpace, err := handler.getNumberedFileSize(fileType, fileNumber)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	core.Log(core.LogInfo, "Compacting file %s, %s (est. dead data %s)", file.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace))
 
 	reader, err := core.OpenBufferedReader(file.Path, 32768, file.Flag)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	type relocation struct {
 		blockID    core.Byte128
@@ -236,7 +235,7 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 	offset, highWaterMark := int64(storageFileHeaderSize), int64(storageFileHeaderSize)
 	for offset < fileSize {
 		skip, err := skipDataGap(reader)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 		deleted += skip
 		offset += skip
 
@@ -316,7 +315,7 @@ func (handler *Store) CompactAll(fileType int, threshold int) {
 			break // no more data
 		}
 		fileSize, deadSpace, err := handler.getNumberedFileSize(fileType, fileNumber)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 		if fileSize < storageOffsetLimit/100 || int(deadSpace*100/fileSize) >= threshold {
 			compacted += handler.CompactFile(fileType, fileNumber)
 		} else {

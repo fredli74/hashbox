@@ -58,14 +58,14 @@ func (e *StorageMetaEntry) BlockID() core.Byte128 {
 }
 func (e *StorageMetaEntry) VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool {
 	ixEntry, _, _, err := handler.readIXEntry(e.blockID)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	f, o := ixEntry.location.Get()
 	return f == fileNumber && o == fileOffset
 }
 
 func (handler *Store) killMetaEntry(blockID core.Byte128, metaFileNumber int32, metaOffset int64) (size int64) {
 	entry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	if entry.blockID.Compare(blockID) == 0 {
 		var data = new(bytes.Buffer)
 		entrySize := entry.Serialize(data)
@@ -90,13 +90,12 @@ func (handler *Store) writeMetaEntry(metaFileNumber int32, metaOffset int64, ent
 	} else {
 		metaFile = handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
 		_, err := metaFile.Writer.Seek(metaOffset, io.SeekStart)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 	}
 	_, err := data.WriteTo(metaFile.Writer)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	// flush notice: always force a flush because index will be updated next and it must point to something
-	err = metaFile.Sync()
-	core.AbortOn(err)
+	core.AbortOnError(metaFile.Sync())
 	core.Log(core.LogTrace, "writeMetaEntry %x:%x", metaFileNumber, metaOffset)
 
 	return metaFileNumber, metaOffset
@@ -113,7 +112,7 @@ func (handler *Store) readMetaEntry(metaFileNumber int32, metaOffset int64) (met
 		return nil, fmt.Errorf("Error reading metadata cache from file %x, file does not exist", metaFileNumber)
 	}
 	_, err = metaFile.Reader.Seek(metaOffset, io.SeekStart)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	metaEntry = new(StorageMetaEntry)
 	metaEntry.Unserialize(metaFile.Reader)
@@ -122,7 +121,7 @@ func (handler *Store) readMetaEntry(metaFileNumber int32, metaOffset int64) (met
 
 func (handler *Store) changeMetaLocation(blockID core.Byte128, fileNumber int32, fileOffset int64) {
 	ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(blockID)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	ixEntry.location.Set(fileNumber, fileOffset)
 	// flush notice: no need to flush, changeMetaLocation is only used during compacting and compact flushes between files
 	handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)

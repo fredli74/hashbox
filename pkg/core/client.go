@@ -315,7 +315,7 @@ func (c *Client) Dial() {
 	c.connection = nil // Drop previous connection object
 
 	conn, err := net.Dial("tcp", c.ServerAddress)
-	AbortOn(err)
+	AbortOnError(err)
 	c.connection = NewTimeoutConn(conn, DEFAULT_CONNECTION_TIMEOUT)
 }
 
@@ -484,7 +484,7 @@ func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChan
 			if c.lastError != nil {
 				panic(c.lastError)
 			}
-			AbortOn(err)
+			AbortOnError(err)
 			panic("Why did we end up here?")
 		}
 	} else if returnChannel != nil {
@@ -515,7 +515,7 @@ func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{
 		if c.lastError != nil {
 			panic(c.lastError)
 		}
-		AbortOn(err)
+		AbortOnError(err)
 		panic(errors.New("Connection was closed while waiting for a response"))
 	}
 	panic(errors.New("ASSERT! We should not reach this point"))

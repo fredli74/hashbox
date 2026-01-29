@@ -235,10 +235,10 @@ type BlockSource struct {
 
 func (handler *AccountHandler) CollectAllRootBlocks(skipInvalid bool) (rootBlocks []BlockSource) {
 	accounts, err := handler.store.ListAccounts()
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	for _, acc := range accounts {
 		datasets, err := handler.store.ListDatasets(&acc.AccountNameH)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 		for _, ds := range datasets {
 			collection := handler.store.ReadDBFile(ds.AccountNameH, ds.DatasetName)
 			if collection == nil {
@@ -263,7 +263,7 @@ func (handler *AccountHandler) CollectAllRootBlocks(skipInvalid bool) (rootBlock
 
 func (handler *AccountHandler) RebuildAccountFiles() {
 	accounts, err := handler.store.ListAccounts()
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	for _, acc := range accounts {
 		handler.store.RebuildAccount(acc.AccountNameH)
 	}

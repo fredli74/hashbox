@@ -51,13 +51,13 @@ func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx
 	fs.ensureAccountDir()
 	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionTransaction
 	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	defer lock.Close()
 	lock.Lock()
 	defer lock.Unlock()
 
 	pos, err := lock.Seek(0, io.SeekEnd)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	if pos == 0 { // New file, write the header
 		header := dbFileHeader{filetype: DbFileTypeTransaction, version: DbVersion, datasetName: datasetName}
 		header.Serialize(lock)
@@ -65,8 +65,7 @@ func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx
 	tx.Serialize(lock)
 	// Explicit fsync to persist the append before releasing the lock; Close alone
 	// does not guarantee durability.
-	err = lock.Sync()
-	core.AbortOn(err)
+	core.AbortOnError(lock.Sync())
 }
 
 // AppendAddState appends an add tx with current timestamp.
@@ -83,7 +82,7 @@ func (fs *Store) AppendDelState(accountNameH core.Byte128, datasetName core.Stri
 func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetName core.String) (states core.DatasetStateArray) {
 	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionTransaction
 	reader, err := fs.NewTxReader(accountNameH, datasetName)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	defer reader.Close()
 
 	stateMap := make(map[core.Byte128]core.DatasetState)
@@ -119,7 +118,7 @@ func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetNa
 // ReadTrnFile reads and validates the transaction log for a dataset.
 func (fs *Store) ReadTrnFile(accountNameH core.Byte128, datasetName core.String) []DbTx {
 	reader, err := fs.NewTxReader(accountNameH, datasetName)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	defer reader.Close()
 
 	var out []DbTx
@@ -138,7 +137,7 @@ func (fs *Store) WriteTrnFile(accountNameH core.Byte128, datasetName core.String
 	fs.ensureAccountDir()
 	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionTransaction
 	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	defer lock.Close()
 	lock.Lock()
 	defer lock.Unlock()
@@ -149,8 +148,7 @@ func (fs *Store) WriteTrnFile(accountNameH core.Byte128, datasetName core.String
 		tx.Serialize(lock)
 	}
 	// Explicit fsync to persist the rewritten log before releasing the lock.
-	err = lock.Sync()
-	core.AbortOn(err)
+	core.AbortOnError(lock.Sync())
 }
 
 // TxReader is a tolerant streaming reader over a .trn file.
@@ -231,10 +229,10 @@ func (r *TxReader) Pos() (int64, error) {
 func (fs *Store) GetDatasetNameFromTransactionFile(filename string) (core.String, core.Byte128) {
 	fullpath := filepath.Join(fs.DataDir, "account", filename)
 	_, err := os.Stat(fullpath)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	// Open the file, read and check the file headers
 	lock, err := lockablefile.Open(fullpath)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	defer lock.Close()
 	lock.LockShared()
 	defer lock.Unlock()
@@ -249,7 +247,7 @@ func (fs *Store) GetDatasetNameFromTransactionFile(filename string) (core.String
 	var datasetNameH core.Byte128
 	{
 		decoded, err := base64.RawURLEncoding.DecodeString(filename[23:45])
-		core.AbortOn(err)
+		core.AbortOnError(err)
 		datasetNameH.Set(decoded)
 	}
 	datasetHashB := core.Hash([]byte(datasetName))

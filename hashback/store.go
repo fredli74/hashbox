@@ -98,7 +98,9 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 	if file, err = os.Open(path); err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		core.AbortOnError(file.Close())
+	}()
 
 	var fileData bytearray.ByteArray
 	defer fileData.Release()
@@ -119,7 +121,7 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 		// Fill the fileData buffer
 		core.CopyNOrPanic(&fileData, file, maxBlockSize-fileData.Len())
 		_, err := fileData.ReadSeek(0, io.SeekCurrent) // TODO: figure out why this line is here because I do not remember
-		core.AbortOn(err)
+		core.AbortOnError(err)
 
 		var splitPosition int = fileData.Len()
 		if fileData.Len() > MIN_BLOCK_SIZE*2 { // Candidate for rolling sum split
@@ -202,7 +204,9 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) (id core.B
 	if file, err = os.Open(path); err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() {
+		core.AbortOnError(file.Close())
+	}()
 
 	var filelist []os.FileInfo
 	if filelist, err = file.Readdir(-1); err != nil {
@@ -443,7 +447,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	var virtualRootDir *DirectoryBlock
 	{
 		info, err := os.Lstat(path[0])
-		core.AbortOn(err)
+		core.AbortOnError(err)
 		if !info.IsDir() || len(path) > 1 {
 			virtualRootDir = &DirectoryBlock{}
 			session.reference.virtualRoot = make(map[string]string)
@@ -483,7 +487,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		var entry *FileEntry
 		for _, s := range path {
 			entry, err = session.storePath(s, true)
-			core.AbortOn(err)
+			core.AbortOnError(err)
 			if entry == nil {
 				panic(fmt.Errorf("Unable to store %s", s))
 			} else if virtualRootDir != nil {
@@ -497,7 +501,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		session.State.BlockID = session.Client.StoreData(core.BlockDataTypeZlib, SerializeToByteArray(virtualRootDir), links)
 	} else {
 		session.State.BlockID, err = session.storeDir(path[0], nil)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 	}
 
 	// Commit all pending writes
@@ -678,11 +682,13 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 		}()
 		cacheRecover, _ := os.Open(filepath.Join(LocalStoragePath, filename))
 		if cacheRecover != nil {
-			defer cacheRecover.Close()
+			defer func() {
+				core.AbortOnError(cacheRecover.Close())
+			}()
 			core.Log(core.LogInfo, "Opened resume cache %s", cacheRecover.Name())
 
 			info, err := cacheRecover.Stat()
-			core.AbortOn(err)
+			core.AbortOnError(err)
 			cacheSize := info.Size()
 			reader := bufio.NewReader(cacheRecover)
 
@@ -772,7 +778,7 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 			}
 			return nil
 		})
-		core.AbortOn(err)
+		core.AbortOnError(err)
 		sort.Slice(resumeFileList, func(i, j int) bool {
 			return resumeFileList[i].ModTime().Before(resumeFileList[j].ModTime())
 		})
@@ -791,11 +797,13 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 		// Check if we have last backup cached on disk
 		cacheLast, _ := os.Open(r.cacheFilePathName(*rootBlockID))
 		if cacheLast != nil {
-			defer cacheLast.Close()
+			defer func() {
+				core.AbortOnError(cacheLast.Close())
+			}()
 			core.Log(core.LogInfo, "Opened local cache %s", cacheLast.Name())
 
 			info, err := cacheLast.Stat()
-			core.AbortOn(err)
+			core.AbortOnError(err)
 			cacheSize := info.Size()
 			reader := bufio.NewReader(cacheLast)
 			for offset := int64(0); offset < cacheSize; {
@@ -888,7 +896,7 @@ func (r *referenceEngine) findReference(path string) *FileEntry {
 func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
 	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent == nil on reserveReference in an active referenceEngine")
 	l, err := r.cacheCurrent.Seek(0, io.SeekCurrent)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	entry.Serialize(r.cacheCurrent)
 	return l
 }
@@ -901,11 +909,11 @@ func (r *referenceEngine) storeReference(entry *FileEntry) {
 func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
 	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent == nil on storeReferenceDir in an active referenceEngine")
 	_, err := r.cacheCurrent.Seek(location, io.SeekStart)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	entry.Serialize(r.cacheCurrent)
 
 	_, err = r.cacheCurrent.Seek(0, io.SeekEnd)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	entryEOD.Serialize(r.cacheCurrent)
 }
 
@@ -929,15 +937,13 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 		}
 		return nil
 	})
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	r.cacheCurrent.Close()
-	err = os.Rename(tempPath, newCachePath)
-	core.AbortOn(err)
+	core.AbortOnError(os.Rename(tempPath, newCachePath))
 	r.cacheCurrent = nil
 }
 func (r *referenceEngine) Close() {
 	r.stop()
-	var err error
 
 	// If not commited, we need to close and save the current cache
 	if r.cacheCurrent != nil {
@@ -958,8 +964,7 @@ func (r *referenceEngine) Close() {
 		})()
 
 		core.Log(core.LogDebug, "Saving %s as recovery cache %s", currentName, partialName)
-		err = os.Rename(currentName, partialName)
-		core.AbortOn(err)
+		core.AbortOnError(os.Rename(currentName, partialName))
 	}
 }
 func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *referenceEngine {
@@ -970,7 +975,7 @@ func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *refe
 
 	var err error
 	r.cacheCurrent, err = os.CreateTemp(LocalStoragePath, r.cacheName("temp.*"))
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	return r
 }

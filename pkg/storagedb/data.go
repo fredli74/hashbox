@@ -55,10 +55,10 @@ func (e *StorageDataEntry) Unserialize(r io.Reader) (size int) {
 }
 func (e *StorageDataEntry) VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool {
 	ixEntry, _, _, err := handler.readIXEntry(e.block.BlockID)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	metaFileNumber, metaOffset := ixEntry.location.Get()
 	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	f, o := metaEntry.location.Get()
 	return f == fileNumber && o == fileOffset
@@ -83,10 +83,9 @@ func (handler *Store) writeBlockFile(block *core.HashboxBlock) bool {
 	var data = new(bytes.Buffer)
 	dataSize := uint32(dataEntry.Serialize(data))
 	_, err = data.WriteTo(datFile.Writer)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	// flush notice: manually flush datFile before creating the meta entry
-	err = datFile.Sync()
-	core.AbortOn(err)
+	core.AbortOnError(datFile.Sync())
 
 	metaEntry := StorageMetaEntry{blockID: block.BlockID, DataSize: dataSize, Links: block.Links}
 	metaEntry.location.Set(datFileNumber, datOffset)
@@ -112,7 +111,7 @@ func (handler *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, e
 
 	metaFileNumber, metaOffset := indexEntry.location.Get()
 	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	dataFileNumber, dataOffset := metaEntry.location.Get()
 	dataFile := handler.getNumberedFile(storageFileTypeData, dataFileNumber, false)
@@ -120,7 +119,7 @@ func (handler *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, e
 		core.Abort("Error reading block from file %x, file does not exist", dataFileNumber)
 	}
 	_, err = dataFile.Reader.Seek(dataOffset, io.SeekStart)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	var dataEntry StorageDataEntry
 	dataEntry.Unserialize(dataFile.Reader)
@@ -129,11 +128,11 @@ func (handler *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, e
 
 func (handler *Store) changeDataLocation(blockID core.Byte128, fileNumber int32, fileOffset int64) {
 	ixEntry, _, _, err := handler.readIXEntry(blockID)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	metaFileNumber, metaOffset := ixEntry.location.Get()
 	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	metaEntry.location.Set(fileNumber, fileOffset)
 	handler.writeMetaEntry(metaFileNumber, metaOffset, metaEntry)

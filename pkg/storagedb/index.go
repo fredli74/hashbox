@@ -73,7 +73,7 @@ OuterLoop:
 			break
 		}
 		_, err := ixFile.Reader.Seek(ixOffset, io.SeekStart)
-		core.AbortOn(err)
+		core.AbortOnError(err)
 
 		for i := 0; i < storageIXEntryProbeLimit; i++ {
 			if ixOffset >= ixSize {
@@ -117,17 +117,16 @@ func (handler *Store) readIXEntry(blockID core.Byte128) (entry *StorageIXEntry, 
 func (handler *Store) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *StorageIXEntry, forceFlush bool) {
 	var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, true)
 	_, err := ixFile.Writer.Seek(ixOffset, io.SeekStart)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	finalFlags := entry.flags
 	entry.flags |= entryFlagInvalid // Write record as invalid first
 	entry.Serialize(ixFile.Writer)
 
 	_, err = ixFile.Writer.Seek(ixOffset, io.SeekStart)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	core.WriteUint16(ixFile.Writer, finalFlags) // Write correct flags
 	if forceFlush {
-		err = ixFile.Sync()
-		core.AbortOn(err)
+		core.AbortOnError(ixFile.Sync())
 	}
 	core.Log(core.LogTrace, "writeIXEntry %x:%x", ixFileNumber, ixOffset)
 }
@@ -136,7 +135,7 @@ func (handler *Store) InvalidateIXEntry(blockID core.Byte128) {
 	core.Log(core.LogDebug, "InvalidateIXEntry %x", blockID[:])
 
 	e, f, o, err := handler.readIXEntry(blockID)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	core.ASSERT(e != nil, e)
 	e.flags |= entryFlagInvalid

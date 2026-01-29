@@ -23,25 +23,25 @@ import (
 func randomUint32() Uint32 {
 	var b [4]byte
 	_, err := rand.Read(b[:])
-	AbortOn(err, "rand.Read: %v", err)
+	AbortOnError(err, "rand.Read: %v", err)
 	return Uint32(binary.BigEndian.Uint32(b[:]))
 }
 func randomInt63() int64 {
 	var b [8]byte
 	_, err := rand.Read(b[:])
-	AbortOn(err, "rand.Read: %v", err)
+	AbortOnError(err, "rand.Read: %v", err)
 	v := int64(binary.BigEndian.Uint64(b[:]) & ^(uint64(1) << 63))
 	return v
 }
 func randomUint8() uint8 {
 	var b [1]byte
 	_, err := rand.Read(b[:])
-	AbortOn(err, "rand.Read: %v", err)
+	AbortOnError(err, "rand.Read: %v", err)
 	return b[0]
 }
 func randomByte128() (b Byte128) {
 	_, err := rand.Read(b[:])
-	AbortOn(err, "rand.Read: %v", err)
+	AbortOnError(err, "rand.Read: %v", err)
 	return
 }
 
@@ -49,11 +49,11 @@ const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 func randomMsgString() String {
 	n, err := rand.Int(rand.Reader, big.NewInt(32))
-	AbortOn(err, "rand.Int: %v", err)
+	AbortOnError(err, "rand.Int: %v", err)
 	b := make([]byte, int(n.Int64())+8)
 	for i := range b {
 		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(letterBytes))))
-		AbortOn(err, "rand.Int: %v", err)
+		AbortOnError(err, "rand.Int: %v", err)
 		b[i] = letterBytes[idx.Int64()]
 	}
 	return String("RandomString>" + string(b) + "<")
@@ -62,7 +62,7 @@ func randomMsgString() String {
 func randomHashboxBlock() (b HashboxBlock) {
 	b.DataType = BlockDataTypeRaw
 	_, err := b.Data.Write([]byte(randomMsgString()))
-	AbortOn(err, "b.Data.Write: %v", err)
+	AbortOnError(err, "b.Data.Write: %v", err)
 	b.Links = append(b.Links, randomByte128())
 	b.UncompressedSize = -1
 	b.BlockID = b.HashData()
@@ -77,7 +77,7 @@ func protocolPipeCompare(msgType uint32, msgData interface{}) (isEqual bool, dum
 	}()
 	buf := new(bytes.Buffer)
 	num, err := rand.Int(rand.Reader, big.NewInt(1<<16))
-	AbortOn(err, "rand.Int: %v", err)
+	AbortOnError(err, "rand.Int: %v", err)
 	msg := &ProtocolMessage{Num: uint16(num.Int64()), Type: msgType, Data: msgData}
 	WriteMessage(buf, msg)
 	dump = hex.Dump(buf.Bytes())

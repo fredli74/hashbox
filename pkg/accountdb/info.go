@@ -40,7 +40,9 @@ func (fs *Store) ReadInfoFile(accountNameH core.Byte128) *AccountInfo {
 	if err != nil {
 		return nil
 	}
-	defer file.Close()
+	defer func() {
+		core.AbortOnError(file.Close())
+	}()
 	var a AccountInfo
 	a.AccountName.Unserialize(file)
 	a.AccessKey.Unserialize(file)
@@ -52,8 +54,10 @@ func (fs *Store) ReadInfoFile(accountNameH core.Byte128) *AccountInfo {
 func (fs *Store) WriteInfoFile(accountNameH core.Byte128, info AccountInfo) {
 	fs.ensureAccountDir()
 	file, err := os.OpenFile(fs.accountFilepath(accountNameH)+".info", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
-	core.AbortOn(err)
-	defer file.Close()
+	core.AbortOnError(err)
+	defer func() {
+		core.AbortOnError(file.Close())
+	}()
 	info.AccountName.Serialize(file)
 	info.AccessKey.Serialize(file)
 	info.Datasets.Serialize(file)
@@ -165,7 +169,7 @@ func (fs *Store) RebuildAccount(accountNameH core.Byte128) {
 		fs.WriteInfoFile(accountNameH, *info)
 	}
 	datasets, err := fs.ListDatasets(&accountNameH)
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	for _, d := range datasets {
 		core.Log(core.LogDebug, "Regenerating file %s.db (%x.%s)", d.Filename[:45], d.AccountNameH[:], d.DatasetName)
 		fs.RebuildDB(accountNameH, d.DatasetName)

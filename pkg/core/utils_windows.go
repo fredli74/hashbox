@@ -19,7 +19,7 @@ func FreeSpace(path string) (int64, error) {
 	}
 	defer func() {
 		err := syscall.FreeLibrary(kernel32)
-		AbortOn(err)
+		AbortOnError(err)
 	}()
 
 	GetDiskFreeSpaceEx, err := syscall.GetProcAddress(syscall.Handle(kernel32), "GetDiskFreeSpaceExW")

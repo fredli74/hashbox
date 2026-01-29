@@ -24,8 +24,8 @@ func Abort(format string, a ...interface{}) {
 	panic(fmt.Errorf(format, a...))
 }
 
-// AbortOn panics if err is non-nil, with optional formatted message.
-func AbortOn(err error, a ...interface{}) {
+// AbortOnError panics if err is non-nil, with optional formatted message.
+func AbortOnError(err error, a ...interface{}) {
 	if err != nil {
 		if len(a) > 0 {
 			if format, ok := a[0].(string); ok {
@@ -38,7 +38,7 @@ func AbortOn(err error, a ...interface{}) {
 
 func ReadBytes(r io.Reader, data []byte) int {
 	n, err := io.ReadFull(r, data)
-	AbortOn(err)
+	AbortOnError(err)
 	return n
 }
 func ReadUint8(r io.Reader, data *uint8) int {
@@ -67,7 +67,7 @@ func ReadInt64(r io.Reader, data *int64) int {
 }
 func WriteBytes(w io.Writer, data []byte) int {
 	n, err := w.Write(data)
-	AbortOn(err)
+	AbortOnError(err)
 	return n
 }
 func WriteUint8(w io.Writer, data uint8) int {
@@ -89,12 +89,12 @@ func WriteInt64(w io.Writer, data int64) int {
 
 func CopyOrPanic(dst io.Writer, src io.Reader) int {
 	written, err := io.Copy(dst, src)
-	AbortOn(err)
+	AbortOnError(err)
 	return int(written)
 }
 func CopyNOrPanic(dst io.Writer, src io.Reader, n int) int {
 	written, err := io.CopyN(dst, src, int64(n))
-	AbortOn(err)
+	AbortOnError(err)
 	return int(written)
 }
 

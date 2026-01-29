@@ -23,8 +23,7 @@ func (l *LockableFile) Lock() {
 		Start:  0,
 		Len:    0, // whole file
 	}
-	err := unix.FcntlFlock(l.Fd(), unix.F_SETLKW, &flock)
-	core.AbortOn(err)
+	core.AbortOnError(unix.FcntlFlock(l.Fd(), unix.F_SETLKW, &flock))
 }
 
 // LockShared acquires a shared advisory lock on the file descriptor.
@@ -36,8 +35,7 @@ func (l *LockableFile) LockShared() {
 		Start:  0,
 		Len:    0, // whole file
 	}
-	err := unix.FcntlFlock(l.Fd(), unix.F_SETLKW, &flock)
-	core.AbortOn(err)
+	core.AbortOnError(unix.FcntlFlock(l.Fd(), unix.F_SETLKW, &flock))
 }
 
 // Unlock releases the advisory lock.
@@ -49,6 +47,5 @@ func (l *LockableFile) Unlock() {
 		Start:  0,
 		Len:    0,
 	}
-	err := unix.FcntlFlock(l.Fd(), unix.F_SETLK, &flock)
-	core.AbortOn(err)
+	core.AbortOnError(unix.FcntlFlock(l.Fd(), unix.F_SETLK, &flock))
 }

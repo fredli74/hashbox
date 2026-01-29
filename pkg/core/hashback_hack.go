@@ -24,19 +24,19 @@ func GenerateBackupKey(account string, password string) Byte128 {
 func GenerateDataEncryptionKey() Byte128 {
 	var key Byte128
 	_, err := rand.Read(key[:])
-	AbortOn(err)
+	AbortOnError(err)
 	return key
 }
 func DecryptDataInPlace(cipherdata []byte, key Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	AbortOn(err)
+	AbortOnError(err)
 
 	aesStream := cipher.NewCBCDecrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(cipherdata, cipherdata)
 }
 func EncryptDataInPlace(data []byte, key Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	AbortOn(err)
+	AbortOnError(err)
 
 	aesStream := cipher.NewCBCEncrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(data, data)

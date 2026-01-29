@@ -356,8 +356,7 @@ func main() {
 				LocalStoragePath = filepath.Join(home, ".hashback")
 			}
 		}
-		err = os.MkdirAll(LocalStoragePath, 0700)
-		core.AbortOn(err)
+		core.AbortOnError(os.MkdirAll(LocalStoragePath, 0700))
 	}
 
 	session := NewBackupSession()
@@ -510,7 +509,7 @@ func main() {
 				}
 				var err error
 				filelist, err = session.findPathMatch(state.BlockID, listpath)
-				core.AbortOn(err)
+				core.AbortOnError(err)
 
 				fmt.Printf("Listing %s\n", listpath)
 				if len(filelist) > 0 {
@@ -775,7 +774,7 @@ func main() {
 	}()
 
 	if err := cmd.Parse(); err != nil {
-		core.AbortOn(err)
+		core.AbortOnError(err)
 	}
 }
 
@@ -788,19 +787,19 @@ func GenerateBackupKey(account string, password string) core.Byte128 {
 func GenerateDataEncryptionKey() core.Byte128 {
 	var key core.Byte128
 	_, err := rand.Read(key[:])
-	core.AbortOn(err)
+	core.AbortOnError(err)
 	return key
 }
 func DecryptDataInPlace(cipherdata []byte, key core.Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	aesStream := cipher.NewCBCDecrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(cipherdata, cipherdata)
 }
 func EncryptDataInPlace(data []byte, key core.Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	core.AbortOn(err)
+	core.AbortOnError(err)
 
 	aesStream := cipher.NewCBCEncrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(data, data)

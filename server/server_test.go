@@ -45,13 +45,15 @@ func TestCreatingTestServer(t *testing.T) {
 		k := core.Hash([]byte(""))
 		a := AccountInfo{AccountName: "test", AccountKey: k[:]}
 		J, err := json.MarshalIndent(a, "", "\t")
-		core.AbortOn(err)
+		core.AbortOnError(err)
 		fmt.Println(string(J))
 	*/
 	go func() {
 		listener, err := net.ListenTCP("tcp", &net.TCPAddr{Port: 1248})
-		core.AbortOn(err)
-		defer listener.Close()
+		core.AbortOnError(err)
+		defer func() {
+			core.AbortOnError(listener.Close())
+		}()
 
 		connectionListener(listener)
 	}()

@@ -102,7 +102,7 @@ func (b *HashboxBlock) HashData() (BlockID Byte128) {
 
 	WriteUint32(hash, uint32(b.Data.Len()))
 	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
-	AbortOn(err)
+	AbortOnError(err)
 	CopyOrPanic(hash, &b.Data)
 
 	copy(BlockID[:], hash.Sum(nil)[:16])
@@ -127,7 +127,7 @@ func (b *HashboxBlock) UncompressData() {
 		b.UncompressedSize = b.Data.Len()
 	}
 	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
-	AbortOn(err)
+	AbortOnError(err)
 }
 
 func (b *HashboxBlock) CompressData() {
@@ -146,7 +146,7 @@ func (b *HashboxBlock) CompressData() {
 		b.CompressedSize = b.Data.Len()
 	}
 	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
-	AbortOn(err)
+	AbortOnError(err)
 }
 
 func (b *HashboxBlock) VerifyBlock() bool {
@@ -175,26 +175,26 @@ func (b *HashboxBlock) VerifyBlock() bool {
 
 func (b *HashboxBlock) zlibCompress() (dst bytearray.ByteArray) {
 	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
-	AbortOn(err)
+	AbortOnError(err)
 	zw := zpool.GetWriter(&dst)
 	CopyOrPanic(zw, &b.Data)
 	err = zw.Close()
-	AbortOn(err)
+	AbortOnError(err)
 	zpool.PutWriter(zw)
 	return dst
 }
 func (b *HashboxBlock) zlibUncompress() bytearray.ByteArray {
 	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
-	AbortOn(err)
+	AbortOnError(err)
 	zr, err := zlib.NewReader(&b.Data)
-	AbortOn(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
+	AbortOnError(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	defer func() {
 		err := zr.Close()
-		AbortOn(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
+		AbortOnError(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	}()
 	var dst bytearray.ByteArray
 	_, err = io.Copy(&dst, zr)
-	AbortOn(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
+	AbortOnError(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	return dst
 }
 
@@ -215,7 +215,7 @@ func (z *zlibPool) GetWriter(w io.Writer) (zw *zlib.Writer) {
 	} else {
 		var err error
 		zw, err = zlib.NewWriterLevel(w, zlib.DefaultCompression)
-		AbortOn(err)
+		AbortOnError(err)
 	}
 	return zw
 }

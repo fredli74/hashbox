@@ -32,12 +32,10 @@ func (l *LockableFile) Unlock() {
 
 func lockFileEx(fd uintptr, flags uint32) {
 	var ol windows.Overlapped
-	err := windows.LockFileEx(windows.Handle(fd), flags, 0, 1, 0, &ol)
-	core.AbortOn(err)
+	core.AbortOnError(windows.LockFileEx(windows.Handle(fd), flags, 0, 1, 0, &ol))
 }
 
 func unlockFileEx(fd uintptr) {
 	var ol windows.Overlapped
-	err := windows.UnlockFileEx(windows.Handle(fd), 0, 1, 0, &ol)
-	core.AbortOn(err)
+	core.AbortOnError(windows.UnlockFileEx(windows.Handle(fd), 0, 1, 0, &ol))
 }

@@ -104,7 +104,7 @@ func (c *commandSet) syncRun(remoteHost string, remotePort int, include, exclude
 	core.Log(core.LogDebug, "Syncing started for remote server %s:%d", remoteHost, remotePort)
 
 	accounts, err := accountDB.ListAccounts()
-	core.AbortOn(err, "list accounts: %v", err)
+	core.AbortOnError(err, "list accounts: %v", err)
 	if len(accounts) == 0 {
 		core.Log(core.LogWarning, "no accounts found under %s/account", c.dataDir)
 		return
@@ -121,7 +121,7 @@ func (c *commandSet) syncRun(remoteHost string, remotePort int, include, exclude
 		}
 		core.Log(core.LogDebug, "match account %s", accName)
 		datasets, err := accountDB.ListDatasets(&acc.AccountNameH)
-		core.AbortOn(err, "list datasets for %s: %v", accName, err)
+		core.AbortOnError(err, "list datasets for %s: %v", accName, err)
 		core.Log(core.LogDebug, "found %d datasets for %s", len(datasets), accName)
 
 		// for each dataset in account, check if it should be included
@@ -149,10 +149,10 @@ func (c *commandSet) syncRun(remoteHost string, remotePort int, include, exclude
 
 func readStateFile(f *lockablefile.LockableFile, path string) map[string]int64 {
 	_, err := f.Seek(0, io.SeekStart)
-	core.AbortOn(err, "seek %s: %v", path, err)
+	core.AbortOnError(err, "seek %s: %v", path, err)
 
 	info, err := f.Stat()
-	core.AbortOn(err, "stat %s: %v", path, err)
+	core.AbortOnError(err, "stat %s: %v", path, err)
 	if info.Size() == 0 {
 		return make(map[string]int64)
 	}
@@ -160,22 +160,22 @@ func readStateFile(f *lockablefile.LockableFile, path string) map[string]int64 {
 	var state map[string]int64
 	dec := json.NewDecoder(f)
 	err = dec.Decode(&state)
-	core.AbortOn(err, "parse %s: %v", path, err)
+	core.AbortOnError(err, "parse %s: %v", path, err)
 	return state
 }
 
 func writeStateFile(f *lockablefile.LockableFile, path string, state map[string]int64) {
 	_, err := f.Seek(0, io.SeekStart)
-	core.AbortOn(err, "seek %s: %v", path, err)
+	core.AbortOnError(err, "seek %s: %v", path, err)
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "\t")
 	err = enc.Encode(state)
-	core.AbortOn(err, "write %s: %v", path, err)
+	core.AbortOnError(err, "write %s: %v", path, err)
 
 	offset, err := f.Seek(0, io.SeekCurrent)
-	core.AbortOn(err, "seek %s: %v", path, err)
+	core.AbortOnError(err, "seek %s: %v", path, err)
 	err = f.Truncate(offset)
-	core.AbortOn(err, "truncate %s: %v", path, err)
+	core.AbortOnError(err, "truncate %s: %v", path, err)
 }
 
 func syncStateKey(accountHash core.Byte128, datasetName core.String) string {
@@ -209,9 +209,9 @@ func getSyncStateWatermark(dataPath, syncID string, accountHash core.Byte128, da
 func setSyncStateWatermark(dataPath, syncID string, accountHash core.Byte128, datasetName core.String, position int64) {
 	path := syncStatePath(dataPath, syncID)
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
-	core.AbortOn(err, "mkdir %s: %v", filepath.Dir(path), err)
+	core.AbortOnError(err, "mkdir %s: %v", filepath.Dir(path), err)
 	f, err := lockablefile.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
-	core.AbortOn(err, "open %s: %v", path, err)
+	core.AbortOnError(err, "open %s: %v", path, err)
 	defer f.Close()
 	f.Lock()
 	defer f.Unlock()
@@ -228,7 +228,7 @@ func resetSyncWatermarks(dataDir string, accountHash core.Byte128, datasetName c
 		if os.IsNotExist(err) {
 			return
 		}
-		core.AbortOn(err, "read sync dir: %v", err)
+		core.AbortOnError(err, "read sync dir: %v", err)
 	}
 
 	key := syncStateKey(accountHash, datasetName)
@@ -246,7 +246,7 @@ func resetSyncWatermarks(dataDir string, accountHash core.Byte128, datasetName c
 			if os.IsNotExist(err) {
 				continue
 			}
-			core.AbortOn(err, "open %s: %v", path, err)
+			core.AbortOnError(err, "open %s: %v", path, err)
 		}
 		f.Lock()
 		state := readStateFile(f, path)
@@ -331,14 +331,14 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 
 	// open local dataset transaction log
 	reader, err := sync.accountDB.NewTxReader(accountHash, datasetName)
-	core.AbortOn(err, "open trn %s:%s", sync.accountName(accountHash), datasetName)
+	core.AbortOnError(err, "open trn %s:%s", sync.accountName(accountHash), datasetName)
 	defer reader.Close()
 
 	position := getSyncStateWatermark(sync.dataDB.DataDir, sync.syncID, accountHash, datasetName)
 	core.Log(core.LogDebug, "sync start %s:%s from offset %d", sync.accountName(accountHash), datasetName, position)
 	if position > 0 {
 		_, err := reader.Seek(position, io.SeekStart)
-		core.AbortOn(err, "seek trn %s:%s: %v", sync.accountName(accountHash), datasetName, err)
+		core.AbortOnError(err, "seek trn %s:%s: %v", sync.accountName(accountHash), datasetName, err)
 	}
 	for {
 		tx := reader.Next()
@@ -372,7 +372,7 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 		// Successfully processed tx, update watermark
 		if !sync.dryRun {
 			pos, err := reader.Pos()
-			core.AbortOn(err, "pos trn %s:%s: %v", sync.accountName(accountHash), datasetName, err)
+			core.AbortOnError(err, "pos trn %s:%s: %v", sync.accountName(accountHash), datasetName, err)
 			setSyncStateWatermark(sync.dataDB.DataDir, sync.syncID, accountHash, datasetName, pos)
 		}
 	}
@@ -380,7 +380,7 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 
 func hasLaterDelete(reader *accountdb.TxReader, stateID core.Byte128) bool {
 	returnPos, err := reader.Pos()
-	core.AbortOn(err, "seek trn")
+	core.AbortOnError(err, "seek trn")
 	defer func() {
 		_, _ = reader.Seek(returnPos, io.SeekStart)
 	}()

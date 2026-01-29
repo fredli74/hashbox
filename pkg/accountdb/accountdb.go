@@ -58,7 +58,7 @@ func base64filename(d []byte) string {
 
 func (fs *Store) ensureAccountDir() {
 	err := os.MkdirAll(filepath.Join(fs.DataDir, "account"), 0o755)
-	core.AbortOn(err, "mkdir %s/account: %v", fs.DataDir, err)
+	core.AbortOnError(err, "mkdir %s/account: %v", fs.DataDir, err)
 }
 
 func (fs *Store) accountFilepath(nameHash core.Byte128) string {

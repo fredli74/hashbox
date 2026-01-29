@@ -79,7 +79,12 @@ func TestLockWriterHelperProcess(t *testing.T) {
 		fmt.Fprintf(os.Stderr, "open out: %v\n", err)
 		os.Exit(1)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "close out: %v\n", err)
+			os.Exit(1)
+		}
+	}()
 
 	if _, err := file.Seek(0, io.SeekEnd); err != nil {
 		fmt.Fprintf(os.Stderr, "seek: %v\n", err)
