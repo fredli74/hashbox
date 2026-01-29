@@ -19,8 +19,16 @@ func syncDir(dataPath string) string {
 	return filepath.Join(dataPath, "sync")
 }
 
+func syncStateFilename(id string) string {
+	return fmt.Sprintf("state-%s.json", id)
+}
+
+func isSyncStateFilename(name string) bool {
+	return strings.HasPrefix(name, "state-") && strings.HasSuffix(name, ".json")
+}
+
 func syncStatePath(dataPath, id string) string {
-	return filepath.Join(syncDir(dataPath), fmt.Sprintf("state-%s.json", id))
+	return filepath.Join(syncDir(dataPath), syncStateFilename(id))
 }
 
 func parsePatterns(spec string) []string {
@@ -151,8 +159,23 @@ func readStateFile(f *lockablefile.LockableFile, path string) map[string]int64 {
 
 	var state map[string]int64
 	dec := json.NewDecoder(f)
-	core.AbortOn(dec.Decode(&state), "parse %s: %v", path, err)
+	err = dec.Decode(&state)
+	core.AbortOn(err, "parse %s: %v", path, err)
 	return state
+}
+
+func writeStateFile(f *lockablefile.LockableFile, path string, state map[string]int64) {
+	_, err := f.Seek(0, io.SeekStart)
+	core.AbortOn(err, "seek %s: %v", path, err)
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "\t")
+	err = enc.Encode(state)
+	core.AbortOn(err, "write %s: %v", path, err)
+
+	offset, err := f.Seek(0, io.SeekCurrent)
+	core.AbortOn(err, "seek %s: %v", path, err)
+	err = f.Truncate(offset)
+	core.AbortOn(err, "truncate %s: %v", path, err)
 }
 
 func getSyncStateWatermark(dataPath, syncID string, datasetName core.String) int64 {
@@ -191,20 +214,49 @@ func setSyncStateWatermark(dataPath, syncID string, datasetName core.String, pos
 	state := readStateFile(f, path)
 	key := formatHash(core.Hash([]byte(datasetName)))
 	state[key] = position
+	writeStateFile(f, path, state)
+}
 
-	// Rewind and write updated state
-	_, err = f.Seek(0, io.SeekStart)
-	core.AbortOn(err, "seek %s: %v", path, err)
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "\t")
-	err = enc.Encode(state)
-	core.AbortOn(err, "write %s: %v", path, err)
+func resetSyncWatermarks(dataDir string, datasetName core.String) {
+	dir := syncDir(dataDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		core.AbortOn(err, "read sync dir: %v", err)
+	}
 
-	// Truncate in case new content is smaller than old
-	offset, err := f.Seek(0, io.SeekCurrent)
-	core.AbortOn(err, "seek %s: %v", path, err)
-	err = f.Truncate(offset)
-	core.AbortOn(err, "truncate %s: %v", path, err)
+	key := formatHash(core.Hash([]byte(datasetName)))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !isSyncStateFilename(name) {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		f, err := lockablefile.OpenFile(path, os.O_RDWR, 0o644)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			core.AbortOn(err, "open %s: %v", path, err)
+		}
+		f.Lock()
+		state := readStateFile(f, path)
+		if _, ok := state[key]; !ok {
+			f.Unlock()
+			f.Close()
+			continue
+		}
+		delete(state, key)
+		writeStateFile(f, path, state)
+		f.Unlock()
+		f.Close()
+		fmt.Printf("Sync watermark for %s (%s) was reset\n", core.Escape(name), core.Escape(datasetName))
+	}
 }
 
 /******** SYNC SESSION ********/
@@ -345,7 +397,7 @@ func (sync *syncSession) hasLaterDelete(reader *accountdb.TxReader, stateID core
 
 func (sync *syncSession) ensureConnection(accHash core.Byte128) {
 	if sync.client != nil && sync.client.AccountNameH.Compare(accHash) != 0 {
-		sync.closeConnection()
+		sync.close()
 	}
 	if sync.client == nil {
 		info := sync.accountDB.ReadInfoFile(accHash)
@@ -488,13 +540,6 @@ waitQueue:
 	core.Log(core.LogInfo, "Sent all blocks for tree rooted at %x (sent %d, data %s)", root[:], sent, core.HumanSize(sentBytes))
 }
 func (sync *syncSession) close() {
-	if sync.client != nil {
-		sync.client.Close(true)
-		sync.client = nil
-	}
-}
-
-func (sync *syncSession) closeConnection() {
 	if sync.client != nil {
 		sync.client.Close(true)
 		sync.client = nil

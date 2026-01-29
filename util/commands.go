@@ -310,6 +310,7 @@ func (c *commandSet) moveDataset(srcAccount, srcDataset, dstAccount, dstDataset 
 		}
 	}
 	store.WriteTrnFile(dstAccH, dstDatasetName, merged)
+	resetSyncWatermarks(c.dataDir, dstDatasetName)
 	store.RebuildDB(dstAccH, dstDatasetName)
 
 	if srcAccH.Compare(dstAccH) != 0 || srcDatasetName != dstDatasetName {
@@ -356,6 +357,7 @@ outer:
 	}
 
 	store.WriteTrnFile(accH, datasetName, txs)
+	resetSyncWatermarks(c.dataDir, datasetName)
 	store.RebuildDB(accH, datasetName)
 	fmt.Printf("Purged deleted states from dataset %s\n", core.Escape(datasetName))
 }
