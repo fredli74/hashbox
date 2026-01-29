@@ -25,11 +25,15 @@ func (t *TimeoutConn) Close() error {
 }
 
 func (t *TimeoutConn) Read(b []byte) (n int, err error) {
-	t.conn.SetReadDeadline(time.Now().Add(t.timeout))
+	if err := t.conn.SetReadDeadline(time.Now().Add(t.timeout)); err != nil {
+		return 0, err
+	}
 	return t.conn.Read(b)
 }
 
 func (t *TimeoutConn) Write(b []byte) (n int, err error) {
-	t.conn.SetWriteDeadline(time.Now().Add(t.timeout))
+	if err := t.conn.SetWriteDeadline(time.Now().Add(t.timeout)); err != nil {
+		return 0, err
+	}
 	return t.conn.Write(b)
 }

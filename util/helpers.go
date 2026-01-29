@@ -82,17 +82,6 @@ func compactHumanSize(v int64) string {
 	return core.CompactHumanSize(v)
 }
 
-func blockTypeString(t uint8) string {
-	switch t {
-	case core.BlockDataTypeRaw:
-		return "raw"
-	case core.BlockDataTypeZlib:
-		return "zlib"
-	default:
-		return fmt.Sprintf("unknown(0x%x)", t)
-	}
-}
-
 // renameIfExists renames src to dst if src exists. Returns nil when src is
 // absent, aborts on unexpected stat or rename failures.
 func renameIfExists(src, dst string) {

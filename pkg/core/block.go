@@ -101,7 +101,8 @@ func (b *HashboxBlock) HashData() (BlockID Byte128) {
 	//	WriteUint8(hash, b.DataType)   not part of the hash
 
 	WriteUint32(hash, uint32(b.Data.Len()))
-	b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	AbortOn(err)
 	CopyOrPanic(hash, &b.Data)
 
 	copy(BlockID[:], hash.Sum(nil)[:16])
@@ -125,7 +126,8 @@ func (b *HashboxBlock) UncompressData() {
 		}
 		b.UncompressedSize = b.Data.Len()
 	}
-	b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	AbortOn(err)
 }
 
 func (b *HashboxBlock) CompressData() {
@@ -143,7 +145,8 @@ func (b *HashboxBlock) CompressData() {
 		}
 		b.CompressedSize = b.Data.Len()
 	}
-	b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	AbortOn(err)
 }
 
 func (b *HashboxBlock) VerifyBlock() bool {
@@ -171,16 +174,18 @@ func (b *HashboxBlock) VerifyBlock() bool {
 }
 
 func (b *HashboxBlock) zlibCompress() (dst bytearray.ByteArray) {
-	b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	AbortOn(err)
 	zw := zpool.GetWriter(&dst)
 	CopyOrPanic(zw, &b.Data)
-	err := zw.Close()
+	err = zw.Close()
 	AbortOn(err)
 	zpool.PutWriter(zw)
 	return dst
 }
 func (b *HashboxBlock) zlibUncompress() bytearray.ByteArray {
-	b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	AbortOn(err)
 	zr, err := zlib.NewReader(&b.Data)
 	AbortOn(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	defer func() {

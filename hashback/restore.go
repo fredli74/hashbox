@@ -57,7 +57,8 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 	// TODO: Decrypt block
 
 	d := block.Data
-	d.ReadSeek(0, io.SeekStart)
+	_, err := d.ReadSeek(0, io.SeekStart)
+	core.AbortOn(err)
 	core.CopyOrPanic(f, &d)
 	session.WriteData += int64(d.Len())
 	d.Release()
@@ -221,17 +222,22 @@ func (session *BackupSession) diffAndPrint(startOffset int64, A io.Reader, B io.
 	bufA := make([]byte, 16)
 	bufB := make([]byte, 16)
 	for offset := startOffset; ; {
-		nA, err := A.Read(bufA)
+		nA, errA := A.Read(bufA)
+		if errA != nil && errA != io.EOF {
+			core.AbortOn(errA)
+		}
 		if nA == 0 {
 			return true
 		}
-		nB, err := B.Read(bufB[:nA])
+		nB, errB := B.Read(bufB[:nA])
+		if errB != nil && errB != io.EOF {
+			core.AbortOn(errB)
+		}
 		if nA != nB {
-			core.AbortOn(err)
 			panic(errors.New("Unable to read local file"))
 		}
 
-		if bytes.Compare(bufA[:nA], bufB[:nA]) != 0 {
+		if !bytes.Equal(bufA[:nA], bufB[:nA]) {
 			session.Log("local:  %s", hexdumpLine(offset, bufA[:nA]))
 			session.Log("remote: %s", hexdumpLine(offset, bufB[:nB]))
 			return false
@@ -257,8 +263,10 @@ func (session *BackupSession) diffFileData(f *os.File, blockID core.Byte128, Dec
 	d := block.Data
 	defer d.Release()
 
-	d.ReadSeek(0, io.SeekStart)
-	offset, _ := f.Seek(0, io.SeekCurrent)
+	_, err := d.ReadSeek(0, io.SeekStart)
+	core.AbortOn(err)
+	offset, err := f.Seek(0, io.SeekCurrent)
+	core.AbortOn(err)
 
 	if !session.diffAndPrint(offset, &d, f) {
 		return false

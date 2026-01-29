@@ -55,8 +55,6 @@ type Client struct {
 	RetryWait  time.Duration // interval between retries
 	retryCount int           // total retries this session
 
-	sendMutex sync.Mutex // protects from two threads sending at the same time
-
 	// mutex protected
 	dispatchMutex  sync.Mutex
 	closing        bool
@@ -482,7 +480,7 @@ func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChan
 		select {
 		case c.dispatchChannel <- &messageDispatch{msg: &ProtocolMessage{Type: msgType, Data: msgData}, returnChannel: returnChannel}:
 			return
-		case err, _ := <-c.errorChannel:
+		case err := <-c.errorChannel:
 			if c.lastError != nil {
 				panic(c.lastError)
 			}
@@ -600,8 +598,6 @@ func (c *Client) Done() bool {
 	defer c.dispatchMutex.Unlock()
 	return c.closing || len(c.blockQueueMap) == 0
 }
-
-const hashPadding_accesskey = "*ACCESS*KEY*PAD*" // TODO: move to client source
 
 // binary.BigEndian.Get and binary.BigEndian.Put  much faster than
 // binary.Read and binary.Write

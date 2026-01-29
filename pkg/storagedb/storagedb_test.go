@@ -20,7 +20,9 @@ func TestStoreWriteReadBlock(t *testing.T) {
 	t.Cleanup(store.Close)
 
 	var data bytearray.ByteArray
-	data.Write([]byte("storagedb-smoke-data-12345"))
+	if _, err := data.Write([]byte("storagedb-smoke-data-12345")); err != nil {
+		t.Fatal(err)
+	}
 	block := core.NewHashboxBlock(core.BlockDataTypeZlib, data, nil)
 	originalID := block.BlockID
 
@@ -55,7 +57,9 @@ func TestStoreWriteReadBlock(t *testing.T) {
 	}
 
 	loaded.UncompressData()
-	loaded.Data.ReadSeek(0, bytearray.SEEK_SET)
+	if _, err := loaded.Data.ReadSeek(0, bytearray.SEEK_SET); err != nil {
+		t.Fatal(err)
+	}
 	readBytes, _ := loaded.Data.ReadSlice()
 	if string(readBytes) != "storagedb-smoke-data-12345" {
 		t.Fatalf("stored block data mismatch: %q", string(readBytes))

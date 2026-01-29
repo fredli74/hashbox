@@ -23,7 +23,8 @@ func GenerateBackupKey(account string, password string) Byte128 {
 }
 func GenerateDataEncryptionKey() Byte128 {
 	var key Byte128
-	rand.Read(key[:])
+	_, err := rand.Read(key[:])
+	AbortOn(err)
 	return key
 }
 func DecryptDataInPlace(cipherdata []byte, key Byte128) {

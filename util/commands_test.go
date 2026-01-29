@@ -141,7 +141,9 @@ func appendState(t *testing.T, store *accountdb.Store, acc core.Byte128, dataset
 func bytearrayFromBytes(t *testing.T, b []byte) bytearray.ByteArray {
 	t.Helper()
 	var ba bytearray.ByteArray
-	ba.Write(b)
+	if _, err := ba.Write(b); err != nil {
+		t.Fatal(err)
+	}
 	return ba
 }
 

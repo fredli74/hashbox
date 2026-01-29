@@ -17,7 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"sync"
+	"syscall"
 	"time"
 
 	"net/http"
@@ -43,8 +43,6 @@ var storageHandler *StorageHandler
 
 var done chan bool
 
-var logLock sync.Mutex
-
 func handleConnection(conn net.Conn) {
 	remoteID := conn.RemoteAddr().String()
 	core.Log(core.LogInfo, "%s - Connection established", remoteID)
@@ -63,7 +61,9 @@ func handleConnection(conn net.Conn) {
 	var sessionAuthenticated = false
 
 	for keepAlive := true; keepAlive; {
-		conn.SetReadDeadline(time.Now().Add(10 * time.Minute)) // max size 512kb over 10 minutes is slower than 9600bps so we should be safe
+		if err := conn.SetReadDeadline(time.Now().Add(10 * time.Minute)); err != nil {
+			core.AbortOn(err)
+		} // max size 512kb over 10 minutes is slower than 9600bps so we should be safe
 		// TODO: testing non-idle of 10s between commands
 
 		unauthorized := false
@@ -90,7 +90,8 @@ func handleConnection(conn net.Conn) {
 				} else {
 					// Create server nonce using  64-bit time and 64-bit random
 					binary.BigEndian.PutUint64(clientSession.SessionNonce[0:], uint64(time.Now().UnixNano()))
-					rand.Read(clientSession.SessionNonce[8:])
+					_, err := rand.Read(clientSession.SessionNonce[8:])
+					core.AbortOn(err)
 					reply.Data = &core.MsgServerGreeting{SessionNonce: clientSession.SessionNonce}
 				}
 			case core.MsgTypeAuthenticate:
@@ -117,7 +118,8 @@ func handleConnection(conn net.Conn) {
 								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
 								reply.Data = &core.MsgServerError{ErrorMessage: "Dataset pointing to a non existent block"}
 							} else {
-								accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State)
+								err := accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State)
+								core.AbortOn(err)
 								// No need to set any data in reply
 							}
 						}
@@ -125,7 +127,8 @@ func handleConnection(conn net.Conn) {
 						c := incoming.Data.(*core.MsgClientRemoveDatasetState)
 						unauthorized = c.AccountNameH != clientSession.AccountNameH // TODO: admin support for other accounts hashes?
 						if !unauthorized {
-							accountHandler.RemoveDatasetState(c.AccountNameH, c.DatasetName, c.StateID)
+							err := accountHandler.RemoveDatasetState(c.AccountNameH, c.DatasetName, c.StateID)
+							core.AbortOn(err)
 							// No need to set any data in reply
 						}
 					case core.MsgTypeListDataset:
@@ -281,8 +284,7 @@ func run() (returnValue int) {
 
 		signalchan := make(chan os.Signal, 1)
 		defer close(signalchan)
-		signal.Notify(signalchan, os.Interrupt)
-		signal.Notify(signalchan, os.Kill)
+		signal.Notify(signalchan, os.Interrupt, syscall.SIGTERM)
 		go func() {
 			for s := range signalchan {
 				core.Log(core.LogInfo, "Received OS signal: %v", s)
@@ -343,7 +345,9 @@ func run() (returnValue int) {
 		core.EncryptDataInPlace(dataEncryptionKey[:], core.GenerateBackupKey(cmd.Args[2], cmd.Args[3]))
 
 		var blockData bytearray.ByteArray
-		blockData.Write(dataEncryptionKey[:])
+		if _, err := blockData.Write(dataEncryptionKey[:]); err != nil {
+			core.AbortOn(err)
+		}
 		block := core.NewHashboxBlock(core.BlockDataTypeRaw, blockData, nil)
 		if !storageHandler.writeBlock(block) {
 			core.Abort("Error writing key block")
@@ -464,11 +468,10 @@ func run() (returnValue int) {
 		core.Log(core.LogInfo, "Verifying dataset storage")
 
 		verifiedBlocks := make(map[core.Byte128]bool) // Keep track of verifiedBlocks blocks
-		rootlist := []BlockSource{}
 		if !optReadOnly {
 			accountHandler.RebuildAccountFiles()
 		}
-		rootlist = accountHandler.CollectAllRootBlocks(false)
+		rootlist := accountHandler.CollectAllRootBlocks(false)
 
 		for i, r := range rootlist {
 			tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])

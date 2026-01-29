@@ -65,7 +65,8 @@ func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx
 	tx.Serialize(lock)
 	// Explicit fsync to persist the append before releasing the lock; Close alone
 	// does not guarantee durability.
-	core.AbortOn(lock.Sync())
+	err = lock.Sync()
+	core.AbortOn(err)
 }
 
 // AppendAddState appends an add tx with current timestamp.
@@ -148,7 +149,8 @@ func (fs *Store) WriteTrnFile(accountNameH core.Byte128, datasetName core.String
 		tx.Serialize(lock)
 	}
 	// Explicit fsync to persist the rewritten log before releasing the lock.
-	core.AbortOn(lock.Sync())
+	err = lock.Sync()
+	core.AbortOn(err)
 }
 
 // TxReader is a tolerant streaming reader over a .trn file.

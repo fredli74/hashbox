@@ -116,15 +116,18 @@ func (handler *Store) readIXEntry(blockID core.Byte128) (entry *StorageIXEntry, 
 
 func (handler *Store) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *StorageIXEntry, forceFlush bool) {
 	var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, true)
-	ixFile.Writer.Seek(ixOffset, io.SeekStart)
+	_, err := ixFile.Writer.Seek(ixOffset, io.SeekStart)
+	core.AbortOn(err)
 	finalFlags := entry.flags
 	entry.flags |= entryFlagInvalid // Write record as invalid first
 	entry.Serialize(ixFile.Writer)
 
-	ixFile.Writer.Seek(ixOffset, io.SeekStart)
+	_, err = ixFile.Writer.Seek(ixOffset, io.SeekStart)
+	core.AbortOn(err)
 	core.WriteUint16(ixFile.Writer, finalFlags) // Write correct flags
-	if forceFlush == true {
-		ixFile.Sync()
+	if forceFlush {
+		err = ixFile.Sync()
+		core.AbortOn(err)
 	}
 	core.Log(core.LogTrace, "writeIXEntry %x:%x", ixFileNumber, ixOffset)
 }

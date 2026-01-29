@@ -49,7 +49,8 @@ func (handler *Store) MarkIndexes(roots []core.Byte128, Paint bool) {
 				core.Abort("Error marking index entry in file %x, offset %x, file does not exist", ixFileNumber, ixOffset)
 			}
 
-			ixFile.Writer.Seek(ixOffset, io.SeekStart)
+			_, err = ixFile.Writer.Seek(ixOffset, io.SeekStart)
+			core.AbortOn(err)
 			core.WriteUint16(ixFile.Writer, entry.flags)
 
 			visited[blockID] = true // Mark that we do not need to check this block again
@@ -124,7 +125,8 @@ func (handler *Store) SweepIndexes(Paint bool) {
 						core.Abort("findIXOffset for %x (%x:%x) returned an invalid offset %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
 					}
 				}
-				ixFile.Writer.Seek(offset, io.SeekStart)
+				_, err = ixFile.Writer.Seek(offset, io.SeekStart)
+				core.AbortOn(err)
 				core.WriteUint16(ixFile.Writer, entry.flags)
 			}
 
@@ -145,6 +147,7 @@ func (handler *Store) SweepIndexes(Paint bool) {
 func (handler *Store) CompactIndexes(Paint bool) {
 	var blankEntry StorageIXEntry
 	clearedBlocks := 0
+	var err error
 
 	for ixFileNumber := int32(0); ; ixFileNumber++ {
 		var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
@@ -157,7 +160,7 @@ func (handler *Store) CompactIndexes(Paint bool) {
 			core.Log(core.LogInfo, "Compacting index file #%d (%s)", ixFileNumber, core.HumanSize(ixSize))
 		}
 
-		_, err := ixFile.Reader.Seek(storageFileHeaderSize, io.SeekStart)
+		_, err = ixFile.Reader.Seek(storageFileHeaderSize, io.SeekStart)
 		core.AbortOn(err)
 
 		truncPoint := int64(storageFileHeaderSize)
@@ -169,7 +172,8 @@ func (handler *Store) CompactIndexes(Paint bool) {
 
 			if entry.flags&entryFlagInvalid == entryFlagInvalid {
 				clearedBlocks++
-				ixFile.Writer.Seek(offset, io.SeekStart)
+				_, err = ixFile.Writer.Seek(offset, io.SeekStart)
+				core.AbortOn(err)
 				blankEntry.Serialize(ixFile.Writer)
 				core.Log(core.LogDebug, "Cleared index at %x:%x", ixFileNumber, offset)
 			} else if entry.flags&entryFlagExists == entryFlagExists {
@@ -187,7 +191,8 @@ func (handler *Store) CompactIndexes(Paint bool) {
 
 		if truncPoint < ixSize {
 			core.Log(core.LogDebug, "Truncating index file #%d at %x", ixFileNumber, truncPoint)
-			ixFile.Writer.File.Truncate(truncPoint)
+			err := ixFile.Writer.File.Truncate(truncPoint)
+			core.AbortOn(err)
 		}
 	}
 	if Paint {

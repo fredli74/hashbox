@@ -89,11 +89,14 @@ func (handler *Store) writeMetaEntry(metaFileNumber int32, metaOffset int64, ent
 		metaFileNumber, metaOffset, metaFile = handler.findFreeOffset(storageFileTypeMeta, -1)
 	} else {
 		metaFile = handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
-		metaFile.Writer.Seek(metaOffset, io.SeekStart)
+		_, err := metaFile.Writer.Seek(metaOffset, io.SeekStart)
+		core.AbortOn(err)
 	}
-	data.WriteTo(metaFile.Writer)
+	_, err := data.WriteTo(metaFile.Writer)
+	core.AbortOn(err)
 	// flush notice: always force a flush because index will be updated next and it must point to something
-	metaFile.Sync()
+	err = metaFile.Sync()
+	core.AbortOn(err)
 	core.Log(core.LogTrace, "writeMetaEntry %x:%x", metaFileNumber, metaOffset)
 
 	return metaFileNumber, metaOffset
@@ -103,14 +106,14 @@ func (handler *Store) readMetaEntry(metaFileNumber int32, metaOffset int64) (met
 		if r := recover(); r != nil {
 			err = r.(error)
 		}
-		return
 	}()
 
 	metaFile := handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
 	if metaFile == nil {
 		return nil, fmt.Errorf("Error reading metadata cache from file %x, file does not exist", metaFileNumber)
 	}
-	metaFile.Reader.Seek(metaOffset, io.SeekStart)
+	_, err = metaFile.Reader.Seek(metaOffset, io.SeekStart)
+	core.AbortOn(err)
 
 	metaEntry = new(StorageMetaEntry)
 	metaEntry.Unserialize(metaFile.Reader)

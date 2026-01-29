@@ -55,6 +55,7 @@ func (e *StorageDataEntry) Unserialize(r io.Reader) (size int) {
 }
 func (e *StorageDataEntry) VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool {
 	ixEntry, _, _, err := handler.readIXEntry(e.block.BlockID)
+	core.AbortOn(err)
 	metaFileNumber, metaOffset := ixEntry.location.Get()
 	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
 	core.AbortOn(err)
@@ -81,9 +82,11 @@ func (handler *Store) writeBlockFile(block *core.HashboxBlock) bool {
 	dataEntry := StorageDataEntry{block: block}
 	var data = new(bytes.Buffer)
 	dataSize := uint32(dataEntry.Serialize(data))
-	data.WriteTo(datFile.Writer)
+	_, err = data.WriteTo(datFile.Writer)
+	core.AbortOn(err)
 	// flush notice: manually flush datFile before creating the meta entry
-	datFile.Sync()
+	err = datFile.Sync()
+	core.AbortOn(err)
 
 	metaEntry := StorageMetaEntry{blockID: block.BlockID, DataSize: dataSize, Links: block.Links}
 	metaEntry.location.Set(datFileNumber, datOffset)
@@ -116,7 +119,8 @@ func (handler *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, e
 	if dataFile == nil {
 		core.Abort("Error reading block from file %x, file does not exist", dataFileNumber)
 	}
-	dataFile.Reader.Seek(dataOffset, io.SeekStart)
+	_, err = dataFile.Reader.Seek(dataOffset, io.SeekStart)
+	core.AbortOn(err)
 
 	var dataEntry StorageDataEntry
 	dataEntry.Unserialize(dataFile.Reader)

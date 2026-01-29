@@ -27,6 +27,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -566,7 +567,7 @@ func main() {
 				ignore.match = ignore.match[:len(ignore.match)-1]
 				ignore.dirmatch = true
 			}
-			if strings.IndexRune(ignore.match, os.PathSeparator) >= 0 { // path in pattern
+			if strings.ContainsRune(ignore.match, os.PathSeparator) { // path in pattern
 				ignore.pathmatch = true
 			}
 
@@ -760,8 +761,7 @@ func main() {
 
 	signalchan := make(chan os.Signal, 1)
 	defer close(signalchan)
-	signal.Notify(signalchan, os.Interrupt)
-	signal.Notify(signalchan, os.Kill)
+	signal.Notify(signalchan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		for range signalchan {
 			if session != nil {
@@ -787,7 +787,8 @@ func GenerateBackupKey(account string, password string) core.Byte128 {
 }
 func GenerateDataEncryptionKey() core.Byte128 {
 	var key core.Byte128
-	rand.Read(key[:])
+	_, err := rand.Read(key[:])
+	core.AbortOn(err)
 	return key
 }
 func DecryptDataInPlace(cipherdata []byte, key core.Byte128) {

@@ -61,7 +61,8 @@ func randomMsgString() String {
 
 func randomHashboxBlock() (b HashboxBlock) {
 	b.DataType = BlockDataTypeRaw
-	b.Data.Write([]byte(randomMsgString()))
+	_, err := b.Data.Write([]byte(randomMsgString()))
+	AbortOn(err, "b.Data.Write: %v", err)
 	b.Links = append(b.Links, randomByte128())
 	b.UncompressedSize = -1
 	b.BlockID = b.HashData()

@@ -37,5 +37,6 @@ func OpenFile(path string, flag int, perm os.FileMode) (*LockableFile, error) {
 // Close releases any lock (via close) and closes the file.
 func (l *LockableFile) Close() {
 	core.ASSERT(l != nil && l.File != nil, "Close called on nil file")
-	core.AbortOn(l.File.Close())
+	err := l.File.Close()
+	core.AbortOn(err)
 }

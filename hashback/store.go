@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -119,7 +118,8 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 
 		// Fill the fileData buffer
 		core.CopyNOrPanic(&fileData, file, maxBlockSize-fileData.Len())
-		fileData.ReadSeek(0, io.SeekCurrent) // TODO: figure out why this line is here because I do not remember
+		_, err := fileData.ReadSeek(0, io.SeekCurrent) // TODO: figure out why this line is here because I do not remember
+		core.AbortOn(err)
 
 		var splitPosition int = fileData.Len()
 		if fileData.Len() > MIN_BLOCK_SIZE*2 { // Candidate for rolling sum split
@@ -546,13 +546,13 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 		var throwAway bool
 		var reason string
 
-		if i < len(list.States)-2 && (timenow - timestamp) > (24*60*60)  && (!retainYearly || year == lastbackupYear) {
+		if i < len(list.States)-2 && (timenow-timestamp) > (24*60*60) && (!retainYearly || year == lastbackupYear) {
 			// Not the last or current backup, older than 1 day and not the last of the year (if yearly retention is on)
-			
+
 			if date == lastbackupDate {
 				throwAway = true
 				reason = fmt.Sprintf("keeping only one daily, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
-			} else if lastbackupDate - date < 7*24*60*60 && date < dailyLimit {
+			} else if lastbackupDate-date < 7*24*60*60 && date < dailyLimit {
 				throwAway = true
 				reason = fmt.Sprintf("keeping only one weekly, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
 			} else if weeklyLimit < dailyLimit && date < weeklyLimit {
@@ -763,12 +763,16 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 	{
 		var resumeFileList []os.FileInfo
 		recoverMatch := fmt.Sprintf("%s.partial.*.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
-		filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+		err := filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
 			if match, _ := filepath.Match(recoverMatch, info.Name()); match {
 				resumeFileList = append(resumeFileList, info)
 			}
 			return nil
 		})
+		core.AbortOn(err)
 		sort.Slice(resumeFileList, func(i, j int) bool {
 			return resumeFileList[i].ModTime().Before(resumeFileList[j].ModTime())
 		})
@@ -805,7 +809,6 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 			r.downloadReference(*rootBlockID)
 		}
 	}
-	return
 }
 
 func (r *referenceEngine) popChannelEntry() *FileEntry {
@@ -897,10 +900,12 @@ func (r *referenceEngine) storeReference(entry *FileEntry) {
 
 func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
 	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent == nil on storeReferenceDir in an active referenceEngine")
-	r.cacheCurrent.Seek(location, io.SeekStart)
+	_, err := r.cacheCurrent.Seek(location, io.SeekStart)
+	core.AbortOn(err)
 	entry.Serialize(r.cacheCurrent)
 
-	r.cacheCurrent.Seek(0, io.SeekEnd)
+	_, err = r.cacheCurrent.Seek(0, io.SeekEnd)
+	core.AbortOn(err)
 	entryEOD.Serialize(r.cacheCurrent)
 }
 
@@ -911,7 +916,10 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 	newCachePath := r.cacheFilePathName(rootID)
 
 	cleanup := fmt.Sprintf("%s.*.cache*", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
-	filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 		if path == tempPath {
 			// Current temp cache, do not delete it
 			return nil
@@ -921,12 +929,15 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 		}
 		return nil
 	})
+	core.AbortOn(err)
 	r.cacheCurrent.Close()
-	os.Rename(tempPath, newCachePath)
+	err = os.Rename(tempPath, newCachePath)
+	core.AbortOn(err)
 	r.cacheCurrent = nil
 }
 func (r *referenceEngine) Close() {
 	r.stop()
+	var err error
 
 	// If not commited, we need to close and save the current cache
 	if r.cacheCurrent != nil {
@@ -947,7 +958,8 @@ func (r *referenceEngine) Close() {
 		})()
 
 		core.Log(core.LogDebug, "Saving %s as recovery cache %s", currentName, partialName)
-		os.Rename(currentName, partialName)
+		err = os.Rename(currentName, partialName)
+		core.AbortOn(err)
 	}
 }
 func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *referenceEngine {
@@ -957,7 +969,7 @@ func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *refe
 	}
 
 	var err error
-	r.cacheCurrent, err = ioutil.TempFile(LocalStoragePath, r.cacheName("temp.*"))
+	r.cacheCurrent, err = os.CreateTemp(LocalStoragePath, r.cacheName("temp.*"))
 	core.AbortOn(err)
 
 	return r

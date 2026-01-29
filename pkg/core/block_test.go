@@ -15,12 +15,16 @@ import (
 func TestBlockCompressVerifyAndUncompress(t *testing.T) {
 	var data bytearray.ByteArray
 	for i := 0; i < 1000; i++ {
-		data.Write([]byte("lots-of-repeated-data-1234567890-"))
+		if _, err := data.Write([]byte("lots-of-repeated-data-1234567890-")); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	block := NewHashboxBlock(BlockDataTypeZlib, data, nil)
 	originalID := block.BlockID
-	block.Data.ReadSeek(0, bytearray.SEEK_SET)
+	if _, err := block.Data.ReadSeek(0, bytearray.SEEK_SET); err != nil {
+		t.Fatal(err)
+	}
 	originalBytes, _ := block.Data.ReadSlice()
 	originalCopy := append([]byte(nil), originalBytes...) // keep a copy before compressing
 
@@ -50,7 +54,9 @@ func TestBlockCompressVerifyAndUncompress(t *testing.T) {
 
 func TestHashDataPanicsWhenCompressed(t *testing.T) {
 	var data bytearray.ByteArray
-	data.Write([]byte("hash-me"))
+	if _, err := data.Write([]byte("hash-me")); err != nil {
+		t.Fatal(err)
+	}
 	block := NewHashboxBlock(BlockDataTypeZlib, data, nil)
 	block.CompressData()
 
@@ -64,7 +70,9 @@ func TestHashDataPanicsWhenCompressed(t *testing.T) {
 
 func TestVerifyBlockFailsWhenCompressedDataCorrupt(t *testing.T) {
 	var data bytearray.ByteArray
-	data.Write([]byte("compress-me"))
+	if _, err := data.Write([]byte("compress-me")); err != nil {
+		t.Fatal(err)
+	}
 	block := NewHashboxBlock(BlockDataTypeZlib, data, nil)
 	block.CompressData()
 
@@ -77,11 +85,15 @@ func TestVerifyBlockFailsWhenCompressedDataCorrupt(t *testing.T) {
 
 func TestVerifyBlockFailsWhenUncompressedDataCorrupt(t *testing.T) {
 	var data bytearray.ByteArray
-	data.Write([]byte("plain-data"))
+	if _, err := data.Write([]byte("plain-data")); err != nil {
+		t.Fatal(err)
+	}
 	block := NewHashboxBlock(BlockDataTypeRaw, data, nil)
 
 	// Corrupt the raw payload
-	block.Data.ReadSeek(0, bytearray.SEEK_SET)
+	if _, err := block.Data.ReadSeek(0, bytearray.SEEK_SET); err != nil {
+		t.Fatal(err)
+	}
 	if buf, _ := block.Data.ReadSlice(); len(buf) > 0 {
 		buf[0] ^= 0xFF
 	}
@@ -92,7 +104,9 @@ func TestVerifyBlockFailsWhenUncompressedDataCorrupt(t *testing.T) {
 
 func TestVerifyBlockFailsWhenLinksCorrupt(t *testing.T) {
 	var data bytearray.ByteArray
-	data.Write([]byte("linked"))
+	if _, err := data.Write([]byte("linked")); err != nil {
+		t.Fatal(err)
+	}
 	var link Byte128
 	copy(link[:], []byte("link-123456789012"))
 	block := NewHashboxBlock(BlockDataTypeRaw, data, []Byte128{link})
