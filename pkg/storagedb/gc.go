@@ -298,7 +298,7 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 	}
 
 	if highWaterMark < fileSize {
-		file.Writer.File.Truncate(highWaterMark)
+		core.AbortOnError(file.Writer.File.Truncate(highWaterMark))
 		handler.setDeadSpace(fileType, fileNumber, 0, false)
 		core.Log(core.LogInfo, "Released %s (%s deleted, %s moved) from file %s (size %s)", core.HumanSize(offset-highWaterMark), core.HumanSize(deleted), core.HumanSize(moved), file.Path, core.HumanSize(highWaterMark))
 	} else {
