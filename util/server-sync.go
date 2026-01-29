@@ -178,7 +178,11 @@ func writeStateFile(f *lockablefile.LockableFile, path string, state map[string]
 	core.AbortOn(err, "truncate %s: %v", path, err)
 }
 
-func getSyncStateWatermark(dataPath, syncID string, datasetName core.String) int64 {
+func syncStateKey(accountHash core.Byte128, datasetName core.String) string {
+	return accountdb.DatasetFilename(accountHash, datasetName)
+}
+
+func getSyncStateWatermark(dataPath, syncID string, accountHash core.Byte128, datasetName core.String) int64 {
 	path := syncStatePath(dataPath, syncID)
 	f, err := lockablefile.Open(path)
 	if err != nil {
@@ -193,7 +197,7 @@ func getSyncStateWatermark(dataPath, syncID string, datasetName core.String) int
 	defer f.Unlock()
 
 	state := readStateFile(f, path)
-	key := formatHash(core.Hash([]byte(datasetName)))
+	key := syncStateKey(accountHash, datasetName)
 	if v, ok := state[key]; ok {
 		core.Log(core.LogTrace, "state offset for %s[%s]=%d", path, datasetName, v)
 		return v
@@ -202,7 +206,7 @@ func getSyncStateWatermark(dataPath, syncID string, datasetName core.String) int
 	return 0
 }
 
-func setSyncStateWatermark(dataPath, syncID string, datasetName core.String, position int64) {
+func setSyncStateWatermark(dataPath, syncID string, accountHash core.Byte128, datasetName core.String, position int64) {
 	path := syncStatePath(dataPath, syncID)
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
 	core.AbortOn(err, "mkdir %s: %v", filepath.Dir(path), err)
@@ -212,12 +216,12 @@ func setSyncStateWatermark(dataPath, syncID string, datasetName core.String, pos
 	f.Lock()
 	defer f.Unlock()
 	state := readStateFile(f, path)
-	key := formatHash(core.Hash([]byte(datasetName)))
+	key := syncStateKey(accountHash, datasetName)
 	state[key] = position
 	writeStateFile(f, path, state)
 }
 
-func resetSyncWatermarks(dataDir string, datasetName core.String) {
+func resetSyncWatermarks(dataDir string, accountHash core.Byte128, datasetName core.String) {
 	dir := syncDir(dataDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -227,7 +231,7 @@ func resetSyncWatermarks(dataDir string, datasetName core.String) {
 		core.AbortOn(err, "read sync dir: %v", err)
 	}
 
-	key := formatHash(core.Hash([]byte(datasetName)))
+	key := syncStateKey(accountHash, datasetName)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -330,7 +334,7 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 	core.AbortOn(err, "open trn %s:%s", sync.accountName(accountHash), datasetName)
 	defer reader.Close()
 
-	position := getSyncStateWatermark(sync.dataDB.DataDir, sync.syncID, datasetName)
+	position := getSyncStateWatermark(sync.dataDB.DataDir, sync.syncID, accountHash, datasetName)
 	core.Log(core.LogDebug, "sync start %s:%s from offset %d", sync.accountName(accountHash), datasetName, position)
 	if position > 0 {
 		_, err := reader.Seek(position, io.SeekStart)
@@ -352,7 +356,7 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 			remoteStateCache.invalidate()
 		case accountdb.DbTxTypeAdd:
 			stateObj := tx.Data.(core.DatasetState)
-			if sync.hasLaterDelete(reader, stateObj.StateID) {
+			if hasLaterDelete(reader, stateObj.StateID) {
 				core.Log(core.LogTrace, "Skipping add %s:%s stateID %x (later delete exists)", sync.accountName(accountHash), datasetName, stateObj.StateID[:])
 				break
 			}
@@ -369,12 +373,12 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 		if !sync.dryRun {
 			pos, err := reader.Pos()
 			core.AbortOn(err, "pos trn %s:%s: %v", sync.accountName(accountHash), datasetName, err)
-			setSyncStateWatermark(sync.dataDB.DataDir, sync.syncID, datasetName, pos)
+			setSyncStateWatermark(sync.dataDB.DataDir, sync.syncID, accountHash, datasetName, pos)
 		}
 	}
 }
 
-func (sync *syncSession) hasLaterDelete(reader *accountdb.TxReader, stateID core.Byte128) bool {
+func hasLaterDelete(reader *accountdb.TxReader, stateID core.Byte128) bool {
 	returnPos, err := reader.Pos()
 	core.AbortOn(err, "seek trn")
 	defer func() {
