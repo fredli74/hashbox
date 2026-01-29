@@ -244,10 +244,10 @@ func (c *commandSet) deleteDataset(accountName, dataset string) {
 	core.AbortOn(err, "resolve account: %v", err)
 	datasetName, err := resolveDatasetName(store, accountNameH, dataset)
 	core.AbortOn(err, "resolve dataset: %v", err)
-	txPath := store.DatasetFilename(accountNameH, datasetName) + accountdb.DbFileExtensionTransaction
+	txPath := store.DatasetFilepath(accountNameH, datasetName) + accountdb.DbFileExtensionTransaction
 
 	renameIfExists(txPath, txPath+".bak")
-	dbPath := store.DatasetFilename(accountNameH, datasetName) + accountdb.DbFileExtensionDatabase
+	dbPath := store.DatasetFilepath(accountNameH, datasetName) + accountdb.DbFileExtensionDatabase
 
 	renameIfExists(dbPath, dbPath+".bak")
 	store.RebuildAccount(accountNameH)
@@ -292,7 +292,7 @@ func (c *commandSet) moveDataset(srcAccount, srcDataset, dstAccount, dstDataset 
 	srcTxs := store.ReadTrnFile(srcAccH, srcDatasetName)
 	var dstTxs []accountdb.DbTx
 
-	dstPath := store.DatasetFilename(dstAccH, dstDatasetName) + accountdb.DbFileExtensionTransaction
+	dstPath := store.DatasetFilepath(dstAccH, dstDatasetName) + accountdb.DbFileExtensionTransaction
 	if _, err := os.Stat(dstPath); err == nil {
 		dstTxs = store.ReadTrnFile(dstAccH, dstDatasetName)
 		renameIfExists(dstPath, dstPath+".bak")
@@ -310,7 +310,7 @@ func (c *commandSet) moveDataset(srcAccount, srcDataset, dstAccount, dstDataset 
 		}
 	}
 	store.WriteTrnFile(dstAccH, dstDatasetName, merged)
-	resetSyncWatermarks(c.dataDir, dstDatasetName)
+	resetSyncWatermarks(c.dataDir, dstAccH, dstDatasetName)
 	store.RebuildDB(dstAccH, dstDatasetName)
 
 	if srcAccH.Compare(dstAccH) != 0 || srcDatasetName != dstDatasetName {
@@ -328,7 +328,7 @@ func (c *commandSet) purgeStates(accountName, dataset string) {
 	core.AbortOn(err, "resolve dataset: %v", err)
 
 	txs := store.ReadTrnFile(accH, datasetName)
-	path := store.DatasetFilename(accH, datasetName) + accountdb.DbFileExtensionTransaction
+	path := store.DatasetFilepath(accH, datasetName) + accountdb.DbFileExtensionTransaction
 	renameIfExists(path, path+".bak")
 
 outer:
@@ -357,7 +357,7 @@ outer:
 	}
 
 	store.WriteTrnFile(accH, datasetName, txs)
-	resetSyncWatermarks(c.dataDir, datasetName)
+	resetSyncWatermarks(c.dataDir, accH, datasetName)
 	store.RebuildDB(accH, datasetName)
 	fmt.Printf("Purged deleted states from dataset %s\n", core.Escape(datasetName))
 }

@@ -36,7 +36,7 @@ type AccountInfo struct {
 
 // ReadInfoFile loads an account .info file.
 func (fs *Store) ReadInfoFile(accountNameH core.Byte128) *AccountInfo {
-	file, err := os.Open(fs.accountFilename(accountNameH) + ".info")
+	file, err := os.Open(fs.accountFilepath(accountNameH) + ".info")
 	if err != nil {
 		return nil
 	}
@@ -51,7 +51,7 @@ func (fs *Store) ReadInfoFile(accountNameH core.Byte128) *AccountInfo {
 // WriteInfoFile writes an account .info file.
 func (fs *Store) WriteInfoFile(accountNameH core.Byte128, info AccountInfo) {
 	fs.ensureAccountDir()
-	file, err := os.OpenFile(fs.accountFilename(accountNameH)+".info", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
+	file, err := os.OpenFile(fs.accountFilepath(accountNameH)+".info", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer file.Close()
 	info.AccountName.Serialize(file)
@@ -103,7 +103,7 @@ func (fs *Store) updateInfoFile(accountNameH core.Byte128, datasetName core.Stri
 	// Now also update account info
 	info := fs.ReadInfoFile(accountNameH)
 	if info == nil {
-		core.Abort("unable to read account info file %s", fs.accountFilename(accountNameH)+".info")
+		core.Abort("unable to read account info file %s", fs.accountFilepath(accountNameH)+".info")
 	}
 	for i := 0; i < len(info.Datasets); i++ {
 		if info.Datasets[i].Name == datasetName {

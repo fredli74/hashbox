@@ -36,7 +36,7 @@ func forwardToDataMarker(reader *core.BufferedReader) (int64, error) {
 func (handler *Store) CheckStorageFiles() (errorCount int) {
 	for fileType := 0; fileType < len(storageFileTypeInfo); fileType++ {
 		for fileNumber := int32(0); ; fileNumber++ {
-			filename := handler.getNumberedFileName(fileType, fileNumber)
+			filename := handler.getNumberedFilepath(fileType, fileNumber)
 
 			f, err := core.OpenBufferedFile(filename, storageFileTypeInfo[fileType].BufferSize, 0, 0666)
 			if err != nil {

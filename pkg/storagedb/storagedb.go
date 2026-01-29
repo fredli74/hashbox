@@ -113,10 +113,10 @@ func (b *sixByteLocation) Unserialize(r io.Reader) (size int) {
 //                         storage file handling                         //
 //***********************************************************************//
 
-func (store *Store) getNumberedName(fileType int, fileNumber int32) string {
+func getNumberedName(fileType int, fileNumber int32) string {
 	return fmt.Sprintf("%.8X%s", fileNumber, storageFileTypeInfo[fileType].Extension)
 }
-func (store *Store) getNumberedFileName(fileType int, fileNumber int32) string {
+func (store *Store) getNumberedFilepath(fileType int, fileNumber int32) string {
 	var path string
 	switch fileType {
 	case storageFileTypeData:
@@ -126,12 +126,12 @@ func (store *Store) getNumberedFileName(fileType int, fileNumber int32) string {
 	case storageFileTypeMeta:
 		path = store.IndexDir
 	}
-	return filepath.Join(path, store.getNumberedName(fileType, fileNumber))
+	return filepath.Join(path, getNumberedName(fileType, fileNumber))
 }
 func (store *Store) getNumberedFile(fileType int, fileNumber int32, create bool) *core.BufferedFile {
-	name := store.getNumberedName(fileType, fileNumber)
+	name := getNumberedName(fileType, fileNumber)
 	if store.filepool[name] == nil {
-		filename := store.getNumberedFileName(fileType, fileNumber)
+		filename := store.getNumberedFilepath(fileType, fileNumber)
 
 		flag := 0
 		if create {
@@ -171,7 +171,7 @@ func (store *Store) getNumberedFileSize(fileType int, fileNumber int32) (size in
 	if file == nil {
 		return 0, 0, fmt.Errorf("Trying to read free space from %.8X%s which does not exist", fileNumber, storageFileTypeInfo[fileType].Extension)
 	}
-	name := store.getNumberedName(fileType, fileNumber)
+	name := getNumberedName(fileType, fileNumber)
 	return file.Size(), store.filedeadspace[name], nil
 }
 
@@ -199,7 +199,7 @@ func (store *Store) setDeadSpace(fileType int, fileNumber int32, size int64, add
 	}
 
 	// Update the cached entry
-	name := store.getNumberedName(fileType, fileNumber)
+	name := getNumberedName(fileType, fileNumber)
 	if add {
 		store.filedeadspace[name] += size
 	} else {

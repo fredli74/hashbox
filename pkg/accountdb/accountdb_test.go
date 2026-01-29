@@ -69,7 +69,7 @@ func TestTxReaderStopsOnTruncatedEntry(t *testing.T) {
 	store.AppendTx(account, dataset, DbTx{Timestamp: 1, TxType: DbTxTypeAdd, Data: state1})
 	store.AppendTx(account, dataset, DbTx{Timestamp: 2, TxType: DbTxTypeAdd, Data: state2})
 
-	filename := store.DatasetFilename(account, dataset) + DbFileExtensionTransaction
+	filename := store.DatasetFilepath(account, dataset) + DbFileExtensionTransaction
 	info, err := os.Stat(filename)
 	if err != nil {
 		t.Fatalf("stat tx file: %v", err)

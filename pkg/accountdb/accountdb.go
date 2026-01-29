@@ -61,12 +61,16 @@ func (fs *Store) ensureAccountDir() {
 	core.AbortOn(err, "mkdir %s/account: %v", fs.DataDir, err)
 }
 
-func (fs *Store) accountFilename(nameHash core.Byte128) string {
+func (fs *Store) accountFilepath(nameHash core.Byte128) string {
 	name := base64filename(nameHash[:])
 	return filepath.Join(fs.DataDir, "account", name)
 }
 
-func (fs *Store) DatasetFilename(aH core.Byte128, dName core.String) string {
+func DatasetFilename(aH core.Byte128, dName core.String) string {
 	dNameH := core.Hash([]byte(dName))
-	return fs.accountFilename(aH) + "." + base64filename(dNameH[:])
+	return base64filename(aH[:]) + "." + base64filename(dNameH[:])
+}
+
+func (fs *Store) DatasetFilepath(aH core.Byte128, dName core.String) string {
+	return filepath.Join(fs.DataDir, "account", DatasetFilename(aH, dName))
 }

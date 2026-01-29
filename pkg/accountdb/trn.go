@@ -49,7 +49,7 @@ func (t *DbTx) Unserialize(r io.Reader) {
 // Panics on unexpected IO/lock errors.
 func (fs *Store) AppendTx(accountNameH core.Byte128, datasetName core.String, tx DbTx) {
 	fs.ensureAccountDir()
-	filename := fs.DatasetFilename(accountNameH, datasetName) + DbFileExtensionTransaction
+	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionTransaction
 	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer lock.Close()
@@ -81,7 +81,7 @@ func (fs *Store) AppendDelState(accountNameH core.Byte128, datasetName core.Stri
 
 // StateArrayFromTransactions returns current live states by replaying the transaction log.
 func (fs *Store) StateArrayFromTransactions(accountNameH core.Byte128, datasetName core.String) (states core.DatasetStateArray) {
-	filename := fs.DatasetFilename(accountNameH, datasetName) + DbFileExtensionTransaction
+	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionTransaction
 	reader, err := fs.NewTxReader(accountNameH, datasetName)
 	core.AbortOn(err)
 	defer reader.Close()
@@ -136,7 +136,7 @@ func (fs *Store) ReadTrnFile(accountNameH core.Byte128, datasetName core.String)
 // WriteTrnFile truncates and writes a transaction log exclusively.
 func (fs *Store) WriteTrnFile(accountNameH core.Byte128, datasetName core.String, txs []DbTx) {
 	fs.ensureAccountDir()
-	filename := fs.DatasetFilename(accountNameH, datasetName) + DbFileExtensionTransaction
+	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionTransaction
 	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
 	core.AbortOn(err)
 	defer lock.Close()
@@ -160,7 +160,7 @@ type TxReader struct {
 
 // NewTxReader opens and validates a .trn file and returns a reader.
 func (fs *Store) NewTxReader(accountNameH core.Byte128, datasetName core.String) (*TxReader, error) {
-	filename := fs.DatasetFilename(accountNameH, datasetName) + DbFileExtensionTransaction
+	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionTransaction
 	lock, err := lockablefile.Open(filename)
 	if err != nil {
 		return nil, err
