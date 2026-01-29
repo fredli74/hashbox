@@ -46,6 +46,16 @@ hashbox/
 - Write single binaries with minimal runtime dependencies
 - Prioritize performance and efficiency for large-scale data operations
 
+### Project Philosophy
+1. **Follow first principles and design by contract** - Design interfaces with clear contracts and expectations
+2. **Use asserts to catch incorrect usage** - Do not guard-rail invalid input outside the contract
+3. **Panic on unexpected errors** - Only recover when errors are expected (rare)
+4. **Optimize and reduce redundancies** - Split into functions if the same work repeats
+5. **Test, iterate, and test again** - Continuously validate changes through testing
+6. **Second-pass verification** - Ensure all code is needed; delete if possible
+7. **When refactoring, compare logic** - Ensure behavior is unchanged; if changed, explain why
+8. **Avoid aliases/duplicate helpers** - Prefer a single canonical API. Do not keep backward-compat shims unless strictly required, and remove them promptly after migration
+
 ### Code Organization
 - Keep platform-specific code in separate files: `*_windows.go`, `*_unix.go`, and specific files like `hashback_mac.go` when additional platform differentiation is needed
 - Use build tags when necessary for platform-specific functionality
