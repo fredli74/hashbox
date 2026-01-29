@@ -12,11 +12,17 @@ if [ -z "$REMOTE" ]; then
   exit 1
 fi
 
-INCLUDE_OPT=${INCLUDE:+--include "$INCLUDE"}
-EXCLUDE_OPT=${EXCLUDE:+--exclude "$EXCLUDE"}
-DRY_RUN_OPT=${DRY_RUN:+--dry-run}
-
 echo "Running sync to $REMOTE..."
-docker compose run --rm hashbox-util sync "$REMOTE" $INCLUDE_OPT $EXCLUDE_OPT $DRY_RUN_OPT
+set -- "$REMOTE"
+if [ -n "$INCLUDE" ]; then
+  set -- "$@" --include "$INCLUDE"
+fi
+if [ -n "$EXCLUDE" ]; then
+  set -- "$@" --exclude "$EXCLUDE"
+fi
+if [ -n "$DRY_RUN" ]; then
+  set -- "$@" --dry-run
+fi
+docker compose run --rm hashbox-util sync "$@"
 
 echo "Sync complete."
