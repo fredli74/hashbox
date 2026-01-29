@@ -545,9 +545,9 @@ func main() {
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &CustomIgnoreList, cmd.Standard|cmd.Preference)
 	cmd.IntOption("interval", "store", "<minutes>", "Keep running backups every <minutes> until interrupted", &intervalBackup, cmd.Standard)
-	cmd.IntOption("retaindays", "store", "<days>", "Limit retention to <days> of daily backups (one per day), 0 = keep all daily backups (default)", &retainDays, cmd.Standard|cmd.Preference)
-	cmd.IntOption("retainweeks", "store", "<weeks>", "Limit retention to <weeks> of weekly backups (one per week), 0 = keep all weekly backups (default)", &retainWeeks, cmd.Standard|cmd.Preference)
-	cmd.BoolOption("retainyearly", "store", "Always keep one backup per year for archival purposes", &retainYearly, cmd.Standard|cmd.Preference)
+	cmd.IntOption("retaindays", "store", "<days>", "Activate retention, prune backups older than 24h, keep one per day for <days> (default, 0 = keep all daily)", &retainDays, cmd.Standard|cmd.Preference)
+	cmd.IntOption("retainweeks", "store", "<weeks>", "Activate retention, prune backups older than 24h, keep one per week for <weeks> (0 = keep all weekly)", &retainWeeks, cmd.Standard|cmd.Preference)
+	cmd.BoolOption("retainyearly", "store", "Activate retention, prune backups older than 24h, keep the last backup of each year", &retainYearly, cmd.Standard|cmd.Preference)
 	cmd.Command("store", "<dataset> (<folder>|<file>)...", func() {
 		ignoreList := append(DefaultIgnoreList, CustomIgnoreList...)
 		ignoreList = append(ignoreList, filepath.Join(LocalStoragePath, "*.cache*"))
