@@ -241,9 +241,19 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 		offset += skip
 
 		readOffset := offset
-		entrySize := entry.Unserialize(reader)
+		var entrySize int
+		var entryBlockID core.Byte128
+		if err := func() (err interface{}) {
+			defer func() { err = recover() }()
+			entrySize = entry.Unserialize(reader)
+			entryBlockID = entry.BlockID()
+			return nil
+		}(); err != nil {
+			// Handle EOF or corruption at end of file gracefully
+			core.Log(core.LogWarning, "Unable to read entry at %x:%x (%s), stopping compaction at this point", fileNumber, readOffset, err)
+			break
+		}
 		offset += int64(entrySize)
-		entryBlockID := entry.BlockID()
 
 		core.Log(core.LogTrace, "Read %x:%x block %x (%d bytes)", fileNumber, readOffset, entryBlockID[:], entrySize)
 
