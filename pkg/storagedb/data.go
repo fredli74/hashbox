@@ -148,6 +148,11 @@ func skipDataGap(reader *core.BufferedReader) (int64, error) {
 	offset := int64(0)
 	peek, err := reader.Peek(12)
 	if err != nil {
+		// During recovery/compaction, EOF or truncated data should be handled gracefully.
+		// Treat as "no gap marker found" and return 0 bytes skipped.
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return 0, nil
+		}
 		return 0, err
 	}
 	if bytes.Equal(peek[:4], []byte("Cgap")) {
