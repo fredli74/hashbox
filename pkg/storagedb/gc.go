@@ -82,62 +82,68 @@ func (store *Store) SweepIndexes(Paint bool) {
 			core.Log(core.LogInfo, "Sweeping index file #%d (%s)", ixFileNumber, core.HumanSize(ixSize))
 		}
 
-		// Open a separate reader that is not moved by any other routines
-		reader, err := core.OpenBufferedReader(ixFile.Path, 32768, ixFile.Flag)
-		core.AbortOnError(err)
-		_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
-		core.AbortOnError(err)
+		func() {
+			// Open a separate reader that is not moved by any other routines
+			reader, err := core.OpenBufferedReader(ixFile.Path, 32768, ixFile.Flag)
+			core.AbortOnError(err)
+			defer func() {
+				core.AbortOnError(reader.File.Close())
+			}()
 
-		var lastProgress = -1
-		for offset := int64(storageFileHeaderSize); offset < ixSize; offset += storageIXEntrySize {
-			var entry StorageIXEntry
-			entry.Unserialize(reader)
+			_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
+			core.AbortOnError(err)
 
-			if entry.flags&entryFlagInvalid == entryFlagInvalid {
-				core.Log(core.LogDebug, "Skipping invalid block index at %x:%x", ixFileNumber, offset)
-			} else if entry.flags&entryFlagExists == entryFlagExists {
-				if entry.flags&entryFlagMarked == 0 {
-					metaFileNumber, metaOffset := entry.location.Get()
-					sweepedSize += store.killMetaEntry(entry.blockID, metaFileNumber, metaOffset)
+			var lastProgress = -1
+			for offset := int64(storageFileHeaderSize); offset < ixSize; offset += storageIXEntrySize {
+				var entry StorageIXEntry
+				entry.Unserialize(reader)
 
-					// Mark it as invalid as it is now deleted
-					deletedBlocks++
-					entry.flags |= entryFlagInvalid
-					core.Log(core.LogDebug, "Deleted orphan block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
-				} else {
-					entry.flags &^= entryFlagMarked // remove entryFlagMarked
+				if entry.flags&entryFlagInvalid == entryFlagInvalid {
+					core.Log(core.LogDebug, "Skipping invalid block index at %x:%x", ixFileNumber, offset)
+				} else if entry.flags&entryFlagExists == entryFlagExists {
+					if entry.flags&entryFlagMarked == 0 {
+						metaFileNumber, metaOffset := entry.location.Get()
+						sweepedSize += store.killMetaEntry(entry.blockID, metaFileNumber, metaOffset)
 
-					e, eFileNumber, eOffset := store.findIXOffset(entry.blockID, true)
-					if eFileNumber == ixFileNumber && eOffset == offset { // already at best location
-						core.Log(core.LogDebug, "Removed mark from block index at %x:%x", ixFileNumber, offset)
-					} else if e != nil { // obsolete entry
+						// Mark it as invalid as it is now deleted
+						deletedBlocks++
 						entry.flags |= entryFlagInvalid
-						core.Log(core.LogDebug, "Deleted obsolete block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
-					} else if eFileNumber < ixFileNumber {
-						store.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier file
-						entry.flags |= entryFlagInvalid                         // delete old entry
-						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
-					} else if eFileNumber == ixFileNumber && eOffset < offset {
-						store.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier position
-						entry.flags |= entryFlagInvalid                         // delete old entry
-						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x", entry.blockID[:], ixFileNumber, offset, eOffset)
+						core.Log(core.LogDebug, "Deleted orphan block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
 					} else {
-						core.Abort("findIXOffset for %x (%x:%x) returned an invalid offset %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
+						entry.flags &^= entryFlagMarked // remove entryFlagMarked
+
+						e, eFileNumber, eOffset := store.findIXOffset(entry.blockID, true)
+						if eFileNumber == ixFileNumber && eOffset == offset { // already at best location
+							core.Log(core.LogDebug, "Removed mark from block index at %x:%x", ixFileNumber, offset)
+						} else if e != nil { // obsolete entry
+							entry.flags |= entryFlagInvalid
+							core.Log(core.LogDebug, "Deleted obsolete block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
+						} else if eFileNumber < ixFileNumber {
+							store.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier file
+							entry.flags |= entryFlagInvalid                         // delete old entry
+							core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
+						} else if eFileNumber == ixFileNumber && eOffset < offset {
+							store.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier position
+							entry.flags |= entryFlagInvalid                         // delete old entry
+							core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x", entry.blockID[:], ixFileNumber, offset, eOffset)
+						} else {
+							core.Abort("findIXOffset for %x (%x:%x) returned an invalid offset %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
+						}
+					}
+					_, err = ixFile.Writer.Seek(offset, io.SeekStart)
+					core.AbortOnError(err)
+					core.WriteUint16(ixFile.Writer, entry.flags)
+				}
+
+				if ixSize > 0 {
+					p := int(offset * 100 / ixSize)
+					if Paint && p > lastProgress {
+						lastProgress = p
+						fmt.Printf("%d%% %d\r", lastProgress, -deletedBlocks)
 					}
 				}
-				_, err = ixFile.Writer.Seek(offset, io.SeekStart)
-				core.AbortOnError(err)
-				core.WriteUint16(ixFile.Writer, entry.flags)
 			}
-
-			if ixSize > 0 {
-				p := int(offset * 100 / ixSize)
-				if Paint && p > lastProgress {
-					lastProgress = p
-					fmt.Printf("%d%% %d\r", lastProgress, -deletedBlocks)
-				}
-			}
-		}
+		}()
 	}
 	if Paint {
 		core.Log(core.LogInfo, "Removed %d blocks (referencing %s data)", deletedBlocks, core.ShortHumanSize(sweepedSize))

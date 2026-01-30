@@ -361,39 +361,45 @@ func (store *Store) CheckIndexes(verifiedBlocks map[core.Byte128]bool, fullVerif
 			core.Abort("Index file %x size is not evenly divisable by the index entry size, file must be damaged", ixFileNumber)
 		}
 
-		reader, err := core.OpenBufferedReader(ixFile.Path, 32768, ixFile.Flag)
-		core.AbortOnError(err)
-		_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
-		core.AbortOnError(err)
+		func() {
+			reader, err := core.OpenBufferedReader(ixFile.Path, 32768, ixFile.Flag)
+			core.AbortOnError(err)
+			defer func() {
+				core.AbortOnError(reader.File.Close())
+			}()
 
-		lastProgress := -1
-		for offset := int64(storageFileHeaderSize); offset < ixSize; offset += storageIXEntrySize {
-			n := int64(ixEntry.Unserialize(reader))
-			core.ASSERT(n == storageIXEntrySize, n) // ixEntry unserialize broken ?
+			_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
+			core.AbortOnError(err)
 
-			if ixEntry.flags&entryFlagInvalid == entryFlagInvalid {
-				core.Log(core.LogDebug, "Skipping invalid index entry for %x found at %x:%x", ixEntry.blockID[:], ixFileNumber, offset)
-			} else if ixEntry.flags&entryFlagExists == entryFlagExists {
-				o := int64(calculateIXEntryOffset(ixEntry.blockID))
-				if offset < o {
-					core.Abort("Block %x found on an invalid offset %x, it should be >= %x", ixEntry.blockID[:], offset, o)
-				}
+			lastProgress := -1
+			for offset := int64(storageFileHeaderSize); offset < ixSize; offset += storageIXEntrySize {
+				n := int64(ixEntry.Unserialize(reader))
+				core.ASSERT(n == storageIXEntrySize, n) // ixEntry unserialize broken ?
 
-				v, checked := verifiedBlocks[ixEntry.blockID]
-				if !checked {
-					if err := store.checkBlockFromIXEntry(&ixEntry, verifiedBlocks, fullVerify, readOnly); err != nil {
-						core.Log(core.LogWarning, "Block tree for %x was marked invalid: %v", ixEntry.blockID[:], err)
+				if ixEntry.flags&entryFlagInvalid == entryFlagInvalid {
+					core.Log(core.LogDebug, "Skipping invalid index entry for %x found at %x:%x", ixEntry.blockID[:], ixFileNumber, offset)
+				} else if ixEntry.flags&entryFlagExists == entryFlagExists {
+					o := int64(calculateIXEntryOffset(ixEntry.blockID))
+					if offset < o {
+						core.Abort("Block %x found on an invalid offset %x, it should be >= %x", ixEntry.blockID[:], offset, o)
 					}
-				} else {
-					core.ASSERT(v, "Block %x was previously marked invalid", ixEntry.blockID[:])
+
+					v, checked := verifiedBlocks[ixEntry.blockID]
+					if !checked {
+						if err := store.checkBlockFromIXEntry(&ixEntry, verifiedBlocks, fullVerify, readOnly); err != nil {
+							core.Log(core.LogWarning, "Block tree for %x was marked invalid: %v", ixEntry.blockID[:], err)
+						}
+					} else {
+						core.ASSERT(v, "Block %x was previously marked invalid", ixEntry.blockID[:])
+					}
+				}
+
+				p := int(offset * 100 / ixSize)
+				if p > lastProgress {
+					lastProgress = p
+					fmt.Printf("%d%%\r", lastProgress)
 				}
 			}
-
-			p := int(offset * 100 / ixSize)
-			if p > lastProgress {
-				lastProgress = p
-				fmt.Printf("%d%%\r", lastProgress)
-			}
-		}
+		}()
 	}
 }
