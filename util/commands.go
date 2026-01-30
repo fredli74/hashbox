@@ -289,6 +289,9 @@ func (c *commandSet) moveDataset(srcAccount, srcDataset, dstAccount, dstDataset 
 	if resolved, err := resolveDatasetName(store, dstAccH, dstDataset); err == nil {
 		dstDatasetName = resolved
 	}
+	if srcAccH.Compare(dstAccH) == 0 && srcDatasetName == dstDatasetName {
+		core.Abort("source and destination are the same dataset")
+	}
 
 	srcTxs := store.ReadTrnFile(srcAccH, srcDatasetName)
 	var dstTxs []accountdb.DbTx
