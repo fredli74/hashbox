@@ -1,13 +1,14 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2024
+//	| # | |    Copyright 2015-2026
 //	+---+´
 
 package main
 
 import (
 	"github.com/fredli74/bytearray"
-	"github.com/fredli74/hashbox/core"
+	"github.com/fredli74/hashbox/pkg/accountdb"
+	"github.com/fredli74/hashbox/pkg/core"
 
 	"bytes"
 	"crypto/md5"
@@ -15,7 +16,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"os"
 	"reflect"
@@ -36,32 +36,31 @@ func (c FauxServer) Write(data []byte) (n int, err error) { return c.ServerWrite
 func TestCreatingTestServer(t *testing.T) {
 	datDirectory = "./test" // YES! It is a global, and it is ugly, but so are yoU!
 	idxDirectory = "./test"
-	os.Mkdir("./test", 0777)
-	os.Mkdir("./test/account", 0777)
+	if err := os.MkdirAll("./test/account", 0777); err != nil {
+		t.Fatal(err)
+	}
 	accountHandler = NewAccountHandler()
 	storageHandler = NewStorageHandler()
 	/*
 		k := core.Hash([]byte(""))
 		a := AccountInfo{AccountName: "test", AccountKey: k[:]}
 		J, err := json.MarshalIndent(a, "", "\t")
-		if err != nil {
-			panic(err)
-		}
+		core.AbortOnError(err)
 		fmt.Println(string(J))
 	*/
 	go func() {
 		listener, err := net.ListenTCP("tcp", &net.TCPAddr{Port: 1248})
-		if err != nil {
-			panic(err)
-		}
-		defer listener.Close()
+		core.AbortOnError(err)
+		defer func() {
+			core.AbortOnError(listener.Close())
+		}()
 
 		connectionListener(listener)
 	}()
 }
 
 func TestServerTestAccount(t *testing.T) {
-	A := AccountInfo{
+	A := accountdb.AccountInfo{
 		AccountName: "test account",
 		AccessKey:   core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))),
 		Datasets:    core.DatasetArray{},
@@ -70,11 +69,12 @@ func TestServerTestAccount(t *testing.T) {
 	JA, _ := json.Marshal(A)
 
 	B := accountHandler.GetInfo(core.Hash([]byte(A.AccountName)))
-	JB, _ := json.Marshal(*B)
-
 	if B == nil {
 		t.Error("Account not found")
-	} else if string(JA) != string(JB) {
+		return
+	}
+	JB, _ := json.Marshal(*B)
+	if string(JA) != string(JB) {
 		fmt.Println(string(JA))
 		fmt.Println(string(JB))
 		t.Error("Accounts not equal")
@@ -91,13 +91,6 @@ func TestClientServerAuthentication(t *testing.T) {
 	defer client.Close(true)
 }
 
-func randomByte128() (b core.Byte128) {
-	for i := 0; i < 16; i++ {
-		b[i] = byte(rand.Uint32())
-	}
-	return
-}
-
 func TestClientServerDataset(t *testing.T) {
 	client := core.NewClient("127.0.0.1:1248", "test account", core.DeepHmac(20000, append([]byte("test account"), []byte("*ACCESS*KEY*PAD*")...), core.Hash([]byte("password"))))
 	defer client.Close(true)
@@ -105,8 +98,7 @@ func TestClientServerDataset(t *testing.T) {
 	// First make sure there is some data to reference
 	var data bytearray.ByteArray
 	block := core.NewHashboxBlock(core.BlockDataTypeZlib, data, nil)
-	var blockID core.Byte128
-	blockID = client.StoreBlock(block)
+	blockID := client.StoreBlock(block)
 	client.Commit()
 
 	var array core.DatasetStateArray
@@ -149,11 +141,11 @@ func TestClientServerDataset(t *testing.T) {
 			t.Error("First dataset is not named \"testset\"")
 		}
 		if fmt.Sprintf("%x", info.DatasetList[0].ListH) != fmt.Sprintf("%x", localHash) {
-			t.Error(fmt.Sprintf("%x != %x", info.DatasetList[0].ListH, localHash))
+			t.Errorf("%x != %x", info.DatasetList[0].ListH, localHash)
 			t.Error("List hash could not be verified")
 		}
 		if info.DatasetList[0].Size != 33509 {
-			t.Error(fmt.Sprintf("Wrong total size for the dataset %d != %d", info.DatasetList[0].Size, 33509))
+			t.Errorf("Wrong total size for the dataset %d != %d", info.DatasetList[0].Size, 33509)
 		}
 	}
 
@@ -173,7 +165,9 @@ func TestClientServerHashboxBlocks(t *testing.T) {
 
 	{
 		var data bytearray.ByteArray
-		data.Write([]byte("HELLO!"))
+		if _, err := data.Write([]byte("HELLO!")); err != nil {
+			t.Fatal(err)
+		}
 		blockID := client.StoreData(core.BlockDataTypeRaw, data, nil)
 		client.Commit()
 		block := client.ReadBlock(blockID)
@@ -189,7 +183,9 @@ func TestClientServerHashboxBlocks(t *testing.T) {
 
 	{
 		var data bytearray.ByteArray
-		data.Write([]byte("Bet it all on black?"))
+		if _, err := data.Write([]byte("Bet it all on black?")); err != nil {
+			t.Fatal(err)
+		}
 		blockID := client.StoreData(core.BlockDataTypeRaw, data, nil)
 		client.Commit()
 		block := client.ReadBlock(blockID)

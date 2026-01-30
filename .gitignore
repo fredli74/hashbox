@@ -2,4 +2,4 @@
 desktop.ini
 hashback/hashback
 server/server
-server/test/
+**/test/*

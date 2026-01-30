@@ -1,0 +1,10 @@
+version: "2"
+
+linters:
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        - "-ST1003"
+        - "-ST1023"
+        - "-QF1011"

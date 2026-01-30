@@ -1,13 +1,13 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2024
+//	| # | |    Copyright 2015-2026
 //	+---+´
 
 package main
 
 import (
 	"github.com/fredli74/bytearray"
-	"github.com/fredli74/hashbox/core"
+	"github.com/fredli74/hashbox/pkg/core"
 
 	"github.com/smtc/rollsum"
 
@@ -19,23 +19,26 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 func (session *BackupSession) PrintStoreProgress(interval time.Duration) {
 	if session.ShowProgress && (interval == 0 || time.Now().After(session.Progress)) {
 		var compression float64
-		if session.Client.WriteData > 0 {
-			compression = 100.0 * (float64(session.Client.WriteData) - float64(session.Client.WriteDataCompressed)) / float64(session.Client.WriteData)
+		writeData := atomic.LoadInt64(&session.Client.WriteData)
+		writeDataCompressed := atomic.LoadInt64(&session.Client.WriteDataCompressed)
+		if writeData > 0 {
+			compression = 100.0 * (float64(writeData) - float64(writeDataCompressed)) / float64(writeData)
 		}
 		sent, skipped, _, queuedsize := session.Client.GetStats()
 		session.Log(">>> %.1f min, read: %s, written: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s",
-			time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(session.Client.WriteDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
+			time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(writeDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
 			sent, skipped+sent, core.HumanSize(int64(queuedsize)))
 
 		//fmt.Println(core.MemoryStats())
@@ -98,7 +101,9 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 	if file, err = os.Open(path); err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		core.AbortOnError(file.Close())
+	}()
 
 	var fileData bytearray.ByteArray
 	defer fileData.Release()
@@ -118,7 +123,8 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 
 		// Fill the fileData buffer
 		core.CopyNOrPanic(&fileData, file, maxBlockSize-fileData.Len())
-		fileData.ReadSeek(0, os.SEEK_CUR) // TODO: figure out why this line is here because I do not remember
+		_, err := fileData.ReadSeek(0, io.SeekCurrent) // TODO: figure out why this line is here because I do not remember
+		core.AbortOnError(err)
 
 		var splitPosition int = fileData.Len()
 		if fileData.Len() > MIN_BLOCK_SIZE*2 { // Candidate for rolling sum split
@@ -134,11 +140,11 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 
 			for rollInPos < fileData.Len() {
 				if rollInPos-rollInBase >= len(rollInSlice) { // Next slice please
-					rollInBase, _ = rollIn.ReadSeek(len(rollInSlice), os.SEEK_CUR)
+					rollInBase, _ = rollIn.ReadSeek(len(rollInSlice), io.SeekCurrent)
 					rollInSlice, _ = rollIn.ReadSlice()
 				}
 				if rollOutPos-rollOutBase >= len(rollOutSlice) { // Next slice please
-					rollOutBase, _ = rollOut.ReadSeek(len(rollOutSlice), os.SEEK_CUR)
+					rollOutBase, _ = rollOut.ReadSeek(len(rollOutSlice), io.SeekCurrent)
 					rollOutSlice, _ = rollOut.ReadSlice()
 				}
 
@@ -201,7 +207,9 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) (id core.B
 	if file, err = os.Open(path); err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() {
+		core.AbortOnError(file.Close())
+	}()
 
 	var filelist []os.FileInfo
 	if filelist, err = file.Readdir(-1); err != nil {
@@ -225,7 +233,7 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) (id core.B
 	id = block.BlockID
 	if entry == nil || entry.ContentBlockID.Compare(id) != 0 {
 		if id.Compare(session.Client.StoreBlock(block)) != 0 {
-			panic(errors.New("ASSERT, server blockID != local blockID"))
+			panic(errors.New("assert, server blockID != local blockID"))
 		}
 	} else {
 		block.Release()
@@ -442,9 +450,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 	var virtualRootDir *DirectoryBlock
 	{
 		info, err := os.Lstat(path[0])
-		if err != nil {
-			panic(err)
-		}
+		core.AbortOnError(err)
 		if !info.IsDir() || len(path) > 1 {
 			virtualRootDir = &DirectoryBlock{}
 			session.reference.virtualRoot = make(map[string]string)
@@ -484,10 +490,9 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		var entry *FileEntry
 		for _, s := range path {
 			entry, err = session.storePath(s, true)
-			if err != nil {
-				panic(err)
-			} else if entry == nil {
-				panic(fmt.Errorf("Unable to store %s", s))
+			core.AbortOnError(err)
+			if entry == nil {
+				panic(fmt.Errorf("unable to store %s", s))
 			} else if virtualRootDir != nil {
 				virtualRootDir.File = append(virtualRootDir.File, entry)
 				if entry.ContentType != ContentTypeEmpty {
@@ -499,7 +504,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 		session.State.BlockID = session.Client.StoreData(core.BlockDataTypeZlib, SerializeToByteArray(virtualRootDir), links)
 	} else {
 		session.State.BlockID, err = session.storeDir(path[0], nil)
-		PanicOn(err)
+		core.AbortOnError(err)
 	}
 
 	// Commit all pending writes
@@ -520,7 +525,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 func truncateSecondsToDay(t int64) int64 {
 	return (t / (24 * 60 * 60)) * 24 * 60 * 60
 }
-func (session *BackupSession) Retention(datasetName string, retainDays int, retainWeeks int) {
+func (session *BackupSession) Retention(datasetName string, retainDays int, retainWeeks int, retainYearly bool) {
 	var timenow int64 = time.Now().Unix()
 	var today = truncateSecondsToDay(timenow) // 00:00:00 today
 	var dailyLimit int64
@@ -532,47 +537,48 @@ func (session *BackupSession) Retention(datasetName string, retainDays int, reta
 		weeklyLimit = today - (int64(retainWeeks) * 7 * 24 * 60 * 60)
 	}
 
-	var lastbackup int64 = 0
+	var lastbackup int64
+	var lastbackupYear int
+	var lastbackupDate int64
 
 	list := session.Client.ListDataset(datasetName)
-	for i, e := range list.States {
-		if i >= len(list.States)-2 { // Always keep the last two
-			break
-		}
-
+	for i := len(list.States) - 1; i >= 0; i-- {
+		e := list.States[i]
 		// Extract the backup date from the stateID
 		timestamp := int64(binary.BigEndian.Uint64(e.State.StateID[:]) / 1e9) // nano timestamp in seconds
-
-		age := (timenow - timestamp)
-		interval := (timestamp - truncateSecondsToDay(lastbackup)) // interval from last backup
+		backuptime := time.Unix(int64(timestamp), 0)
+		year := backuptime.Year()
+		date := truncateSecondsToDay(timestamp)
 
 		var throwAway bool
 		var reason string
 
-		if interval < (24*60*60) && age > 24*60*60 {
-			throwAway = true
-			reason = fmt.Sprintf("keeping only one daily, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
-		}
-		if interval < (7*24*60*60) && timestamp < dailyLimit {
-			throwAway = true
-			reason = fmt.Sprintf("keeping only one weekly, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
-		}
-		if weeklyLimit < dailyLimit && timestamp < weeklyLimit {
-			throwAway = true
-			reason = fmt.Sprintf("older than %d weeks", retainWeeks)
-		}
-		if weeklyLimit >= dailyLimit && timestamp < dailyLimit {
-			throwAway = true
-			reason = fmt.Sprintf("older than %d days", retainDays)
+		if i < len(list.States)-2 && (timenow-timestamp) > (24*60*60) && (!retainYearly || year == lastbackupYear) {
+			// Not the last or current backup, older than 1 day and not the last of the year (if yearly retention is on)
+
+			if date == lastbackupDate {
+				throwAway = true
+				reason = fmt.Sprintf("keeping only one daily, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
+			} else if lastbackupDate-date < 7*24*60*60 && date < dailyLimit {
+				throwAway = true
+				reason = fmt.Sprintf("keeping only one weekly, %s", time.Unix(lastbackup, 0).Format(time.RFC3339))
+			} else if weeklyLimit < dailyLimit && date < weeklyLimit {
+				throwAway = true
+				reason = fmt.Sprintf("older than %d weeks", retainWeeks)
+			} else if weeklyLimit >= dailyLimit && date < dailyLimit {
+				throwAway = true
+				reason = fmt.Sprintf("older than %d days", retainDays)
+			}
 		}
 
-		date := time.Unix(int64(timestamp), 0)
 		if throwAway {
-			session.Log("Removing backup %s (%s)", date.Format(time.RFC3339), reason)
+			session.Log("Removing backup %s (%s)", backuptime.Format(time.RFC3339), reason)
 			session.Client.RemoveDatasetState(datasetName, e.State.StateID)
 		} else {
-			core.Log(core.LogDebug, "Keeping backup %s", date.Format(time.RFC3339))
+			core.Log(core.LogDebug, "Keeping backup %s", backuptime.Format(time.RFC3339))
 			lastbackup = timestamp
+			lastbackupYear = year
+			lastbackupDate = date
 		}
 	}
 }
@@ -624,7 +630,7 @@ func (r *referenceEngine) stop() {
 // Start reference loader
 func (r *referenceEngine) start(rootBlockID *core.Byte128) {
 	if r.stopChannel != nil {
-		panic(errors.New("ASSERT, r.stopChannel != nil, we called start twice"))
+		panic(errors.New("assert, r.stopChannel != nil, we called start twice"))
 	}
 
 	// Create new channels and start a new worker goroutine
@@ -637,13 +643,13 @@ func (r *referenceEngine) start(rootBlockID *core.Byte128) {
 
 func (r *referenceEngine) pushChannelEntry(entry *FileEntry) {
 	if r.stopped {
-		panic(errors.New("ASSERT, pushChannelEntry was called after reference engine was signalled to stop"))
+		panic(errors.New("assert, pushChannelEntry was called after reference engine was signalled to stop"))
 	}
 	select {
 	case <-r.stopChannel:
 		core.Log(core.LogDebug, "Reference loader received stop signal")
 		r.stopped = true
-		panic(errors.New("Reference loader was stopped"))
+		panic(errors.New("reference loader was stopped"))
 	case r.entryChannel <- entry:
 		// Dispatched next reference entry
 		return
@@ -679,11 +685,13 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 		}()
 		cacheRecover, _ := os.Open(filepath.Join(LocalStoragePath, filename))
 		if cacheRecover != nil {
-			defer cacheRecover.Close()
+			defer func() {
+				core.AbortOnError(cacheRecover.Close())
+			}()
 			core.Log(core.LogInfo, "Opened resume cache %s", cacheRecover.Name())
 
 			info, err := cacheRecover.Stat()
-			PanicOn(err)
+			core.AbortOnError(err)
 			cacheSize := info.Size()
 			reader := bufio.NewReader(cacheRecover)
 
@@ -748,7 +756,7 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 				core.Log(core.LogDebug, "Error: Panic raised in reference loader process (%v)", err)
 
 				select {
-				case r.errorChannel <- fmt.Errorf("Panic raised in reference loader process (%v)", err):
+				case r.errorChannel <- fmt.Errorf("panic raised in reference loader process (%v)", err):
 					core.Log(core.LogDebug, "Reference loader sent error on error channel")
 					r.stopped = true
 				default:
@@ -764,12 +772,16 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 	{
 		var resumeFileList []os.FileInfo
 		recoverMatch := fmt.Sprintf("%s.partial.*.cache", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
-		filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+		err := filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
 			if match, _ := filepath.Match(recoverMatch, info.Name()); match {
 				resumeFileList = append(resumeFileList, info)
 			}
 			return nil
 		})
+		core.AbortOnError(err)
 		sort.Slice(resumeFileList, func(i, j int) bool {
 			return resumeFileList[i].ModTime().Before(resumeFileList[j].ModTime())
 		})
@@ -778,7 +790,10 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 			// Remove the resume file after it is consumed. Yes I know we could lose the last n* cached entries
 			// if process is aborted. But it is not that important, it's better to clean up to avoid downward
 			// spirals of making resume file after resume file after resume file
-			os.Remove(resumeFileList[i].Name())
+			err := os.Remove(resumeFileList[i].Name())
+			if err != nil && !os.IsNotExist(err) {
+				core.AbortOnError(err)
+			}
 		}
 	}
 
@@ -788,11 +803,13 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 		// Check if we have last backup cached on disk
 		cacheLast, _ := os.Open(r.cacheFilePathName(*rootBlockID))
 		if cacheLast != nil {
-			defer cacheLast.Close()
+			defer func() {
+				core.AbortOnError(cacheLast.Close())
+			}()
 			core.Log(core.LogInfo, "Opened local cache %s", cacheLast.Name())
 
 			info, err := cacheLast.Stat()
-			PanicOn(err)
+			core.AbortOnError(err)
 			cacheSize := info.Size()
 			reader := bufio.NewReader(cacheLast)
 			for offset := int64(0); offset < cacheSize; {
@@ -806,7 +823,6 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 			r.downloadReference(*rootBlockID)
 		}
 	}
-	return
 }
 
 func (r *referenceEngine) popChannelEntry() *FileEntry {
@@ -884,54 +900,55 @@ func (r *referenceEngine) findReference(path string) *FileEntry {
 }
 
 func (r *referenceEngine) reserveReference(entry *FileEntry) (location int64) {
-	if r.cacheCurrent == nil {
-		panic(errors.New("ASSERT, cacheCurrent == nil on reserveReference in an active referenceEngine"))
-	}
-	l, err := r.cacheCurrent.Seek(0, os.SEEK_CUR)
-	PanicOn(err)
+	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent == nil on reserveReference in an active referenceEngine")
+	l, err := r.cacheCurrent.Seek(0, io.SeekCurrent)
+	core.AbortOnError(err)
 	entry.Serialize(r.cacheCurrent)
 	return l
 }
 
 func (r *referenceEngine) storeReference(entry *FileEntry) {
-	if r.cacheCurrent == nil {
-		panic(errors.New("ASSERT, cacheCurrent == nil on storeReference in an active referenceEngine"))
-	}
+	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent == nil on storeReference in an active referenceEngine")
 	entry.Serialize(r.cacheCurrent)
 }
 
 func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
-	if r.cacheCurrent == nil {
-		panic(errors.New("ASSERT, cacheCurrent == nil on storeReferenceDir in an active referenceEngine"))
-	}
-	r.cacheCurrent.Seek(location, os.SEEK_SET)
+	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent == nil on storeReferenceDir in an active referenceEngine")
+	_, err := r.cacheCurrent.Seek(location, io.SeekStart)
+	core.AbortOnError(err)
 	entry.Serialize(r.cacheCurrent)
 
-	r.cacheCurrent.Seek(0, os.SEEK_END)
+	_, err = r.cacheCurrent.Seek(0, io.SeekEnd)
+	core.AbortOnError(err)
 	entryEOD.Serialize(r.cacheCurrent)
 }
 
 func (r *referenceEngine) Commit(rootID core.Byte128) {
-	if r.cacheCurrent == nil {
-		panic(errors.New("ASSERT, cacheCurrent == nil on commit in an active referenceEngine"))
-	}
+	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent must not be nil on commit")
 
 	tempPath := r.cacheCurrent.Name()
 	newCachePath := r.cacheFilePathName(rootID)
 
 	cleanup := fmt.Sprintf("%s.*.cache*", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
-	filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 		if path == tempPath {
 			// Current temp cache, do not delete it
 			return nil
 		}
 		if match, _ := filepath.Match(cleanup, info.Name()); match {
-			os.Remove(path)
+			err := os.Remove(path)
+			if err != nil && !os.IsNotExist(err) {
+				core.AbortOnError(err)
+			}
 		}
 		return nil
 	})
-	r.cacheCurrent.Close()
-	os.Rename(tempPath, newCachePath)
+	core.AbortOnError(err)
+	core.AbortOnError(r.cacheCurrent.Close())
+	core.AbortOnError(os.Rename(tempPath, newCachePath))
 	r.cacheCurrent = nil
 }
 func (r *referenceEngine) Close() {
@@ -940,7 +957,7 @@ func (r *referenceEngine) Close() {
 	// If not commited, we need to close and save the current cache
 	if r.cacheCurrent != nil {
 		currentName := r.cacheCurrent.Name()
-		r.cacheCurrent.Close()
+		core.AbortOnError(r.cacheCurrent.Close())
 		r.cacheCurrent = nil
 
 		partialName := (func() string {
@@ -956,7 +973,7 @@ func (r *referenceEngine) Close() {
 		})()
 
 		core.Log(core.LogDebug, "Saving %s as recovery cache %s", currentName, partialName)
-		os.Rename(currentName, partialName)
+		core.AbortOnError(os.Rename(currentName, partialName))
 	}
 }
 func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *referenceEngine {
@@ -966,8 +983,8 @@ func newReferenceEngine(session *BackupSession, datasetNameH core.Byte128) *refe
 	}
 
 	var err error
-	r.cacheCurrent, err = ioutil.TempFile(LocalStoragePath, r.cacheName("temp.*"))
-	PanicOn(err)
+	r.cacheCurrent, err = os.CreateTemp(LocalStoragePath, r.cacheName("temp.*"))
+	core.AbortOnError(err)
 
 	return r
 }

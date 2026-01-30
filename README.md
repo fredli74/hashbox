@@ -11,8 +11,6 @@
 
 **DISCLAIMER! This project is in beta stage and it should not be used for important production**
 
-[![Build Status](https://semaphoreci.com/api/v1/fredli74/hashbox/branches/master/badge.svg)](https://semaphoreci.com/fredli74/hashbox)
-
 Hashbox is a cross-platform derivate of a proprietary backup system (called BUP) that Magnus Lidström invented back around 2001.
 
 ### Design Goals

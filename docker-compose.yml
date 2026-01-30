@@ -1,0 +1,33 @@
+services:
+  hashbox:
+    image: hashbox:local
+    entrypoint: ["/usr/local/bin/hashbox-server"]
+    command:
+      - "-loglevel"
+      - "${HASHBOX_LOGLEVEL:-2}"
+    user: "${HASHBOX_UID:-65532}:${HASHBOX_GID:-65532}"
+    environment:
+      UMASK: "${HASHBOX_UMASK:-077}"
+    ports:
+      - "${HASHBOX_PORT:-7411}:7411"
+    volumes:
+      - ${HASHBOX_DATA_DIR:-./data}:/data
+      - ${HASHBOX_INDEX_DIR:-./index}:/index
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/hashbox-util", "ping", "127.0.0.1:7411"]
+      interval: 600s
+      timeout: 10s
+      retries: 6
+    restart: unless-stopped
+
+  hashbox-util:
+    image: hashbox:local
+    entrypoint: ["/usr/local/bin/hashbox-util"]
+    command:
+    user: "${HASHBOX_UID:-65532}:${HASHBOX_GID:-65532}"
+    environment:
+      UMASK: "${HASHBOX_UMASK:-077}"
+    profiles: ["utility"]
+    volumes:
+      - ${HASHBOX_DATA_DIR:-./data}:/data
+      - ${HASHBOX_INDEX_DIR:-./index}:/index
