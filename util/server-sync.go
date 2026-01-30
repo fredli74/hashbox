@@ -144,7 +144,7 @@ func (c *commandSet) syncRun(remoteHost string, remotePort int, include, exclude
 //
 // syncStateFilename = state-syncID.json
 // state-syncID.json schema is {
-//	[datasetHash: string]: position: int64 // EOF watermark for last processed transaction, we start reading from here on next sync
+//	[datasetHash: string]: position: int64 // EOF high-water mark for last processed transaction, we start reading from here on next sync
 // }
 
 func readStateFile(f *lockablefile.LockableFile, path string) map[string]int64 {
@@ -259,7 +259,7 @@ func resetSyncWatermarks(dataDir string, accountHash core.Byte128, datasetName c
 		writeStateFile(f, path, state)
 		f.Unlock()
 		f.Close()
-		fmt.Printf("Sync watermark for %s (%s) was reset\n", core.Escape(name), core.Escape(datasetName))
+		fmt.Printf("Sync high-water mark for %s (%s) was reset\n", core.Escape(name), core.Escape(datasetName))
 	}
 }
 
@@ -369,7 +369,7 @@ func (sync *syncSession) processDataset(accountHash core.Byte128, datasetName co
 		default:
 			core.Abort("unknown tx type %x in sync for %s:%s", tx.TxType, sync.accountName(accountHash), datasetName)
 		}
-		// Successfully processed tx, update watermark
+		// Successfully processed tx, update high-water mark
 		if !sync.dryRun {
 			pos, err := reader.Pos()
 			core.AbortOnError(err, "pos trn %s:%s: %v", sync.accountName(accountHash), datasetName, err)
