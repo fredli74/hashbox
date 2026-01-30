@@ -42,25 +42,30 @@ func (store *Store) CheckStorageFiles() (errorCount int) {
 			if err != nil {
 				break // no more files
 			}
+			func() {
+				defer func() {
+					core.AbortOnError(f.Close())
+				}()
 
-			var header storageFileHeader
-			err = binary.Read(f.Reader, binary.BigEndian, &header.filetype)
-			if err != nil {
-				core.Log(core.LogError, "Unable to read file type from file header in file %s", filename)
-				errorCount++
-				continue
-			} else if header.filetype != storageFileTypeInfo[fileType].Type {
-				core.Log(core.LogError, "Incorrect filetype in file %s: %x (should be %x)", filename, header.filetype, storageFileTypeInfo[fileType].Type)
-				errorCount++
-				continue
-			} else {
-				core.AbortOnError(binary.Read(f.Reader, binary.BigEndian, &header.version))
-				if header.version != storageVersion {
-					core.Log(core.LogError, "Incorrect file version in file %s: %x (should be %x)", filename, header.version, storageVersion)
+				var header storageFileHeader
+				err = binary.Read(f.Reader, binary.BigEndian, &header.filetype)
+				if err != nil {
+					core.Log(core.LogError, "Unable to read file type from file header in file %s", filename)
 					errorCount++
-					continue
+					return
+				} else if header.filetype != storageFileTypeInfo[fileType].Type {
+					core.Log(core.LogError, "Incorrect filetype in file %s: %x (should be %x)", filename, header.filetype, storageFileTypeInfo[fileType].Type)
+					errorCount++
+					return
+				} else {
+					core.AbortOnError(binary.Read(f.Reader, binary.BigEndian, &header.version))
+					if header.version != storageVersion {
+						core.Log(core.LogError, "Incorrect file version in file %s: %x (should be %x)", filename, header.version, storageVersion)
+						errorCount++
+						return
+					}
 				}
-			}
+			}()
 		}
 	}
 	return errorCount

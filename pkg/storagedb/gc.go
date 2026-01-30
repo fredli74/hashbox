@@ -224,6 +224,9 @@ func (store *Store) CompactFile(fileType int, fileNumber int32) int64 {
 
 	reader, err := core.OpenBufferedReader(file.Path, 32768, file.Flag)
 	core.AbortOnError(err)
+	defer func() {
+		core.AbortOnError(reader.File.Close())
+	}()
 	_, err = reader.Seek(storageFileHeaderSize, io.SeekStart)
 	core.AbortOnError(err)
 
