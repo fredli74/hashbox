@@ -59,6 +59,7 @@ type Client struct {
 	dispatchMutex  sync.Mutex
 	closing        bool
 	blockQueueSize int64 // queue size in bytes
+	blockQueueLen  int32 // number of items in block queue
 	blockQueueMap  map[Byte128]*blockQueueEntry
 	blockQueueList []*blockQueueEntry
 
@@ -163,7 +164,7 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 	} else {
 		size = bytearray.ChunkQuantize(int64(block.UncompressedSize))
 	}
-	if c.blockQueueSize+size > c.QueueMax {
+	if atomic.LoadInt64(&c.blockQueueSize)+size > c.QueueMax {
 		c.dispatchMutex.Unlock()
 		return false // Queue full, retry later
 	}
@@ -171,12 +172,13 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 	entry := &blockQueueEntry{state: int32(blockStateNew), block: block}
 	c.blockQueueMap[block.BlockID] = entry
 	c.blockQueueList = append(c.blockQueueList, entry)
-	c.blockQueueSize += size
+	atomic.AddInt64(&c.blockQueueSize, size)
+	atomic.AddInt32(&c.blockQueueLen, 1)
 
 	Log(LogTrace, "Queue block %x (queue=%d)", block.BlockID, len(c.blockQueueList))
 
 	if c.sendworkers < 1 || c.sendworkers < c.ThreadMax {
-		atomic.AddInt32(&c.sendworkers, 1)
+		c.sendworkers++
 		go func() {
 			defer func() { // a panic was raised inside the goroutine (most likely the channel was closed)
 				if r := recover(); !c.closing && r != nil {
@@ -203,7 +205,8 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 				c.dispatchMutex.Lock()
 				for i := 0; workItem == nil && i < len(c.blockQueueList); i++ {
 					entry := c.blockQueueList[i]
-					switch entry.state {
+					state := atomic.LoadInt32(&entry.state)
+					switch state {
 					case blockStateNew: // ignore for now, waiting for singleExchange allocate response
 					case blockStateRequested:
 						workItem = entry
@@ -216,16 +219,17 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 					case blockStateSending: // skip, waiting for ACK
 					case blockStateCompleted:
 						if entry.block.Compressed {
-							c.blockQueueSize -= bytearray.ChunkQuantize(int64(entry.block.CompressedSize))
+							atomic.AddInt64(&c.blockQueueSize, -bytearray.ChunkQuantize(int64(entry.block.CompressedSize)))
 						} else {
-							c.blockQueueSize -= bytearray.ChunkQuantize(int64(entry.block.UncompressedSize))
+							atomic.AddInt64(&c.blockQueueSize, -bytearray.ChunkQuantize(int64(entry.block.UncompressedSize)))
 						}
 						entry.block.Release()
 						delete(c.blockQueueMap, entry.block.BlockID)
 						c.blockQueueList = append(c.blockQueueList[:i], c.blockQueueList[i+1:]...)
+						atomic.AddInt32(&c.blockQueueLen, -1)
 						i-- // adjust index
 					default:
-						Abort("ASSERT! Invalid state %d for blockQueue entry", entry.state)
+						Abort("ASSERT! Invalid state %d for blockQueue entry", state)
 					}
 				}
 				if workItem != nil {
@@ -233,14 +237,15 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 					atomic.AddInt32(&workItem.state, 1)
 				} else if len(c.blockQueueList) == 0 {
 					done = true
-					atomic.AddInt32(&c.sendworkers, -1)
+					c.sendworkers--
 					//						fmt.Println("worker stopping")
 				}
 				c.dispatchMutex.Unlock()
 
 				// Process work item outside lock
 				if workItem != nil {
-					switch workItem.state {
+					state := atomic.LoadInt32(&workItem.state)
+					switch state {
 					case blockStateNew:
 						panic("ASSERT!")
 					case blockStateRequested:
@@ -264,7 +269,7 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 						c.blockWriteChannel <- &messageDispatch{msg: msg}
 						atomic.AddInt32(&workItem.state, 1)
 					default:
-						Abort("ASSERT! Invalid state %d for work item", workItem.state)
+						Abort("ASSERT! Invalid state %d for work item", state)
 					}
 				} else {
 					time.Sleep(25 * time.Millisecond)
@@ -344,8 +349,8 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 	case *MsgServerReadBlock:
 		c.dispatchMutex.Lock()
 		q := c.blockQueueMap[d.BlockID]
-		if q != nil && q.state == blockStateNew {
-			q.state = blockStateRequested
+		if q != nil && atomic.LoadInt32(&q.state) == blockStateNew {
+			atomic.StoreInt32(&q.state, blockStateRequested)
 		}
 		c.dispatchMutex.Unlock()
 	case *MsgServerAcknowledgeBlock:
@@ -354,11 +359,11 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 		c.dispatchMutex.Lock()
 		q := c.blockQueueMap[d.BlockID]
 		if q != nil {
-			if q.state == blockStateNew {
+			if atomic.LoadInt32(&q.state) == blockStateNew {
 				// Block was not sent
 				skipped = true
 			}
-			q.state = blockStateCompleted
+			atomic.StoreInt32(&q.state, blockStateCompleted)
 		}
 		c.dispatchMutex.Unlock()
 
@@ -603,7 +608,5 @@ func (c *Client) Done() bool {
 // binary.Read and binary.Write
 
 func (c *Client) GetStats() (tranismitted int32, skipped int32, queued int32, queuesize int64) {
-	c.dispatchMutex.Lock()
-	defer c.dispatchMutex.Unlock()
-	return c.transmittedBlocks, c.skippedBlocks, int32(len(c.blockQueueMap)), c.blockQueueSize
+	return atomic.LoadInt32(&c.transmittedBlocks), atomic.LoadInt32(&c.skippedBlocks), atomic.LoadInt32(&c.blockQueueLen), atomic.LoadInt64(&c.blockQueueSize)
 }

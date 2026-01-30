@@ -24,18 +24,21 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 func (session *BackupSession) PrintStoreProgress(interval time.Duration) {
 	if session.ShowProgress && (interval == 0 || time.Now().After(session.Progress)) {
 		var compression float64
-		if session.Client.WriteData > 0 {
-			compression = 100.0 * (float64(session.Client.WriteData) - float64(session.Client.WriteDataCompressed)) / float64(session.Client.WriteData)
+		writeData := atomic.LoadInt64(&session.Client.WriteData)
+		writeDataCompressed := atomic.LoadInt64(&session.Client.WriteDataCompressed)
+		if writeData > 0 {
+			compression = 100.0 * (float64(writeData) - float64(writeDataCompressed)) / float64(writeData)
 		}
 		sent, skipped, _, queuedsize := session.Client.GetStats()
 		session.Log(">>> %.1f min, read: %s, written: %s (%.0f%% compr), %d folders, %d/%d files changed, blocks sent %d/%d, queued:%s",
-			time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(session.Client.WriteDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
+			time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), core.HumanSize(writeDataCompressed), compression, session.Directories, session.Files-session.UnchangedFiles, session.Files,
 			sent, skipped+sent, core.HumanSize(int64(queuedsize)))
 
 		//fmt.Println(core.MemoryStats())
