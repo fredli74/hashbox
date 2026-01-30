@@ -3,7 +3,7 @@
 //	| # | |    Copyright 2015-2026
 //	+---+´
 
-// Hashbox core client routines
+// Package core provides Hashbox core primitives.
 package core
 
 //
@@ -55,12 +55,14 @@ const (
 	MsgTypeError uint32 = 0x65727273 // = "ERRS"
 )
 
-// We use the same function for reading server and client messages but they do have different payloads
-// so we need to differentiate between the two message types by using  lowercase / uppercase.
-// We do this simply by removing the lowercase bit in the ASCII table by using AND on 0xDf
+// MsgTypeServerMask differentiates server and client message types by masking lowercase bits.
+// We use the same function for reading server and client messages but they do have different payloads,
+// so we need to differentiate between the two message types by using lowercase / uppercase.
+// We do this simply by removing the lowercase bit in the ASCII table by using AND on 0xDf.
 const MsgTypeServerMask uint32 = 0xDFDFDFDF // MsgType & MsgTypeClientMask
 
-// If we would have needed to convert a server message type to client message type, we could OR the bit in again
+// MsgTypeClientMask converts a server message type to client message type by OR-ing the bit in again.
+// If we would have needed to convert a server message type to client message type, we could OR the bit in again.
 const MsgTypeClientMask uint32 = 0x20202020 // MsgType | MsgTypeClientMask
 
 //
@@ -123,7 +125,7 @@ type MsgClientReadBlock struct { // -> "read"
 	BlockID Byte128 // ID of Block to read
 }
 
-// MsgServerWriteBlock
+// MsgServerWriteBlock returns a block payload for a client read request.
 type MsgServerWriteBlock struct { // <- "WRIT"
 	Block *HashboxBlock // Block to be sent
 }
@@ -242,7 +244,7 @@ func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
 		m.Data = new(MsgServerError)
 	default:
 		// return nil instead if needed, then the type will not match anything reasonable for the caller
-		panic(fmt.Errorf("Invalid protocol message received \"%x\" (connection corrupted?)", m.Type))
+		panic(fmt.Errorf("invalid protocol message received \"%x\" (connection corrupted?)", m.Type))
 	}
 
 	if m.Data != nil {
@@ -317,6 +319,7 @@ func (m *ProtocolMessage) Release() {
 	}
 }
 
+// ReadMessage reads a protocol message.
 // IMPORTANT messages containing HashboxBlock data will ByteArray allocate memory that needs to be freed manually
 func ReadMessage(r io.Reader) *ProtocolMessage {
 	var msg ProtocolMessage

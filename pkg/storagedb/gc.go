@@ -16,12 +16,12 @@ import (
 // storageEntry is used when compacting to treat data/meta uniformly.
 type storageEntry interface {
 	BlockID() core.Byte128
-	VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool
+	VerifyLocation(store *Store, fileNumber int32, fileOffset int64) bool
 	core.Serializer
 	core.Unserializer
 }
 
-func (handler *Store) MarkIndexes(roots []core.Byte128, Paint bool) {
+func (store *Store) MarkIndexes(roots []core.Byte128, Paint bool) {
 	var chain []core.Byte128
 	visited := make(map[core.Byte128]bool) // Keep track if we have read the links from the block already
 
@@ -33,18 +33,18 @@ func (handler *Store) MarkIndexes(roots []core.Byte128, Paint bool) {
 		blockID := chain[0]
 		chain = chain[1:]
 		if !visited[blockID] {
-			entry, ixFileNumber, ixOffset, err := handler.readIXEntry(blockID)
+			entry, ixFileNumber, ixOffset, err := store.readIXEntry(blockID)
 			core.AbortOnError(err)
 
 			if entry.flags&entryFlagNoLinks == 0 {
 				metaFileNumber, metaOffset := entry.location.Get()
-				metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+				metaEntry, err := store.readMetaEntry(metaFileNumber, metaOffset)
 				core.AbortOnError(err)
 				chain = append(chain, metaEntry.Links...)
 			}
 
 			entry.flags |= entryFlagMarked // Mark the entry
-			ixFile := handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
+			ixFile := store.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
 			if ixFile == nil {
 				core.Abort("Error marking index entry in file %x, offset %x, file does not exist", ixFileNumber, ixOffset)
 			}
@@ -67,12 +67,12 @@ func (handler *Store) MarkIndexes(roots []core.Byte128, Paint bool) {
 		}
 	}
 }
-func (handler *Store) SweepIndexes(Paint bool) {
+func (store *Store) SweepIndexes(Paint bool) {
 	var sweepedSize int64
 
 	deletedBlocks := 0
 	for ixFileNumber := int32(0); ; ixFileNumber++ {
-		var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
+		var ixFile = store.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
 		if ixFile == nil {
 			break // no more indexes
 		}
@@ -98,7 +98,7 @@ func (handler *Store) SweepIndexes(Paint bool) {
 			} else if entry.flags&entryFlagExists == entryFlagExists {
 				if entry.flags&entryFlagMarked == 0 {
 					metaFileNumber, metaOffset := entry.location.Get()
-					sweepedSize += handler.killMetaEntry(entry.blockID, metaFileNumber, metaOffset)
+					sweepedSize += store.killMetaEntry(entry.blockID, metaFileNumber, metaOffset)
 
 					// Mark it as invalid as it is now deleted
 					deletedBlocks++
@@ -107,19 +107,19 @@ func (handler *Store) SweepIndexes(Paint bool) {
 				} else {
 					entry.flags &^= entryFlagMarked // remove entryFlagMarked
 
-					e, eFileNumber, eOffset := handler.findIXOffset(entry.blockID, true)
+					e, eFileNumber, eOffset := store.findIXOffset(entry.blockID, true)
 					if eFileNumber == ixFileNumber && eOffset == offset { // already at best location
 						core.Log(core.LogDebug, "Removed mark from block index at %x:%x", ixFileNumber, offset)
 					} else if e != nil { // obsolete entry
 						entry.flags |= entryFlagInvalid
 						core.Log(core.LogDebug, "Deleted obsolete block index %x at %x:%x", entry.blockID[:], ixFileNumber, offset)
 					} else if eFileNumber < ixFileNumber {
-						handler.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier file
-						entry.flags |= entryFlagInvalid                           // delete old entry
+						store.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier file
+						entry.flags |= entryFlagInvalid                         // delete old entry
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
 					} else if eFileNumber == ixFileNumber && eOffset < offset {
-						handler.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier position
-						entry.flags |= entryFlagInvalid                           // delete old entry
+						store.writeIXEntry(eFileNumber, eOffset, &entry, false) // move it to an earlier position
+						entry.flags |= entryFlagInvalid                         // delete old entry
 						core.Log(core.LogDebug, "Moved block index %x from %x:%x to %x", entry.blockID[:], ixFileNumber, offset, eOffset)
 					} else {
 						core.Abort("findIXOffset for %x (%x:%x) returned an invalid offset %x:%x", entry.blockID[:], ixFileNumber, offset, eFileNumber, eOffset)
@@ -144,13 +144,13 @@ func (handler *Store) SweepIndexes(Paint bool) {
 	}
 }
 
-func (handler *Store) CompactIndexes(Paint bool) {
+func (store *Store) CompactIndexes(Paint bool) {
 	var blankEntry StorageIXEntry
 	clearedBlocks := 0
 	var err error
 
 	for ixFileNumber := int32(0); ; ixFileNumber++ {
-		var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
+		var ixFile = store.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
 		if ixFile == nil {
 			break // no more indexes
 		}
@@ -199,7 +199,7 @@ func (handler *Store) CompactIndexes(Paint bool) {
 	}
 }
 
-func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
+func (store *Store) CompactFile(fileType int, fileNumber int32) int64 {
 	var entry storageEntry
 	switch fileType {
 	case storageFileTypeMeta:
@@ -211,8 +211,8 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 		entry = dataEntry
 	}
 
-	file := handler.getNumberedFile(fileType, fileNumber, false)
-	fileSize, deadSpace, err := handler.getNumberedFileSize(fileType, fileNumber)
+	file := store.getNumberedFile(fileType, fileNumber, false)
+	fileSize, deadSpace, err := store.getNumberedFileSize(fileType, fileNumber)
 	core.AbortOnError(err)
 	core.Log(core.LogInfo, "Compacting file %s, %s (est. dead data %s)", file.Path, core.HumanSize(fileSize), core.HumanSize(deadSpace))
 
@@ -228,7 +228,7 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 	}
 	relocations := []relocation{}
 
-	handler.topFileNumber[fileType] = 0
+	store.topFileNumber[fileType] = 0
 
 	var lastProgress = -1
 	deleted, moved := int64(0), int64(0)
@@ -246,18 +246,18 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 
 		core.Log(core.LogTrace, "Read %x:%x block %x (%d bytes)", fileNumber, readOffset, entryBlockID[:], entrySize)
 
-		if _, _, _, err = handler.readIXEntry(entryBlockID); err != nil {
+		if _, _, _, err = store.readIXEntry(entryBlockID); err != nil {
 			core.Log(core.LogDebug, "Removed %x:%x block %x (%s)", fileNumber, readOffset, entryBlockID[:], err.Error())
 			deleted += int64(entrySize)
-		} else if !entry.VerifyLocation(handler, fileNumber, readOffset) {
+		} else if !entry.VerifyLocation(store, fileNumber, readOffset) {
 			core.Log(core.LogDebug, "Removed %x:%x block %x (obsolete entry)", fileNumber, readOffset, entryBlockID[:])
 			deleted += int64(entrySize)
 		} else {
-			freeFileNum, freeOffset, freeFile := handler.findFreeOffset(fileType, fileNumber)
+			freeFileNum, freeOffset, freeFile := store.findFreeOffset(fileType, fileNumber)
 			if freeFileNum >= fileNumber && readOffset == highWaterMark {
 				highWaterMark = offset
 				core.Log(core.LogTrace, "No need to write, moving highWaterMark to %x", highWaterMark)
-			} else if free, _ := core.FreeSpace(handler.DataDir); free < int64(entrySize)+MINIMUM_DAT_FREE {
+			} else if free, _ := core.FreeSpace(store.DataDir); free < int64(entrySize)+MINIMUM_DAT_FREE {
 				highWaterMark = fileSize
 				core.Log(core.LogWarning, "Unable to move block %x (%d bytes) because there is not enough free space on data path", entryBlockID[:], entrySize)
 				break
@@ -284,22 +284,22 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 	}
 
 	if len(relocations) > 0 {
-		handler.SyncAll()
+		store.SyncAll()
 		for n := 0; n < len(relocations); n++ {
 			core.Log(core.LogDebug, "Relocate block %x to %x:%x", relocations[n].blockID[:], relocations[n].fileNumber, relocations[n].fileOffset)
 			switch fileType {
 			case storageFileTypeMeta:
-				handler.changeMetaLocation(relocations[n].blockID, relocations[n].fileNumber, relocations[n].fileOffset)
+				store.changeMetaLocation(relocations[n].blockID, relocations[n].fileNumber, relocations[n].fileOffset)
 			case storageFileTypeData:
-				handler.changeDataLocation(relocations[n].blockID, relocations[n].fileNumber, relocations[n].fileOffset)
+				store.changeDataLocation(relocations[n].blockID, relocations[n].fileNumber, relocations[n].fileOffset)
 			}
 		}
-		handler.SyncAll()
+		store.SyncAll()
 	}
 
 	if highWaterMark < fileSize {
 		core.AbortOnError(file.Writer.File.Truncate(highWaterMark))
-		handler.setDeadSpace(fileType, fileNumber, 0, false)
+		store.setDeadSpace(fileType, fileNumber, 0, false)
 		core.Log(core.LogInfo, "Released %s (%s deleted, %s moved) from file %s (size %s)", core.HumanSize(offset-highWaterMark), core.HumanSize(deleted), core.HumanSize(moved), file.Path, core.HumanSize(highWaterMark))
 	} else {
 		core.Log(core.LogInfo, "Skipped (%s deleted, %s moved) file %s (size %s)", core.HumanSize(deleted), core.HumanSize(moved), file.Path, core.HumanSize(highWaterMark))
@@ -307,17 +307,17 @@ func (handler *Store) CompactFile(fileType int, fileNumber int32) int64 {
 
 	return deleted
 }
-func (handler *Store) CompactAll(fileType int, threshold int) {
+func (store *Store) CompactAll(fileType int, threshold int) {
 	var compacted int64
 	for fileNumber := int32(0); ; fileNumber++ {
-		file := handler.getNumberedFile(fileType, fileNumber, false)
+		file := store.getNumberedFile(fileType, fileNumber, false)
 		if file == nil {
 			break // no more data
 		}
-		fileSize, deadSpace, err := handler.getNumberedFileSize(fileType, fileNumber)
+		fileSize, deadSpace, err := store.getNumberedFileSize(fileType, fileNumber)
 		core.AbortOnError(err)
 		if fileSize < storageOffsetLimit/100 || int(deadSpace*100/fileSize) >= threshold {
-			compacted += handler.CompactFile(fileType, fileNumber)
+			compacted += store.CompactFile(fileType, fileNumber)
 		} else {
 			core.Log(core.LogInfo, "Skipping compact on file %s, est. dead data %s is less than %d%%", file.Path, core.HumanSize(deadSpace), threshold)
 		}

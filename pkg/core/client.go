@@ -3,7 +3,7 @@
 //	| # | |    Copyright 2015-2026
 //	+---+´
 
-// Hashbox core, version 0.1
+// Package core provides Hashbox core primitives.
 package core
 
 import (
@@ -130,7 +130,7 @@ func (c *Client) Close(polite bool) {
 	c.dispatchMutex.Unlock()
 
 	if connection := c.connection; connection != nil {
-		connection.Close() // This will cancel a blocking IO-read if we have one
+		AbortOnError(connection.Close()) // This will cancel a blocking IO-read if we have one
 	}
 	c.wg.Wait()
 }
@@ -281,13 +281,13 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 func (c *Client) handshake(connection *TimeoutConn) {
 	data := c.singleExchange(connection, &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeGreeting, Data: &MsgClientGreeting{Version: ProtocolVersion}}}).Data
 	if data == nil {
-		panic(errors.New("Server did not respond correctly to handshake"))
+		panic(errors.New("server did not respond correctly to handshake"))
 	}
 	r := data.(*MsgServerGreeting)
 	clientTime := uint64(time.Now().Unix())
 	serverTime := binary.BigEndian.Uint64(r.SessionNonce[:]) / 1000000000
 	if clientTime < serverTime-600 || clientTime > serverTime+600 {
-		panic(errors.New("Connection refused, system time difference between client and server is more than 10 minutes"))
+		panic(errors.New("connection refused, system time difference between client and server is more than 10 minutes"))
 	}
 
 	c.SessionNonce = r.SessionNonce
@@ -500,7 +500,7 @@ func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{
 	select {
 	case R, ok := <-waiter:
 		if !ok {
-			panic(errors.New("Server disconnected while waiting for a response"))
+			panic(errors.New("server disconnected while waiting for a response"))
 		}
 		switch t := R.(type) {
 		case *ProtocolMessage:
@@ -516,7 +516,7 @@ func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{
 			panic(c.lastError)
 		}
 		AbortOnError(err)
-		panic(errors.New("Connection was closed while waiting for a response"))
+		panic(errors.New("connection was closed while waiting for a response"))
 	}
 	panic(errors.New("ASSERT! We should not reach this point"))
 }
@@ -544,7 +544,7 @@ func (c *Client) VerifyBlock(blockID Byte128) bool {
 	case *MsgServerReadBlock:
 		return false
 	default:
-		panic(errors.New("Unknown response from server"))
+		panic(errors.New("unknown response from server"))
 	}
 }
 
@@ -561,7 +561,7 @@ func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 		c.dispatchMutex.Lock()
 		if c.closing {
 			c.dispatchMutex.Unlock()
-			panic(errors.New("Connection closed"))
+			panic(errors.New("connection closed"))
 		}
 		if c.blockQueueMap[block.BlockID] != nil {
 			c.dispatchMutex.Unlock()

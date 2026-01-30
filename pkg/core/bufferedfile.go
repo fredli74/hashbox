@@ -3,7 +3,7 @@
 //	| # | |    Copyright 2015-2026
 //	+---+´
 
-// Hashbox core, version 0.1
+// Package core provides Hashbox core primitives.
 package core
 
 import (
@@ -57,7 +57,7 @@ func OpenBufferedWriter(path string, buffersize int, flag int, perm os.FileMode)
 	return &BufferedWriter{file, bufio.NewWriterSize(file, buffersize)}, nil
 }
 func (b *BufferedWriter) Seek(offset int64, whence int) (ret int64, err error) {
-	b.Flush() // Always flush in case we want to read what we have written
+	AbortOnError(b.Flush()) // Always flush in case we want to read what we have written
 	ret, err = b.File.Seek(offset, whence)
 	if err == nil {
 		b.Reset(b.File)
@@ -86,13 +86,13 @@ func OpenBufferedFile(path string, buffersize int, flag int, perm os.FileMode) (
 	return b, nil
 }
 func (b *BufferedFile) Size() int64 {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
+	AbortOnError(b.Writer.Flush()) // Always flush in case we want to read what we have written
 	size, err := b.Writer.Seek(0, io.SeekEnd)
 	AbortOnError(err)
 	return size
 }
 func (b *BufferedFile) Close() (err error) {
-	b.Writer.Flush() // Always flush in case we want to read what we have written
+	AbortOnError(b.Writer.Flush()) // Always flush in case we want to read what we have written
 	if e := b.Reader.File.Close(); e != nil {
 		err = e
 	}
@@ -102,6 +102,6 @@ func (b *BufferedFile) Close() (err error) {
 	return err
 }
 func (b *BufferedFile) Sync() (err error) {
-	b.Writer.Flush()
+	AbortOnError(b.Writer.Flush())
 	return b.Writer.File.Sync()
 }

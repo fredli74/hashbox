@@ -3,7 +3,7 @@
 //	| # | |    Copyright 2015-2026
 //	+---+´
 
-// Hashbox core, version 0.1
+// Package core provides Hashbox core primitives.
 package core
 
 import (

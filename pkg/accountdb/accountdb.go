@@ -3,6 +3,7 @@
 //	| # | |    Copyright 2015-2026
 //	+---+´
 
+// Package accountdb provides account and dataset transaction storage.
 package accountdb
 
 import (

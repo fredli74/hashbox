@@ -3,7 +3,7 @@
 //	| # | |    Copyright 2015-2026
 //	+---+´
 
-// Hashbox core, version 0.1
+// Package core provides Hashbox core primitives.
 package core
 
 import (
@@ -62,7 +62,7 @@ func (b *HashboxBlock) Serialize(w io.Writer) (size int) {
 	size += WriteUint32(w, uint32(b.Data.Len()))
 	l := CopyOrPanic(w, &b.Data)
 	if l != b.Data.Len() {
-		panic(fmt.Errorf("Writing block %x with data length %d bytes, but wrote %d bytes", b.BlockID[:], b.Data.Len(), l))
+		panic(fmt.Errorf("writing block %x with data length %d bytes, but wrote %d bytes", b.BlockID[:], b.Data.Len(), l))
 	}
 	size += l
 
@@ -122,7 +122,7 @@ func (b *HashboxBlock) UncompressData() {
 			b.Data = c
 			b.Compressed = false
 		default:
-			panic(errors.New("Unsupported Block Data Type"))
+			panic(errors.New("unsupported block data type"))
 		}
 		b.UncompressedSize = b.Data.Len()
 	}
@@ -141,7 +141,7 @@ func (b *HashboxBlock) CompressData() {
 			b.Data = c
 			b.Compressed = true
 		default:
-			panic(errors.New("Unsupported Block Data Type"))
+			panic(errors.New("unsupported block data type"))
 		}
 		b.CompressedSize = b.Data.Len()
 	}
@@ -165,7 +165,7 @@ func (b *HashboxBlock) VerifyBlock() bool {
 			copy(verifyID[:], hash.Sum(nil)[:16])
 			c.Release()
 		default:
-			panic(errors.New("Unsupported Block Data Type"))
+			panic(errors.New("unsupported block data type"))
 		}
 	} else {
 		verifyID = b.HashData()

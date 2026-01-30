@@ -51,7 +51,7 @@ func calculateIXEntryOffset(blockID core.Byte128) uint32 {
 
 // findIXOffset probes for a blockID and returns entry+file+offset if found, regardless if it is invalid or not
 // if stopOnFree == true, it returns the first possible location where the block could be stored (used for compacting)
-func (handler *Store) findIXOffset(blockID core.Byte128, stopOnFree bool) (*StorageIXEntry, int32, int64) {
+func (store *Store) findIXOffset(blockID core.Byte128, stopOnFree bool) (*StorageIXEntry, int32, int64) {
 	var entry StorageIXEntry
 
 	baseOffset := int64(calculateIXEntryOffset(blockID))
@@ -61,7 +61,7 @@ func (handler *Store) findIXOffset(blockID core.Byte128, stopOnFree bool) (*Stor
 
 OuterLoop:
 	for {
-		ixFile := handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
+		ixFile := store.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
 		if ixFile == nil {
 			core.Log(core.LogTrace, "ran out of index files")
 			break
@@ -106,16 +106,16 @@ OuterLoop:
 	return nil, ixFileNumber, ixOffset
 }
 
-func (handler *Store) readIXEntry(blockID core.Byte128) (entry *StorageIXEntry, ixFileNumber int32, ixOffset int64, err error) {
-	entry, ixFileNumber, ixOffset = handler.findIXOffset(blockID, false)
+func (store *Store) readIXEntry(blockID core.Byte128) (entry *StorageIXEntry, ixFileNumber int32, ixOffset int64, err error) {
+	entry, ixFileNumber, ixOffset = store.findIXOffset(blockID, false)
 	if entry == nil {
-		err = fmt.Errorf("Block index entry not found for %x", blockID[:])
+		err = fmt.Errorf("block index entry not found for %x", blockID[:])
 	}
 	return
 }
 
-func (handler *Store) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *StorageIXEntry, forceFlush bool) {
-	var ixFile = handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, true)
+func (store *Store) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *StorageIXEntry, forceFlush bool) {
+	var ixFile = store.getNumberedFile(storageFileTypeIndex, ixFileNumber, true)
 	_, err := ixFile.Writer.Seek(ixOffset, io.SeekStart)
 	core.AbortOnError(err)
 	finalFlags := entry.flags
@@ -131,14 +131,14 @@ func (handler *Store) writeIXEntry(ixFileNumber int32, ixOffset int64, entry *St
 	core.Log(core.LogTrace, "writeIXEntry %x:%x", ixFileNumber, ixOffset)
 }
 
-func (handler *Store) InvalidateIXEntry(blockID core.Byte128) {
+func (store *Store) InvalidateIXEntry(blockID core.Byte128) {
 	core.Log(core.LogDebug, "InvalidateIXEntry %x", blockID[:])
 
-	e, f, o, err := handler.readIXEntry(blockID)
+	e, f, o, err := store.readIXEntry(blockID)
 	core.AbortOnError(err)
 
 	core.ASSERT(e != nil, e)
 	e.flags |= entryFlagInvalid
 	// flush notice: no need to force flush index invalidation
-	handler.writeIXEntry(f, o, e, false)
+	store.writeIXEntry(f, o, e, false)
 }

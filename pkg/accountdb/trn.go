@@ -210,7 +210,7 @@ func (r *TxReader) Seek(offset int64, whence int) (int64, error) {
 func (r *TxReader) Next() *DbTx {
 	defer func() {
 		if rec := recover(); rec != nil {
-			if e, ok := rec.(error); !ok || !(errors.Is(e, io.EOF) || errors.Is(e, io.ErrUnexpectedEOF)) {
+			if e, ok := rec.(error); !ok || (!errors.Is(e, io.EOF) && !errors.Is(e, io.ErrUnexpectedEOF)) {
 				panic(rec)
 			}
 		}

@@ -33,10 +33,10 @@ func forwardToDataMarker(reader *core.BufferedReader) (int64, error) {
 	}
 }
 
-func (handler *Store) CheckStorageFiles() (errorCount int) {
+func (store *Store) CheckStorageFiles() (errorCount int) {
 	for fileType := 0; fileType < len(storageFileTypeInfo); fileType++ {
 		for fileNumber := int32(0); ; fileNumber++ {
-			filename := handler.getNumberedFilepath(fileType, fileNumber)
+			filename := store.getNumberedFilepath(fileType, fileNumber)
 
 			f, err := core.OpenBufferedFile(filename, storageFileTypeInfo[fileType].BufferSize, 0, 0666)
 			if err != nil {
@@ -66,7 +66,7 @@ func (handler *Store) CheckStorageFiles() (errorCount int) {
 	return errorCount
 }
 
-func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount int) {
+func (store *Store) RecoverData(startfile int32, endfile int32) (repairCount int) {
 	var dataEntry StorageDataEntry
 	defer dataEntry.Release()
 
@@ -74,7 +74,7 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 		if endfile >= 0 && datFileNumber > endfile {
 			break
 		}
-		var datFile = handler.getNumberedFile(storageFileTypeData, datFileNumber, false)
+		var datFile = store.getNumberedFile(storageFileTypeData, datFileNumber, false)
 		if datFile == nil {
 			break // no more data
 		}
@@ -104,17 +104,17 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 					offset += int64(dataEntry.Unserialize(datFile.Reader))
 					return nil
 				}(); err != nil {
-					err := fmt.Errorf("Error reading dataEntry at %x:%x (%s)", datFileNumber, blockOffset, err)
+					err := fmt.Errorf("error reading dataEntry at %x:%x (%s)", datFileNumber, blockOffset, err)
 					core.Log(core.LogError, "%v", err)
 					skipToNextBlock = true
 				} else if err := func() (err interface{}) {
 					defer func() { err = recover() }()
 					if !dataEntry.block.VerifyBlock() {
-						panic(errors.New("Content verification failed"))
+						panic(errors.New("content verification failed"))
 					}
 					return nil
 				}(); err != nil {
-					err := fmt.Errorf("Error verifying block %x (type %d, size %d) at %x:%x (%s)", dataEntry.block.BlockID, dataEntry.block.DataType, dataEntry.block.Data.Len(), datFileNumber, blockOffset, err)
+					err := fmt.Errorf("error verifying block %x (type %d, size %d) at %x:%x (%s)", dataEntry.block.BlockID, dataEntry.block.DataType, dataEntry.block.Data.Len(), datFileNumber, blockOffset, err)
 					core.Log(core.LogError, "%v", err)
 					skipToNextBlock = true
 				}
@@ -143,7 +143,7 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 				brokenSpot = blockOffset
 			}
 			if brokenSpot > 0 && blockOffset-brokenSpot < 12 {
-				moveFileNum, moveOffset, moveFile := handler.findFreeOffset(storageFileTypeData, -1)
+				moveFileNum, moveOffset, moveFile := store.findFreeOffset(storageFileTypeData, -1)
 				core.Log(core.LogDebug, "Rewriting block %x at (%x:%x)", dataEntry.block.BlockID[:], moveFileNum, moveOffset)
 				moveSize := uint32(dataEntry.Serialize(moveFile.Writer))
 				core.ASSERT(moveSize == dataSize, "incorrect move size")
@@ -152,15 +152,15 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 				metaEntry := StorageMetaEntry{blockID: dataEntry.block.BlockID, DataSize: dataSize, Links: dataEntry.block.Links}
 				metaEntry.location.Set(moveFileNum, moveOffset)
 				core.AbortOnError(moveFile.Sync())
-				metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
+				metaFileNumber, metaOffset := store.writeMetaEntry(0, 0, &metaEntry)
 
 				core.Log(core.LogTrace, "Creating new index for block %x", dataEntry.block.BlockID[:])
-				ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(dataEntry.block.BlockID)
+				ixEntry, ixFileNumber, ixOffset, err := store.readIXEntry(dataEntry.block.BlockID)
 				if err != nil {
 					ixEntry = &StorageIXEntry{flags: entryFlagExists, blockID: dataEntry.block.BlockID}
 				}
 				ixEntry.location.Set(metaFileNumber, metaOffset)
-				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
+				store.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
 				continue
 			} else if brokenSpot > 0 {
 				core.Log(core.LogTrace, "Creating a free space marker at %x:%x (skip %d bytes)", datFileNumber, brokenSpot, blockOffset-brokenSpot)
@@ -171,14 +171,14 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 			}
 
 			rewriteIX := false
-			ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(dataEntry.block.BlockID)
+			ixEntry, ixFileNumber, ixOffset, err := store.readIXEntry(dataEntry.block.BlockID)
 			if err != nil {
 				core.Log(core.LogDebug, "Orphan block at %x:%x (%s)", datFileNumber, blockOffset, err.Error())
 				ixEntry = &StorageIXEntry{flags: entryFlagExists, blockID: dataEntry.block.BlockID}
 				rewriteIX = true
 			} else {
 				metaFileNumber, metaOffset := ixEntry.location.Get()
-				metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+				metaEntry, err := store.readMetaEntry(metaFileNumber, metaOffset)
 				if err != nil {
 					core.Log(core.LogWarning, "Metadata cache error for block %x (%s)", dataEntry.block.BlockID[:], err.Error())
 					rewriteIX = true
@@ -228,11 +228,11 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 				core.Log(core.LogTrace, "REPAIRING meta for block %x", dataEntry.block.BlockID[:])
 				metaEntry := StorageMetaEntry{blockID: dataEntry.block.BlockID, DataSize: dataSize, Links: dataEntry.block.Links}
 				metaEntry.location.Set(datFileNumber, blockOffset)
-				metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
+				metaFileNumber, metaOffset := store.writeMetaEntry(0, 0, &metaEntry)
 
 				core.Log(core.LogTrace, "REPAIRING index for block %x", dataEntry.block.BlockID[:])
 				ixEntry.location.Set(metaFileNumber, metaOffset)
-				handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
+				store.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
 				repairCount++
 			}
 
@@ -246,23 +246,23 @@ func (handler *Store) RecoverData(startfile int32, endfile int32) (repairCount i
 			core.Log(core.LogDebug, "Truncating file %x at %x", datFileNumber, brokenSpot)
 			core.AbortOnError(datFile.Writer.File.Truncate(brokenSpot))
 		}
-		handler.setDeadSpace(storageFileTypeData, datFileNumber, 0, false)
+		store.setDeadSpace(storageFileTypeData, datFileNumber, 0, false)
 	}
 	return
 }
 
-func (handler *Store) checkBlockFromIXEntry(ixEntry *StorageIXEntry, verifiedBlocks map[core.Byte128]bool, fullVerify bool, readOnly bool) error {
+func (store *Store) checkBlockFromIXEntry(ixEntry *StorageIXEntry, verifiedBlocks map[core.Byte128]bool, fullVerify bool, readOnly bool) error {
 	err := (func() error {
 		metaFileNumber, metaOffset := ixEntry.location.Get()
-		metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+		metaEntry, err := store.readMetaEntry(metaFileNumber, metaOffset)
 		if err != nil {
 			return err
 		}
 
 		dataFileNumber, dataOffset := metaEntry.location.Get()
-		dataFile := handler.getNumberedFile(storageFileTypeData, dataFileNumber, false)
+		dataFile := store.getNumberedFile(storageFileTypeData, dataFileNumber, false)
 		if dataFile == nil {
-			return fmt.Errorf("Error reading block from file %x, file does not exist", dataFileNumber)
+			return fmt.Errorf("error reading block from file %x, file does not exist", dataFileNumber)
 		}
 
 		var dataEntry StorageDataEntry
@@ -275,7 +275,7 @@ func (handler *Store) checkBlockFromIXEntry(ixEntry *StorageIXEntry, verifiedBlo
 			dataEntry.Unserialize(dataFile.Reader)
 			dataEntry.block.UncompressData()
 			if !dataEntry.block.VerifyBlock() {
-				return fmt.Errorf("Error reading block %x, content verification failed", ixEntry.blockID[:])
+				return fmt.Errorf("error reading block %x, content verification failed", ixEntry.blockID[:])
 			}
 			core.Log(core.LogTrace, "Block %x location %x:%x and content verified (%s, %.0f%% compr)", ixEntry.blockID[:], dataFileNumber, dataOffset, core.HumanSize(int64(dataEntry.block.CompressedSize)), float64(100.0*float64(dataEntry.block.UncompressedSize-dataEntry.block.CompressedSize)/float64(dataEntry.block.UncompressedSize)))
 		} else {
@@ -285,41 +285,41 @@ func (handler *Store) checkBlockFromIXEntry(ixEntry *StorageIXEntry, verifiedBlo
 			}
 			dataEntry.block.UnserializeHeader(dataFile.Reader)
 			if dataEntry.block.BlockID.Compare(ixEntry.blockID) != 0 {
-				return fmt.Errorf("Error reading block %x, metadata cache is pointing to block %x", ixEntry.blockID[:], dataEntry.block.BlockID[:])
+				return fmt.Errorf("error reading block %x, metadata cache is pointing to block %x", ixEntry.blockID[:], dataEntry.block.BlockID[:])
 			}
 			core.Log(core.LogTrace, "Block %x location %x:%x verified", ixEntry.blockID[:], dataFileNumber, dataOffset)
 		}
 
 		if len(metaEntry.Links) > 0 && ixEntry.flags&entryFlagNoLinks == entryFlagNoLinks {
-			return fmt.Errorf("Error reading block %x, index is marked having no links but the metadata cache has %d links", ixEntry.blockID[:], len(metaEntry.Links))
+			return fmt.Errorf("error reading block %x, index is marked having no links but the metadata cache has %d links", ixEntry.blockID[:], len(metaEntry.Links))
 		}
 		if len(metaEntry.Links) == 0 && ixEntry.flags&entryFlagNoLinks == 0 {
-			return fmt.Errorf("Error reading block %x, index is marked having links but the metadata cache has 0 links", ixEntry.blockID[:])
+			return fmt.Errorf("error reading block %x, index is marked having links but the metadata cache has 0 links", ixEntry.blockID[:])
 		}
 		if len(metaEntry.Links) != len(dataEntry.block.Links) {
-			return fmt.Errorf("Error reading block %x, metadata cache links mismatch", ixEntry.blockID[:])
+			return fmt.Errorf("error reading block %x, metadata cache links mismatch", ixEntry.blockID[:])
 		}
 		for i := range metaEntry.Links {
 			if metaEntry.Links[i].Compare(dataEntry.block.Links[i]) != 0 {
-				return fmt.Errorf("Error reading block %x, metadata cache links mismatch", ixEntry.blockID[:])
+				return fmt.Errorf("error reading block %x, metadata cache links mismatch", ixEntry.blockID[:])
 			}
 		}
 
 		for _, r := range metaEntry.Links {
 			v, checked := verifiedBlocks[r]
 			if !checked {
-				rIX, _, _, err := handler.readIXEntry(r)
+				rIX, _, _, err := store.readIXEntry(r)
 				if err != nil {
-					return fmt.Errorf("Error in block %x, link %x does not exist", ixEntry.blockID[:], r[:])
+					return fmt.Errorf("error in block %x, link %x does not exist", ixEntry.blockID[:], r[:])
 				}
 				if rIX.flags&entryFlagInvalid == entryFlagInvalid {
-					return fmt.Errorf("Error in block %x, link %x is invalid", ixEntry.blockID[:], r[:])
+					return fmt.Errorf("error in block %x, link %x is invalid", ixEntry.blockID[:], r[:])
 				}
-				if err := handler.checkBlockFromIXEntry(rIX, verifiedBlocks, fullVerify, readOnly); err != nil {
+				if err := store.checkBlockFromIXEntry(rIX, verifiedBlocks, fullVerify, readOnly); err != nil {
 					return err
 				}
 			} else if !v {
-				return fmt.Errorf("Error in block %x, link %x is invalid", ixEntry.blockID[:], r[:])
+				return fmt.Errorf("error in block %x, link %x is invalid", ixEntry.blockID[:], r[:])
 			}
 		}
 		return nil
@@ -332,25 +332,25 @@ func (handler *Store) checkBlockFromIXEntry(ixEntry *StorageIXEntry, verifiedBlo
 			core.Abort("%v", err)
 		} else {
 			core.Log(core.LogDebug, "%v", err)
-			handler.InvalidateIXEntry(ixEntry.blockID)
+			store.InvalidateIXEntry(ixEntry.blockID)
 		}
 	}
 	return err
 }
 
-func (handler *Store) CheckBlockTree(blockID core.Byte128, verifiedBlocks map[core.Byte128]bool, fullVerify bool, readOnly bool) error {
-	ixEntry, _, _, err := handler.readIXEntry(blockID)
+func (store *Store) CheckBlockTree(blockID core.Byte128, verifiedBlocks map[core.Byte128]bool, fullVerify bool, readOnly bool) error {
+	ixEntry, _, _, err := store.readIXEntry(blockID)
 	if err != nil {
 		return err
 	}
-	return handler.checkBlockFromIXEntry(ixEntry, verifiedBlocks, fullVerify, readOnly)
+	return store.checkBlockFromIXEntry(ixEntry, verifiedBlocks, fullVerify, readOnly)
 }
 
-func (handler *Store) CheckIndexes(verifiedBlocks map[core.Byte128]bool, fullVerify bool, readOnly bool) {
+func (store *Store) CheckIndexes(verifiedBlocks map[core.Byte128]bool, fullVerify bool, readOnly bool) {
 	var ixEntry StorageIXEntry
 
 	for ixFileNumber := int32(0); ; ixFileNumber++ {
-		ixFile := handler.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
+		ixFile := store.getNumberedFile(storageFileTypeIndex, ixFileNumber, false)
 		if ixFile == nil {
 			break // no more indexes
 		}
@@ -381,7 +381,7 @@ func (handler *Store) CheckIndexes(verifiedBlocks map[core.Byte128]bool, fullVer
 
 				v, checked := verifiedBlocks[ixEntry.blockID]
 				if !checked {
-					if err := handler.checkBlockFromIXEntry(&ixEntry, verifiedBlocks, fullVerify, readOnly); err != nil {
+					if err := store.checkBlockFromIXEntry(&ixEntry, verifiedBlocks, fullVerify, readOnly); err != nil {
 						core.Log(core.LogWarning, "Block tree for %x was marked invalid: %v", ixEntry.blockID[:], err)
 					}
 				} else {

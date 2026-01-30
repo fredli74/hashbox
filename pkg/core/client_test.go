@@ -3,7 +3,7 @@
 //	| # | |    Copyright 2015-2026
 //	+---+´
 
-// Hashbox core, version 0.1
+// Package core provides Hashbox core primitives.
 package core
 
 import (
@@ -24,8 +24,12 @@ type FauxServer struct {
 }
 
 func (c FauxServer) Close() error {
-	c.ServerReader.Close()
-	c.ServerWriter.Close()
+	if err := c.ServerReader.Close(); err != nil {
+		return err
+	}
+	if err := c.ServerWriter.Close(); err != nil {
+		return err
+	}
 	return nil
 }
 func (c FauxServer) Read(data []byte) (n int, err error)  { return c.ServerReader.Read(data) }
@@ -61,6 +65,6 @@ func TestClientInit(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	client.Close(true)
 
-	hdump.Close()
+	AbortOnError(hdump.Close())
 	_ = client
 }

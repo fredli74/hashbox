@@ -44,6 +44,7 @@ func (e *StorageDataEntry) UnserializeHeader(r io.Reader) (size int) {
 	return
 }
 
+// Unserialize allocates memory that needs to be freed manually.
 // IMPORTANT Unserialize allocates memory that needs to be freed manually
 func (e *StorageDataEntry) Unserialize(r io.Reader) (size int) {
 	size += e.UnserializeHeader(r)
@@ -53,19 +54,19 @@ func (e *StorageDataEntry) Unserialize(r io.Reader) (size int) {
 	size += e.block.Unserialize(r)
 	return
 }
-func (e *StorageDataEntry) VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool {
-	ixEntry, _, _, err := handler.readIXEntry(e.block.BlockID)
+func (e *StorageDataEntry) VerifyLocation(store *Store, fileNumber int32, fileOffset int64) bool {
+	ixEntry, _, _, err := store.readIXEntry(e.block.BlockID)
 	core.AbortOnError(err)
 	metaFileNumber, metaOffset := ixEntry.location.Get()
-	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+	metaEntry, err := store.readMetaEntry(metaFileNumber, metaOffset)
 	core.AbortOnError(err)
 
 	f, o := metaEntry.location.Get()
 	return f == fileNumber && o == fileOffset
 }
 
-func (handler *Store) writeBlockFile(block *core.HashboxBlock) bool {
-	_, ixFileNumber, ixOffset, err := handler.readIXEntry(block.BlockID)
+func (store *Store) writeBlockFile(block *core.HashboxBlock) bool {
+	_, ixFileNumber, ixOffset, err := store.readIXEntry(block.BlockID)
 	if err == nil {
 		// Block already exists
 		return false
@@ -77,7 +78,7 @@ func (handler *Store) writeBlockFile(block *core.HashboxBlock) bool {
 		}
 	}
 
-	datFileNumber, datOffset, datFile := handler.findFreeOffset(storageFileTypeData, -1)
+	datFileNumber, datOffset, datFile := store.findFreeOffset(storageFileTypeData, -1)
 
 	dataEntry := StorageDataEntry{block: block}
 	var data = new(bytes.Buffer)
@@ -90,7 +91,7 @@ func (handler *Store) writeBlockFile(block *core.HashboxBlock) bool {
 	metaEntry := StorageMetaEntry{blockID: block.BlockID, DataSize: dataSize, Links: block.Links}
 	metaEntry.location.Set(datFileNumber, datOffset)
 	// flush notice: writeMetaEntry always flushes meta file
-	metaFileNumber, metaOffset := handler.writeMetaEntry(0, 0, &metaEntry)
+	metaFileNumber, metaOffset := store.writeMetaEntry(0, 0, &metaEntry)
 
 	ixEntry := StorageIXEntry{flags: entryFlagExists, blockID: block.BlockID}
 	if len(block.Links) == 0 {
@@ -98,23 +99,23 @@ func (handler *Store) writeBlockFile(block *core.HashboxBlock) bool {
 	}
 	ixEntry.location.Set(metaFileNumber, metaOffset)
 	// flush notice: no need to force writeIXEntry to flush
-	handler.writeIXEntry(ixFileNumber, ixOffset, &ixEntry, false)
+	store.writeIXEntry(ixFileNumber, ixOffset, &ixEntry, false)
 	return true
 }
 
 // IMPORTANT readBlockFile allocates memory that needs to be freed manually
-func (handler *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, error) {
-	indexEntry, _, _, err := handler.readIXEntry(blockID)
+func (store *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, error) {
+	indexEntry, _, _, err := store.readIXEntry(blockID)
 	if err != nil {
 		return nil, err
 	}
 
 	metaFileNumber, metaOffset := indexEntry.location.Get()
-	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+	metaEntry, err := store.readMetaEntry(metaFileNumber, metaOffset)
 	core.AbortOnError(err)
 
 	dataFileNumber, dataOffset := metaEntry.location.Get()
-	dataFile := handler.getNumberedFile(storageFileTypeData, dataFileNumber, false)
+	dataFile := store.getNumberedFile(storageFileTypeData, dataFileNumber, false)
 	if dataFile == nil {
 		core.Abort("Error reading block from file %x, file does not exist", dataFileNumber)
 	}
@@ -126,16 +127,16 @@ func (handler *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, e
 	return dataEntry.block, nil
 }
 
-func (handler *Store) changeDataLocation(blockID core.Byte128, fileNumber int32, fileOffset int64) {
-	ixEntry, _, _, err := handler.readIXEntry(blockID)
+func (store *Store) changeDataLocation(blockID core.Byte128, fileNumber int32, fileOffset int64) {
+	ixEntry, _, _, err := store.readIXEntry(blockID)
 	core.AbortOnError(err)
 
 	metaFileNumber, metaOffset := ixEntry.location.Get()
-	metaEntry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+	metaEntry, err := store.readMetaEntry(metaFileNumber, metaOffset)
 	core.AbortOnError(err)
 
 	metaEntry.location.Set(fileNumber, fileOffset)
-	handler.writeMetaEntry(metaFileNumber, metaOffset, metaEntry)
+	store.writeMetaEntry(metaFileNumber, metaOffset, metaEntry)
 }
 
 func writeDataGap(writer *core.BufferedWriter, size int64) {

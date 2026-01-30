@@ -3,6 +3,7 @@
 //	| # | |    Copyright 2015-2026
 //	+---+´
 
+// Package storagedb provides block storage and indexing.
 package storagedb
 
 import (
@@ -169,7 +170,7 @@ func (store *Store) getNumberedFile(fileType int, fileNumber int32, create bool)
 func (store *Store) getNumberedFileSize(fileType int, fileNumber int32) (size int64, deadspace int64, err error) {
 	file := store.getNumberedFile(fileType, fileNumber, false)
 	if file == nil {
-		return 0, 0, fmt.Errorf("Trying to read free space from %.8X%s which does not exist", fileNumber, storageFileTypeInfo[fileType].Extension)
+		return 0, 0, fmt.Errorf("trying to read free space from %.8X%s which does not exist", fileNumber, storageFileTypeInfo[fileType].Extension)
 	}
 	name := getNumberedName(fileType, fileNumber)
 	return file.Size(), store.filedeadspace[name], nil
@@ -257,7 +258,7 @@ func (store *Store) SyncAll() {
 func (store *Store) Close() {
 	for s, f := range store.filepool {
 		core.Log(core.LogInfo, "Closing %s", s)
-		f.Close()
+		core.AbortOnError(f.Close())
 	}
 }
 

@@ -3,6 +3,7 @@
 //	| # | |    Copyright 2015-2026
 //	+---+´
 
+// Package lockablefile provides file locking helpers.
 package lockablefile
 
 import (

@@ -56,39 +56,39 @@ func (e *StorageMetaEntry) Unserialize(r io.Reader) (size int) {
 func (e *StorageMetaEntry) BlockID() core.Byte128 {
 	return e.blockID
 }
-func (e *StorageMetaEntry) VerifyLocation(handler *Store, fileNumber int32, fileOffset int64) bool {
-	ixEntry, _, _, err := handler.readIXEntry(e.blockID)
+func (e *StorageMetaEntry) VerifyLocation(store *Store, fileNumber int32, fileOffset int64) bool {
+	ixEntry, _, _, err := store.readIXEntry(e.blockID)
 	core.AbortOnError(err)
 	f, o := ixEntry.location.Get()
 	return f == fileNumber && o == fileOffset
 }
 
-func (handler *Store) killMetaEntry(blockID core.Byte128, metaFileNumber int32, metaOffset int64) (size int64) {
-	entry, err := handler.readMetaEntry(metaFileNumber, metaOffset)
+func (store *Store) killMetaEntry(blockID core.Byte128, metaFileNumber int32, metaOffset int64) (size int64) {
+	entry, err := store.readMetaEntry(metaFileNumber, metaOffset)
 	core.AbortOnError(err)
 	if entry.blockID.Compare(blockID) == 0 {
 		var data = new(bytes.Buffer)
 		entrySize := entry.Serialize(data)
-		handler.setDeadSpace(storageFileTypeMeta, metaFileNumber, int64(entrySize), true)
+		store.setDeadSpace(storageFileTypeMeta, metaFileNumber, int64(entrySize), true)
 		size += int64(entrySize)
 
 		dataFileNumber, _ := entry.location.Get()
-		handler.setDeadSpace(storageFileTypeData, dataFileNumber, int64(entry.DataSize), true)
+		store.setDeadSpace(storageFileTypeData, dataFileNumber, int64(entry.DataSize), true)
 		size += int64(entry.DataSize)
 	} else {
 		core.Abort("Incorrect block %x (should be %x) read on metadata location %x:%x", entry.blockID[:], blockID[:], metaFileNumber, metaOffset)
 	}
 	return size
 }
-func (handler *Store) writeMetaEntry(metaFileNumber int32, metaOffset int64, entry *StorageMetaEntry) (int32, int64) {
+func (store *Store) writeMetaEntry(metaFileNumber int32, metaOffset int64, entry *StorageMetaEntry) (int32, int64) {
 	var data = new(bytes.Buffer)
 	entry.Serialize(data)
 
 	var metaFile *core.BufferedFile
 	if metaOffset == 0 { // Offset 0 does not exist as it is in the header
-		metaFileNumber, metaOffset, metaFile = handler.findFreeOffset(storageFileTypeMeta, -1)
+		metaFileNumber, metaOffset, metaFile = store.findFreeOffset(storageFileTypeMeta, -1)
 	} else {
-		metaFile = handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
+		metaFile = store.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
 		_, err := metaFile.Writer.Seek(metaOffset, io.SeekStart)
 		core.AbortOnError(err)
 	}
@@ -100,16 +100,16 @@ func (handler *Store) writeMetaEntry(metaFileNumber int32, metaOffset int64, ent
 
 	return metaFileNumber, metaOffset
 }
-func (handler *Store) readMetaEntry(metaFileNumber int32, metaOffset int64) (metaEntry *StorageMetaEntry, err error) {
+func (store *Store) readMetaEntry(metaFileNumber int32, metaOffset int64) (metaEntry *StorageMetaEntry, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = r.(error)
 		}
 	}()
 
-	metaFile := handler.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
+	metaFile := store.getNumberedFile(storageFileTypeMeta, metaFileNumber, false)
 	if metaFile == nil {
-		return nil, fmt.Errorf("Error reading metadata cache from file %x, file does not exist", metaFileNumber)
+		return nil, fmt.Errorf("error reading metadata cache from file %x, file does not exist", metaFileNumber)
 	}
 	_, err = metaFile.Reader.Seek(metaOffset, io.SeekStart)
 	core.AbortOnError(err)
@@ -119,10 +119,10 @@ func (handler *Store) readMetaEntry(metaFileNumber int32, metaOffset int64) (met
 	return
 }
 
-func (handler *Store) changeMetaLocation(blockID core.Byte128, fileNumber int32, fileOffset int64) {
-	ixEntry, ixFileNumber, ixOffset, err := handler.readIXEntry(blockID)
+func (store *Store) changeMetaLocation(blockID core.Byte128, fileNumber int32, fileOffset int64) {
+	ixEntry, ixFileNumber, ixOffset, err := store.readIXEntry(blockID)
 	core.AbortOnError(err)
 	ixEntry.location.Set(fileNumber, fileOffset)
 	// flush notice: no need to flush, changeMetaLocation is only used during compacting and compact flushes between files
-	handler.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
+	store.writeIXEntry(ixFileNumber, ixOffset, ixEntry, false)
 }
