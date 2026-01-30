@@ -116,7 +116,7 @@ func handleConnection(conn net.Conn) {
 						if !unauthorized {
 							if !storageHandler.doesBlockExist(c.State.BlockID) {
 								reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-								reply.Data = &core.MsgServerError{ErrorMessage: "Dataset pointing to a non existent block"}
+								reply.Data = &core.MsgServerError{ErrorMessage: "Dataset pointing to a nonexistent block"}
 							} else {
 								core.AbortOnError(accountHandler.AddDatasetState(c.AccountNameH, c.DatasetName, c.State))
 								// No need to set any data in reply
@@ -181,7 +181,7 @@ func handleConnection(conn net.Conn) {
 							for _, l := range c.Block.Links {
 								if !storageHandler.doesBlockExist(l) {
 									reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-									reply.Data = &core.MsgServerError{ErrorMessage: core.String(fmt.Sprintf("Linked to non existent block: block=%x link=%x", c.Block.BlockID, l))}
+									reply.Data = &core.MsgServerError{ErrorMessage: core.String(fmt.Sprintf("Linked to nonexistent block: block=%x link=%x", c.Block.BlockID, l))}
 									break
 								}
 							}
