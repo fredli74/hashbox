@@ -11,7 +11,6 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
-	"github.com/fredli74/hashbox/pkg/storagedb"
 	"net"
 	"os"
 	"os/signal"
@@ -29,6 +28,7 @@ import (
 	cmd "github.com/fredli74/cmdparser"
 	"github.com/fredli74/hashbox/pkg/accountdb"
 	"github.com/fredli74/hashbox/pkg/core"
+	"github.com/fredli74/hashbox/pkg/storagedb"
 	"github.com/fredli74/lockfile"
 )
 
@@ -233,6 +233,8 @@ func run() (returnValue int) {
 	bytearray.EnableAutoGC(60, 74)
 
 	var err error
+
+	core.ApplyEnvUMASK()
 
 	var serverPort int64 = int64(DEFAULT_SERVER_IP_PORT)
 	datDirectory, err = filepath.Abs("data")

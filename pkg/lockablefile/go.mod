@@ -1,6 +1,6 @@
 module github.com/fredli74/hashbox/pkg/lockablefile
 
-go 1.24.12
+go 1.25.6
 
 require (
 	github.com/fredli74/hashbox/pkg/core v0.0.0-00010101000000-000000000000

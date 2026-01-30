@@ -48,6 +48,7 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+	core.ApplyEnvUMASK()
 	cmd.Title = fmt.Sprintf("Hashbox Util %s", Version)
 	cmd.ShowCurrentDefaults = true
 
