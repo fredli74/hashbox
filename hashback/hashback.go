@@ -74,7 +74,7 @@ func (p FileInfoSlice) Less(i, j int) bool { return p[i].Name() < p[j].Name() }
 func (p FileInfoSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 func pathLess(a, b string) bool {
-	return strings.Replace(a, string(os.PathSeparator), "\x01", -1) < strings.Replace(b, string(os.PathSeparator), "\x01", -1)
+	return strings.ReplaceAll(a, string(os.PathSeparator), "\x01") < strings.ReplaceAll(b, string(os.PathSeparator), "\x01")
 }
 
 type FileEntry struct {
@@ -132,7 +132,7 @@ func (e *FileEntry) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadUint32(r, &check)
 	if check != 0x66656E74 { // "fent"
-		panic(errors.New("Corrupted FileEntry"))
+		panic(errors.New("corrupted FileEntry"))
 	}
 	size += e.FileName.Unserialize(r)
 	size += core.ReadInt64(r, &e.FileSize)
@@ -172,7 +172,7 @@ func (b *FileChainBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadUint32(r, &check)
 	if check != 0x6663686E { // "fchn"
-		panic(errors.New("Corrupted FileChainBlock"))
+		panic(errors.New("corrupted FileChainBlock"))
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
@@ -201,7 +201,7 @@ func (b *DirectoryBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadUint32(r, &check)
 	if check != 0x64626C6B { // "dblk"
-		panic(errors.New("Corrupted DirectoryBlock"))
+		panic(errors.New("corrupted DirectoryBlock"))
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
@@ -246,7 +246,7 @@ func NewBackupSession() *BackupSession {
 
 func (session *BackupSession) Connect() *core.Client {
 	if session.AccessKey == nil || session.BackupKey == nil {
-		panic(errors.New("Missing -password option"))
+		panic(errors.New("missing -password option"))
 	}
 
 	// Resetting statistics
@@ -319,7 +319,7 @@ func (session *BackupSession) findPathMatch(rootBlockID core.Byte128, path strin
 		if len(filtered) > 0 {
 			return filtered, nil
 		}
-		return nil, fmt.Errorf("No match found on \"%s\"", path)
+		return nil, fmt.Errorf("no match found on \"%s\"", path)
 
 	} else if unmatched > 0 {
 		return nil, err
@@ -412,7 +412,7 @@ func main() {
 		}
 	}).OnSave(func() {
 		if session.User == "" {
-			panic(errors.New("Unable to save login unless both user and password options are specified"))
+			panic(errors.New("unable to save login unless both user and password options are specified"))
 		}
 	})
 
@@ -465,7 +465,7 @@ func main() {
 	})
 	cmd.Command("list", "<dataset> [(<backup-id>|.) [<path>]]", func() {
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 
 		session.Log(cmd.Title)
@@ -499,7 +499,7 @@ func main() {
 					}
 				}
 				if state == nil {
-					panic(errors.New("Backup id not found"))
+					panic(errors.New("backup id not found"))
 				}
 
 				var filelist []*FileEntry
@@ -559,7 +559,7 @@ func main() {
 				continue
 			}
 			if _, err := filepath.Match(ignore.match, "ignore"); err != nil {
-				panic(fmt.Errorf("Invalid ignore pattern %s", ignore.pattern))
+				panic(fmt.Errorf("invalid ignore pattern %s", ignore.pattern))
 			}
 
 			if os.IsPathSeparator(ignore.match[len(ignore.match)-1]) {
@@ -574,10 +574,10 @@ func main() {
 		}
 
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 		if len(cmd.Args) < 4 {
-			panic(errors.New("Missing source file or folder argument"))
+			panic(errors.New("missing source file or folder argument"))
 		}
 
 		session.Log(cmd.Title)
@@ -634,13 +634,13 @@ func main() {
 
 	cmd.Command("restore", "<dataset> (<backup-id>|.) [<path>...] <dest-folder>", func() {
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 		if len(cmd.Args) < 4 {
-			panic(errors.New("Missing backup id (or \".\")"))
+			panic(errors.New("missing backup id (or \".\")"))
 		}
 		if len(cmd.Args) < 5 {
-			panic(errors.New("Missing destination folder argument"))
+			panic(errors.New("missing destination folder argument"))
 		}
 
 		session.Log(cmd.Title)
@@ -665,11 +665,11 @@ func main() {
 				}
 			}
 			if found < 0 {
-				panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
+				panic(errors.New("backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
 			}
 		}
 		if found < 0 {
-			panic(errors.New("No backup found under dataset " + cmd.Args[2]))
+			panic(errors.New("no backup found under dataset " + cmd.Args[2]))
 		}
 
 		timestamp := binary.BigEndian.Uint64(list.States[found].State.StateID[:])
@@ -680,13 +680,13 @@ func main() {
 	})
 	cmd.Command("diff", "<dataset> (<backup-id>|.) [<path>...] <local-folder>", func() {
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 		if len(cmd.Args) < 4 {
-			panic(errors.New("Missing backup id (or \".\")"))
+			panic(errors.New("missing backup id (or \".\")"))
 		}
 		if len(cmd.Args) < 5 {
-			panic(errors.New("Missing destination folder argument"))
+			panic(errors.New("missing destination folder argument"))
 		}
 
 		session.Log(cmd.Title)
@@ -711,11 +711,11 @@ func main() {
 				}
 			}
 			if found < 0 {
-				panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
+				panic(errors.New("backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
 			}
 		}
 		if found < 0 {
-			panic(errors.New("No backup found under dataset " + cmd.Args[2]))
+			panic(errors.New("no backup found under dataset " + cmd.Args[2]))
 		}
 
 		timestamp := binary.BigEndian.Uint64(list.States[found].State.StateID[:])
@@ -729,10 +729,10 @@ func main() {
 	})
 	cmd.Command("remove", "<dataset> <backup-id>", func() {
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 		if len(cmd.Args) < 4 {
-			panic(errors.New("Missing backup id"))
+			panic(errors.New("missing backup id"))
 		}
 
 		session.Log(cmd.Title)
@@ -751,7 +751,7 @@ func main() {
 			}
 		}
 		if found < 0 {
-			panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
+			panic(errors.New("backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
 		}
 
 		fmt.Printf("Removing backup %x from %s\n", list.States[found].State.StateID, cmd.Args[2])

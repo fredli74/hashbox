@@ -54,7 +54,7 @@ func handleConnection(conn net.Conn) {
 		}
 
 		core.Log(core.LogInfo, "%s - Connection closed", remoteID)
-		conn.Close()
+		core.AbortOnError(conn.Close())
 	}()
 
 	var clientSession core.Session
@@ -286,7 +286,7 @@ func run() (returnValue int) {
 		go func() {
 			for s := range signalchan {
 				core.Log(core.LogInfo, "Received OS signal: %v", s)
-				listener.Close()
+				core.AbortOnError(listener.Close())
 				// done <- true
 				return
 			}

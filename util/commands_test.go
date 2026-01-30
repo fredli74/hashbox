@@ -119,7 +119,10 @@ func captureOutput(t *testing.T, fn func()) string {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 	fn()
-	w.Close()
+	err := w.Close()
+	if err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
 	os.Stdout = orig
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(r)

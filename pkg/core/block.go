@@ -178,8 +178,7 @@ func (b *HashboxBlock) zlibCompress() (dst bytearray.ByteArray) {
 	AbortOnError(err)
 	zw := zpool.GetWriter(&dst)
 	CopyOrPanic(zw, &b.Data)
-	err = zw.Close()
-	AbortOnError(err)
+	AbortOnError(zw.Close())
 	zpool.PutWriter(zw)
 	return dst
 }

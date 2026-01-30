@@ -178,9 +178,10 @@ func (c *commandSet) showBlock(blockIDStr string, verify bool) {
 		compressed = block.Data.Len()
 	}
 	sizeLine := fmt.Sprintf("Size: %s", compactHumanSize(int64(compressed)))
-	if block.DataType == core.BlockDataTypeZlib {
+	switch block.DataType {
+	case core.BlockDataTypeZlib:
 		sizeLine += " (zlib compressed)"
-	} else if block.DataType == core.BlockDataTypeRaw {
+	case core.BlockDataTypeRaw:
 		sizeLine += " (raw data)"
 	}
 	fmt.Println(sizeLine)

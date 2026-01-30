@@ -50,7 +50,7 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 
 	block := session.Client.ReadBlock(blockID)
 	if !block.VerifyBlock() {
-		panic(fmt.Errorf("Block %x corrupted, hash does not match", blockID))
+		panic(fmt.Errorf("block %x corrupted, hash does not match", blockID))
 	}
 
 	session.ReadData += int64(block.CompressedSize)
@@ -80,7 +80,7 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 				return err
 			}
 		default:
-			panic((fmt.Errorf("Invalid ContentType for a Symlink (%d)", e.ContentType)))
+			panic((fmt.Errorf("invalid ContentType for a symlink (%d)", e.ContentType)))
 		}
 	} else if e.FileMode&uint32(os.ModeDir) > 0 {
 		if err := os.MkdirAll(localpath, 0777); err != nil {
@@ -94,7 +94,7 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 			}
 		case ContentTypeEmpty:
 		default:
-			panic((fmt.Errorf("Invalid ContentType for a directory (%d)", e.ContentType)))
+			panic((fmt.Errorf("invalid ContentType for a directory (%d)", e.ContentType)))
 		}
 		if err := os.Chmod(localpath, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
 			return err
@@ -102,7 +102,7 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		session.Directories++
 	} else {
 		if e.ContentType != ContentTypeFileChain && e.ContentType != ContentTypeFileData && e.ContentType != ContentTypeEmpty {
-			panic((fmt.Errorf("Invalid ContentType for a file (%d)", e.ContentType)))
+			panic((fmt.Errorf("invalid ContentType for a file (%d)", e.ContentType)))
 		}
 		err := func() error {
 			fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(e.FileMode) /*&os.ModePerm*/)
@@ -173,7 +173,7 @@ func (session *BackupSession) changeDir(blockID core.Byte128, pathList []string)
 				return session.changeDir(f.ContentBlockID, pathList[1:])
 			}
 		}
-		return &dir, len(pathList), errors.New("Path not found")
+		return &dir, len(pathList), errors.New("path not found")
 	}
 	return &dir, len(pathList), nil
 }
@@ -234,7 +234,7 @@ func (session *BackupSession) diffAndPrint(startOffset int64, A io.Reader, B io.
 			core.AbortOnError(errB)
 		}
 		if nA != nB {
-			panic(errors.New("Unable to read local file"))
+			panic(errors.New("unable to read local file"))
 		}
 
 		if !bytes.Equal(bufA[:nA], bufB[:nA]) {
@@ -254,7 +254,7 @@ func (session *BackupSession) diffFileData(f *os.File, blockID core.Byte128, Dec
 
 	block := session.Client.ReadBlock(blockID)
 	if !block.VerifyBlock() {
-		panic((fmt.Errorf("Block %x corrupted, hash does not match", blockID[:])))
+		panic((fmt.Errorf("block %x corrupted, hash does not match", blockID[:])))
 	}
 
 	session.ReadData += int64(block.CompressedSize)
@@ -299,7 +299,7 @@ func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, e
 			}
 
 		default:
-			panic((fmt.Errorf("Invalid ContentType for a Symlink (%d)", e.ContentType)))
+			panic((fmt.Errorf("invalid ContentType for a symlink (%d)", e.ContentType)))
 		}
 	} else if e.FileMode&uint32(os.ModeDir) > 0 {
 		if !localinfo.IsDir() {
@@ -311,12 +311,12 @@ func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, e
 			session.diffDir(e.ContentBlockID, localname)
 		case ContentTypeEmpty:
 		default:
-			panic((fmt.Errorf("Invalid ContentType for a directory (%d)", e.ContentType)))
+			panic((fmt.Errorf("invalid ContentType for a directory (%d)", e.ContentType)))
 		}
 		session.Directories++
 	} else {
 		if e.ContentType != ContentTypeFileChain && e.ContentType != ContentTypeFileData && e.ContentType != ContentTypeEmpty {
-			panic((fmt.Errorf("Invalid ContentType for a file (%d)", e.ContentType)))
+			panic((fmt.Errorf("invalid ContentType for a file (%d)", e.ContentType)))
 		}
 		same, err = func() (bool, error) {
 			if e.FileSize != int64(localinfo.Size()) {

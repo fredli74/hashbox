@@ -230,7 +230,7 @@ func (session *BackupSession) storeDir(path string, entry *FileEntry) (id core.B
 	id = block.BlockID
 	if entry == nil || entry.ContentBlockID.Compare(id) != 0 {
 		if id.Compare(session.Client.StoreBlock(block)) != 0 {
-			panic(errors.New("ASSERT, server blockID != local blockID"))
+			panic(errors.New("assert, server blockID != local blockID"))
 		}
 	} else {
 		block.Release()
@@ -489,7 +489,7 @@ func (session *BackupSession) Store(datasetName string, path ...string) {
 			entry, err = session.storePath(s, true)
 			core.AbortOnError(err)
 			if entry == nil {
-				panic(fmt.Errorf("Unable to store %s", s))
+				panic(fmt.Errorf("unable to store %s", s))
 			} else if virtualRootDir != nil {
 				virtualRootDir.File = append(virtualRootDir.File, entry)
 				if entry.ContentType != ContentTypeEmpty {
@@ -627,7 +627,7 @@ func (r *referenceEngine) stop() {
 // Start reference loader
 func (r *referenceEngine) start(rootBlockID *core.Byte128) {
 	if r.stopChannel != nil {
-		panic(errors.New("ASSERT, r.stopChannel != nil, we called start twice"))
+		panic(errors.New("assert, r.stopChannel != nil, we called start twice"))
 	}
 
 	// Create new channels and start a new worker goroutine
@@ -640,13 +640,13 @@ func (r *referenceEngine) start(rootBlockID *core.Byte128) {
 
 func (r *referenceEngine) pushChannelEntry(entry *FileEntry) {
 	if r.stopped {
-		panic(errors.New("ASSERT, pushChannelEntry was called after reference engine was signalled to stop"))
+		panic(errors.New("assert, pushChannelEntry was called after reference engine was signalled to stop"))
 	}
 	select {
 	case <-r.stopChannel:
 		core.Log(core.LogDebug, "Reference loader received stop signal")
 		r.stopped = true
-		panic(errors.New("Reference loader was stopped"))
+		panic(errors.New("reference loader was stopped"))
 	case r.entryChannel <- entry:
 		// Dispatched next reference entry
 		return
@@ -753,7 +753,7 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 				core.Log(core.LogDebug, "Error: Panic raised in reference loader process (%v)", err)
 
 				select {
-				case r.errorChannel <- fmt.Errorf("Panic raised in reference loader process (%v)", err):
+				case r.errorChannel <- fmt.Errorf("panic raised in reference loader process (%v)", err):
 					core.Log(core.LogDebug, "Reference loader sent error on error channel")
 					r.stopped = true
 				default:
@@ -787,7 +787,10 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 			// Remove the resume file after it is consumed. Yes I know we could lose the last n* cached entries
 			// if process is aborted. But it is not that important, it's better to clean up to avoid downward
 			// spirals of making resume file after resume file after resume file
-			os.Remove(resumeFileList[i].Name())
+			err := os.Remove(resumeFileList[i].Name())
+			if err != nil && !os.IsNotExist(err) {
+				core.AbortOnError(err)
+			}
 		}
 	}
 
@@ -933,12 +936,15 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 			return nil
 		}
 		if match, _ := filepath.Match(cleanup, info.Name()); match {
-			os.Remove(path)
+			err := os.Remove(path)
+			if err != nil && !os.IsNotExist(err) {
+				core.AbortOnError(err)
+			}
 		}
 		return nil
 	})
 	core.AbortOnError(err)
-	r.cacheCurrent.Close()
+	core.AbortOnError(r.cacheCurrent.Close())
 	core.AbortOnError(os.Rename(tempPath, newCachePath))
 	r.cacheCurrent = nil
 }
@@ -948,7 +954,7 @@ func (r *referenceEngine) Close() {
 	// If not commited, we need to close and save the current cache
 	if r.cacheCurrent != nil {
 		currentName := r.cacheCurrent.Name()
-		r.cacheCurrent.Close()
+		core.AbortOnError(r.cacheCurrent.Close())
 		r.cacheCurrent = nil
 
 		partialName := (func() string {
