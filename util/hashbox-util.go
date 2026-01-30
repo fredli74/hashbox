@@ -30,7 +30,22 @@ var Version = "(dev-build)"
 func parseHostString(input string) (host string, port int) {
 	host = input
 	port = core.DefaultServerPort
-	if idx := strings.LastIndex(input, ":"); idx != -1 {
+	if strings.HasPrefix(input, "[") {
+		end := strings.LastIndex(input, "]")
+		core.ASSERT(end != -1, "invalid host %q", input)
+		host = input[1:end]
+		if end+1 < len(input) {
+			core.ASSERT(input[end+1] == ':', "invalid host %q", input)
+			pstr := input[end+2:]
+			p, err := strconv.Atoi(pstr)
+			core.AbortOnError(err, "invalid port %q: %v", pstr, err)
+			core.ASSERT(p > 0 && p < 65536, "port out of range")
+			port = p
+		}
+		return
+	}
+	if strings.Count(input, ":") == 1 {
+		idx := strings.LastIndex(input, ":")
 		host = input[:idx]
 		p, err := strconv.Atoi(input[idx+1:])
 		core.AbortOnError(err, "invalid port %q: %v", input[idx+1:], err)
