@@ -52,7 +52,7 @@ func resolveDatasetName(store *accountdb.Store, accountNameH core.Byte128, input
 			return ds.DatasetName, nil
 		}
 		// Try parsed hash (hex or base64) matches dataset name hash
-		if hashCompare && hash.Compare(core.Hash([]byte(ds.DatasetName))) == 0 {
+		if hashCompare && hash.Compare(ds.DatasetNameH) == 0 {
 			return ds.DatasetName, nil
 		}
 	}

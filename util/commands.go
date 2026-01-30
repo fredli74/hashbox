@@ -59,7 +59,7 @@ func (c *commandSet) listDatasets(accountName string) {
 
 	fmt.Printf("Account: [%s] %s\n", formatHash(accountNameH), core.Escape(accName))
 	for _, ds := range datasets {
-		datasetHash := formatHash(core.Hash([]byte(ds.DatasetName)))
+		datasetHash := formatHash(ds.DatasetNameH)
 		if collection := store.ReadDBFile(accountNameH, ds.DatasetName); collection != nil {
 			if len(collection.States) > 0 {
 				latest := collection.States[len(collection.States)-1]
