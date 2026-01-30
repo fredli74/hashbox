@@ -126,7 +126,7 @@ if [[ "$USE_DOCKER" -eq 1 ]]; then
   echo "Starting server container on 127.0.0.1:$PORT ..."
   "$DOCKER_CMD" run -d --name hashbox-e2e \
     --user "$DOCKER_USER" \
-    -p "$PORT:$PORT" \
+    -p "127.0.0.1:$PORT:$PORT" \
     -v "$DATA_DIR:/data" \
     -v "$IDX_DIR:/index" \
     hashbox:local /usr/local/bin/hashbox-server -port "$PORT" -loglevel "$LOG_LEVEL" >/dev/null
@@ -223,7 +223,7 @@ if [[ "$USE_DOCKER" -eq 1 ]]; then
   echo "Starting sync server on 127.0.0.1:$SYNC_PORT ..."
   "$DOCKER_CMD" run -d --name hashbox-e2e-sync \
     --user "$DOCKER_USER" \
-    -p "$SYNC_PORT:$SYNC_PORT" \
+    -p "127.0.0.1:$SYNC_PORT:$SYNC_PORT" \
     -v "$SYNC_DATA_DIR:/data" \
     -v "$SYNC_IDX_DIR:/index" \
     hashbox:local /usr/local/bin/hashbox-server -port "$SYNC_PORT" -loglevel "$LOG_LEVEL" >/dev/null
