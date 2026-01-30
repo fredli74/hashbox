@@ -1,6 +1,6 @@
 //	 ,+---+
 //	+---+´|    HASHBOX SOURCE
-//	| # | |    Copyright 2015-2024
+//	| # | |    Copyright 2015-2026
 //	+---+´
 
 package main
@@ -12,7 +12,7 @@ import (
 
 	"github.com/fredli74/bytearray"
 	cmd "github.com/fredli74/cmdparser"
-	"github.com/fredli74/hashbox/core"
+	"github.com/fredli74/hashbox/pkg/core"
 	"github.com/fredli74/lockfile"
 
 	"bytes"
@@ -27,6 +27,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -49,19 +50,6 @@ var CustomIgnoreList []string
 // const MAX_DEPTH int = 512 // Safety limit to avoid cyclic symbolic links and such
 
 var DEBUG bool = false
-
-func PanicOn(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-func SoftError(err error) {
-	fmt.Println("!!!", err)
-}
-func HardError(err error) {
-	panic(err)
-}
 
 func SerializeToBuffer(what core.Serializer) []byte {
 	buf := bytes.NewBuffer(nil)
@@ -86,7 +74,7 @@ func (p FileInfoSlice) Less(i, j int) bool { return p[i].Name() < p[j].Name() }
 func (p FileInfoSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 func pathLess(a, b string) bool {
-	return strings.Replace(a, string(os.PathSeparator), "\x01", -1) < strings.Replace(b, string(os.PathSeparator), "\x01", -1)
+	return strings.ReplaceAll(a, string(os.PathSeparator), "\x01") < strings.ReplaceAll(b, string(os.PathSeparator), "\x01")
 }
 
 type FileEntry struct {
@@ -144,7 +132,7 @@ func (e *FileEntry) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadUint32(r, &check)
 	if check != 0x66656E74 { // "fent"
-		panic(errors.New("Corrupted FileEntry"))
+		panic(errors.New("corrupted FileEntry"))
 	}
 	size += e.FileName.Unserialize(r)
 	size += core.ReadInt64(r, &e.FileSize)
@@ -184,7 +172,7 @@ func (b *FileChainBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadUint32(r, &check)
 	if check != 0x6663686E { // "fchn"
-		panic(errors.New("Corrupted FileChainBlock"))
+		panic(errors.New("corrupted FileChainBlock"))
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
@@ -213,7 +201,7 @@ func (b *DirectoryBlock) Unserialize(r io.Reader) (size int) {
 	var check uint32
 	size += core.ReadUint32(r, &check)
 	if check != 0x64626C6B { // "dblk"
-		panic(errors.New("Corrupted DirectoryBlock"))
+		panic(errors.New("corrupted DirectoryBlock"))
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
@@ -258,7 +246,7 @@ func NewBackupSession() *BackupSession {
 
 func (session *BackupSession) Connect() *core.Client {
 	if session.AccessKey == nil || session.BackupKey == nil {
-		panic(errors.New("Missing -password option"))
+		panic(errors.New("missing -password option"))
 	}
 
 	// Resetting statistics
@@ -331,7 +319,7 @@ func (session *BackupSession) findPathMatch(rootBlockID core.Byte128, path strin
 		if len(filtered) > 0 {
 			return filtered, nil
 		}
-		return nil, fmt.Errorf("No match found on \"%s\"", path)
+		return nil, fmt.Errorf("no match found on \"%s\"", path)
 
 	} else if unmatched > 0 {
 		return nil, err
@@ -368,13 +356,13 @@ func main() {
 				LocalStoragePath = filepath.Join(home, ".hashback")
 			}
 		}
-		err = os.MkdirAll(LocalStoragePath, 0700)
-		PanicOn(err)
+		core.AbortOnError(os.MkdirAll(LocalStoragePath, 0700))
 	}
 
 	session := NewBackupSession()
 
 	cmd.Title = fmt.Sprintf("Hashback %s (Hashbox Backup Client)", Version)
+	cmd.ShowCurrentDefaults = true
 
 	cmd.OptionsFile = filepath.Join(LocalStoragePath, "options.json")
 
@@ -424,7 +412,7 @@ func main() {
 		}
 	}).OnSave(func() {
 		if session.User == "" {
-			panic(errors.New("Unable to save login unless both user and password options are specified"))
+			panic(errors.New("unable to save login unless both user and password options are specified"))
 		}
 	})
 
@@ -475,9 +463,9 @@ func main() {
 		}
 
 	})
-	cmd.Command("list", "<dataset> [(<backup id>|.) [\"<path>\"]]", func() {
+	cmd.Command("list", "<dataset> [(<backup-id>|.) [<path>]]", func() {
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 
 		session.Log(cmd.Title)
@@ -511,7 +499,7 @@ func main() {
 					}
 				}
 				if state == nil {
-					panic(errors.New("Backup id not found"))
+					panic(errors.New("backup id not found"))
 				}
 
 				var filelist []*FileEntry
@@ -521,9 +509,7 @@ func main() {
 				}
 				var err error
 				filelist, err = session.findPathMatch(state.BlockID, listpath)
-				if err != nil {
-					panic(err)
-				}
+				core.AbortOnError(err)
 
 				fmt.Printf("Listing %s\n", listpath)
 				if len(filelist) > 0 {
@@ -554,13 +540,15 @@ func main() {
 	var pidName string = ""
 	var retainWeeks int64 = 0
 	var retainDays int64 = 0
+	var retainYearly bool = false
 	var intervalBackup int64 = 0
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &CustomIgnoreList, cmd.Standard|cmd.Preference)
 	cmd.IntOption("interval", "store", "<minutes>", "Keep running backups every <minutes> until interrupted", &intervalBackup, cmd.Standard)
-	cmd.IntOption("retaindays", "store", "<days>", "Remove backups older than 24h but keep one per day for <days>, 0 = keep all daily", &retainDays, cmd.Standard|cmd.Preference)
-	cmd.IntOption("retainweeks", "store", "<weeks>", "Remove backups older than 24h but keep one per week for <weeks>, 0 = keep all weekly", &retainWeeks, cmd.Standard|cmd.Preference)
-	cmd.Command("store", "<dataset> (<folder> | <file>)...", func() {
+	cmd.IntOption("retaindays", "store", "<days>", "Activate retention, prune backups older than 24h, keep one per day for <days> (default, 0 = keep all daily)", &retainDays, cmd.Standard|cmd.Preference)
+	cmd.IntOption("retainweeks", "store", "<weeks>", "Activate retention, prune backups older than 24h, keep one per week for <weeks> (0 = keep all weekly)", &retainWeeks, cmd.Standard|cmd.Preference)
+	cmd.BoolOption("retainyearly", "store", "Activate retention, prune backups older than 24h, keep the last backup of each year", &retainYearly, cmd.Standard|cmd.Preference)
+	cmd.Command("store", "<dataset> (<folder>|<file>)...", func() {
 		ignoreList := append(DefaultIgnoreList, CustomIgnoreList...)
 		ignoreList = append(ignoreList, filepath.Join(LocalStoragePath, "*.cache*"))
 
@@ -571,14 +559,14 @@ func main() {
 				continue
 			}
 			if _, err := filepath.Match(ignore.match, "ignore"); err != nil {
-				panic(fmt.Errorf("Invalid ignore pattern %s", ignore.pattern))
+				panic(fmt.Errorf("invalid ignore pattern %s", ignore.pattern))
 			}
 
 			if os.IsPathSeparator(ignore.match[len(ignore.match)-1]) {
 				ignore.match = ignore.match[:len(ignore.match)-1]
 				ignore.dirmatch = true
 			}
-			if strings.IndexRune(ignore.match, os.PathSeparator) >= 0 { // path in pattern
+			if strings.ContainsRune(ignore.match, os.PathSeparator) { // path in pattern
 				ignore.pathmatch = true
 			}
 
@@ -586,10 +574,10 @@ func main() {
 		}
 
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 		if len(cmd.Args) < 4 {
-			panic(errors.New("Missing source file or folder argument"))
+			panic(errors.New("missing source file or folder argument"))
 		}
 
 		session.Log(cmd.Title)
@@ -613,8 +601,8 @@ func main() {
 				if latestBackup > 0 || intervalBackup == 0 {
 					session.State = &core.DatasetState{StateID: session.Client.SessionNonce}
 					session.Store(cmd.Args[2], cmd.Args[3:]...)
-					if retainWeeks > 0 || retainDays > 0 {
-						session.Retention(cmd.Args[2], int(retainDays), int(retainWeeks))
+					if retainWeeks > 0 || retainDays > 0 || retainYearly {
+						session.Retention(cmd.Args[2], int(retainDays), int(retainWeeks), retainYearly)
 					}
 					latestBackup = binary.BigEndian.Uint64(session.State.StateID[:])
 					date := time.Unix(0, int64(latestBackup))
@@ -644,15 +632,15 @@ func main() {
 		}
 	})
 
-	cmd.Command("restore", "<dataset> (<backup id>|.) [\"<path>\"...] <dest-folder>", func() {
+	cmd.Command("restore", "<dataset> (<backup-id>|.) [<path>...] <dest-folder>", func() {
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 		if len(cmd.Args) < 4 {
-			panic(errors.New("Missing backup id (or \".\")"))
+			panic(errors.New("missing backup id (or \".\")"))
 		}
 		if len(cmd.Args) < 5 {
-			panic(errors.New("Missing destination folder argument"))
+			panic(errors.New("missing destination folder argument"))
 		}
 
 		session.Log(cmd.Title)
@@ -677,11 +665,11 @@ func main() {
 				}
 			}
 			if found < 0 {
-				panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
+				panic(errors.New("backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
 			}
 		}
 		if found < 0 {
-			panic(errors.New("No backup found under dataset " + cmd.Args[2]))
+			panic(errors.New("no backup found under dataset " + cmd.Args[2]))
 		}
 
 		timestamp := binary.BigEndian.Uint64(list.States[found].State.StateID[:])
@@ -690,15 +678,15 @@ func main() {
 
 		session.Restore(list.States[found].State.BlockID, restorepath, restorelist...)
 	})
-	cmd.Command("diff", "<dataset> (<backup id>|.) [\"<path>\"...] <local-folder>", func() {
+	cmd.Command("diff", "<dataset> (<backup-id>|.) [<path>...] <local-folder>", func() {
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 		if len(cmd.Args) < 4 {
-			panic(errors.New("Missing backup id (or \".\")"))
+			panic(errors.New("missing backup id (or \".\")"))
 		}
 		if len(cmd.Args) < 5 {
-			panic(errors.New("Missing destination folder argument"))
+			panic(errors.New("missing destination folder argument"))
 		}
 
 		session.Log(cmd.Title)
@@ -723,11 +711,11 @@ func main() {
 				}
 			}
 			if found < 0 {
-				panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
+				panic(errors.New("backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
 			}
 		}
 		if found < 0 {
-			panic(errors.New("No backup found under dataset " + cmd.Args[2]))
+			panic(errors.New("no backup found under dataset " + cmd.Args[2]))
 		}
 
 		timestamp := binary.BigEndian.Uint64(list.States[found].State.StateID[:])
@@ -739,12 +727,12 @@ func main() {
 			os.Exit(2)
 		}
 	})
-	cmd.Command("remove", "<dataset> <backup id>", func() {
+	cmd.Command("remove", "<dataset> <backup-id>", func() {
 		if len(cmd.Args) < 3 {
-			panic(errors.New("Missing dataset argument"))
+			panic(errors.New("missing dataset argument"))
 		}
 		if len(cmd.Args) < 4 {
-			panic(errors.New("Missing backup id"))
+			panic(errors.New("missing backup id"))
 		}
 
 		session.Log(cmd.Title)
@@ -763,7 +751,7 @@ func main() {
 			}
 		}
 		if found < 0 {
-			panic(errors.New("Backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
+			panic(errors.New("backup id " + cmd.Args[3] + " not found in dataset " + cmd.Args[2]))
 		}
 
 		fmt.Printf("Removing backup %x from %s\n", list.States[found].State.StateID, cmd.Args[2])
@@ -772,8 +760,7 @@ func main() {
 
 	signalchan := make(chan os.Signal, 1)
 	defer close(signalchan)
-	signal.Notify(signalchan, os.Interrupt)
-	signal.Notify(signalchan, os.Kill)
+	signal.Notify(signalchan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		for range signalchan {
 			if session != nil {
@@ -787,7 +774,7 @@ func main() {
 	}()
 
 	if err := cmd.Parse(); err != nil {
-		panic(err)
+		core.AbortOnError(err)
 	}
 }
 
@@ -799,23 +786,20 @@ func GenerateBackupKey(account string, password string) core.Byte128 {
 }
 func GenerateDataEncryptionKey() core.Byte128 {
 	var key core.Byte128
-	rand.Read(key[:])
+	_, err := rand.Read(key[:])
+	core.AbortOnError(err)
 	return key
 }
 func DecryptDataInPlace(cipherdata []byte, key core.Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	if err != nil {
-		panic(err)
-	}
+	core.AbortOnError(err)
 
 	aesStream := cipher.NewCBCDecrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(cipherdata, cipherdata)
 }
 func EncryptDataInPlace(data []byte, key core.Byte128) {
 	aesCipher, err := aes.NewCipher(key[:])
-	if err != nil {
-		panic(err)
-	}
+	core.AbortOnError(err)
 
 	aesStream := cipher.NewCBCEncrypter(aesCipher, []byte("*HB*AES*DATA*IV*"))
 	aesStream.CryptBlocks(data, data)
