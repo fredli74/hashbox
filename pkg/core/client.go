@@ -36,8 +36,10 @@ type Client struct {
 	sendworkers         int32  // number of active send workers
 	transmittedBlocks   int32  // number of transmitted blocks
 	skippedBlocks       int32  // number of skipped blocks
+	blockQueueLen       int32  // number of items in block queue
 	WriteData           int64  // total data written
 	WriteDataCompressed int64  // total compressed data written
+	blockQueueSize      int64  // queue size in bytes
 
 	Session
 	AccessKey Byte128 // = hmac^20000( AccountName "*ACCESS*KEY*PAD*", md5( password ))
@@ -58,8 +60,6 @@ type Client struct {
 	// mutex protected
 	dispatchMutex  sync.Mutex
 	closing        bool
-	blockQueueSize int64 // queue size in bytes
-	blockQueueLen  int32 // number of items in block queue
 	blockQueueMap  map[Byte128]*blockQueueEntry
 	blockQueueList []*blockQueueEntry
 
