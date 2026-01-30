@@ -54,7 +54,9 @@ func handleConnection(conn net.Conn) {
 		}
 
 		core.Log(core.LogInfo, "%s - Connection closed", remoteID)
-		core.AbortOnError(conn.Close())
+		if err := conn.Close(); err != nil {
+			core.Log(core.LogWarning, "%s - Error closing connection: %v", remoteID, err)
+		}
 	}()
 
 	var clientSession core.Session
