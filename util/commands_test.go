@@ -116,14 +116,22 @@ func TestShowBlock(t *testing.T) {
 func captureOutput(t *testing.T, fn func()) string {
 	t.Helper()
 	orig := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer func() {
+		os.Stdout = orig
+		if err := r.Close(); err != nil {
+			t.Fatalf("close pipe reader: %v", err)
+		}
+	}()
 	os.Stdout = w
 	fn()
-	err := w.Close()
+	err = w.Close()
 	if err != nil {
 		t.Fatalf("close pipe writer: %v", err)
 	}
-	os.Stdout = orig
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(r)
 	return buf.String()
