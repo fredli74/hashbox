@@ -1,7 +1,7 @@
 ```
 	 ,+---+    
 	+---+´|    HASHBOX / HASHBACK
-	| # | |    Copyright 2015-2024 Fredrik Lidström
+	| # | |    Copyright 2015-2026 Fredrik Lidström
 	+---+´     
 ```
 
@@ -29,6 +29,7 @@ Hashbox is a cross-platform derivate of a proprietary backup system (called BUP)
 * The server keeps a pure transactional database of datasets and dataset versions for each account
 * Datasets contains a name, version and a reference to a "root" block ID
 * Everything not referenced by a dataset is subject to GC
+* Supports Docker deployment - see [DOCKER.md](DOCKER.md) for setup instructions
 
 ### Starting the server ###
 
@@ -41,7 +42,13 @@ Hashbox is a cross-platform derivate of a proprietary backup system (called BUP)
 
 `./hashbox-freebsd-amd64 [-port=<port>] [-data=<path>] [-index=<path>] [-loglevel=<level>]`
 
-Optional arguments `-data` and `-index` will tell the server where to keep all data and index/metadata files. If possible, the index files should be placed on fast storage such as SSD as they are used in every single access. These files can also be recreated from the data files by running the recover command.
+Optional arguments:
+* `-data` and `-index` tell the server where to keep all data and index/metadata files. If possible, the index files should be placed on fast storage such as SSD as they are used in every single access. These files can also be recreated from the data files by running the recover command.
+* `-loglevel` sets the logging verbosity (0=errors, 1=warnings, 2=info, 3=debug, 4=trace)
+
+**Environment variables**
+
+* `UMASK` - Set file creation permissions mask in octal format (default: `077` for owner-only access). Example: `UMASK=027` for group-readable files.
 
 
 **Run a garbage collect (GC)**
@@ -70,11 +77,13 @@ Recover will go through all data files and rebuild index and meta data. Optional
 * Each block hash (block ID) is calculated and sent to the server.
 * Server requests only blocks that it does not already have. In combination with the rollsum splitting this allows the server to only request parts of files that were not previously stored.
 * File metadata such as file name, size, modification time and attributes are stored in a directory block.
+* Symbolic links are preserved during backup and restore.
 * A tree of directory blocks are then saved as a dataset version to the server.
 * During backup, a full file list is saved locally in a cache file. This cache is used as a reference during the next incremental backup, allowing fast file skipping based on file name, size and date.
 * Incremental backups are done by always checking the root block ID of the last backup. If the ID is the same as the local cache file, the cache will be used, otherwise the full file reference list is downloaded from the server.
-* A standard set of platform-specific files to ignore is included. Addtional files to ignore can be added with the -ignore option.
-* Optional retention of old backups allows you to keep weekly and daily backups for a specified duration (backups made in the past 24 hours are always kept).
+* A standard set of platform-specific files to ignore is automatically excluded (e.g., /dev, /proc, /sys on Unix; temporary folders and Recycle Bin on Windows; system caches on macOS). Additional files to ignore can be added with the -ignore option.
+* Dropbox Smart Sync placeholder files (cloud-only files) are automatically detected and skipped during backup.
+* Optional retention of old backups allows you to keep yearly, weekly and daily backups for a specified duration (backups made in the past 24 hours are always kept).
 
 ### Using the client ###
 
@@ -97,9 +106,16 @@ Ignore is case sensitive (even on Windows platform) so make sure it matches with
 
 **Create a backup**
 
-`./hashback -retaindays=7 -retainweeks=10 store <dataset> (<folder> | <file>)...`
+`./hashback -retaindays=7 -retainweeks=10 -retainyearly store <dataset> (<folder> | <file>)...`
 
-In the example above, all backups for the past 24 hours will be kept, 1 backup per day for 7 days and 1 backup per week for 10 weeks. Everything else will be removed after a successful backup.
+In the example above, all backups for the past 24 hours will be kept, 1 backup per day for 7 days, 1 backup per week for 10 weeks, and the last backup of each year. Everything else will be removed after a successful backup.
+
+Additional backup options:
+* `-full` - Force a full (non-incremental) backup
+* `-verbose` - Enable verbose output
+* `-progress` - Show progress information
+* `-paint` - Use colored/formatted output
+* `-pid=<filename>` - Create a PID/lock file to prevent multiple simultaneous backups
 
 
 **Run continuous backup**
@@ -147,5 +163,5 @@ Things that should be implemented or considered
 * Server recover broken chains, the only reliable solution now is to GC and remove everything that gets unlinked
 * Server mirroring.
 * Client GUI.
-* Client data encryption (system design allows it).
+* Client data encryption (infrastructure in place, not yet user-facing).
 * Server quota calculations and restrictions (combine it with GC index mark phase?).
