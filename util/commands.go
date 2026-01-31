@@ -139,6 +139,10 @@ func (c *commandSet) rebuildDB(account, dataset string) {
 		if info == nil {
 			core.Abort("account info missing for %s", acc.Filename)
 		}
+		if dataset == "" {
+			info.Datasets = nil
+			store.WriteInfoFile(acc.AccountNameH, *info)
+		}
 		datasets, err := store.ListDatasets(&acc.AccountNameH)
 		core.AbortOnError(err, "list datasets for %s: %v", info.AccountName, err)
 		for _, ds := range datasets {
