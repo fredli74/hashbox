@@ -48,7 +48,7 @@ Optional arguments:
 
 **Environment variables**
 
-* `UMASK` - Set file creation permissions mask in octal format (default: `077` for owner-only access). Example: `UMASK=027` for group-readable files.
+* `UMASK` - Set file creation permissions mask in octal format (default: `077` for owner-only access). Example: `UMASK=027` for group-readable files. Controls access permissions for server data files (.dat, .meta, .idx, .db, .trn).
 
 
 **Run a garbage collect (GC)**
@@ -114,7 +114,7 @@ Additional backup options:
 * `-full` - Force a full (non-incremental) backup
 * `-verbose` - Enable verbose output
 * `-progress` - Show progress information
-* `-paint` - Use colored/formatted output
+* `-paint` - Draw symbols for each block operation (* = uploaded, - = skipped, space = unchanged)
 * `-pid=<filename>` - Create a PID/lock file to prevent multiple simultaneous backups
 
 
