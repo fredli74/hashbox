@@ -17,25 +17,33 @@ Hashbox is a cross-platform, general-purpose data block storage system with an e
 
 ## Tech Stack
 
-- **Language:** Go (minimum 1.22.1, most modules use 1.22.5)
+- **Language:** Go 1.25.6
 - **Core libraries:**
   - `github.com/fredli74/bytearray` - Byte array handling
   - `github.com/fredli74/cmdparser` - Command-line parsing
   - `github.com/fredli74/lockfile` - File locking
 - **Compression:** zlib (built-in)
-- **Build system:** Shell scripts (`build_all.sh`)
+- **Build system:** Shell scripts in `scripts/` directory
 - **Testing:** Go's built-in testing framework
+- **Containerization:** Docker with docker-compose support
 
 ## Project Structure
 
 ```
 hashbox/
-├── core/           - Core library with block handling, protocol, and client code
-├── server/         - Server implementation with storage and account management
-├── hashback/       - Backup client with store, restore, and diff operations
-├── docs/           - Documentation and setup guides
-├── scripts/        - Test scripts including E2E smoke tests
-└── build_all.sh    - Multi-platform build script
+├── pkg/                - Shared packages
+│   ├── core/          - Core library with block handling, protocol, and client code
+│   ├── accountdb/     - Account database management
+│   ├── storagedb/     - Storage database management
+│   └── lockablefile/  - Lockable file utilities
+├── server/            - Server implementation
+├── hashback/          - Backup client with store, restore, and diff operations
+├── util/              - Utility commands (hashbox-util)
+├── scripts/           - Build and test scripts (build_all.sh, e2e_hashbox.sh, docker_*.sh)
+├── docs/              - Documentation and setup guides
+├── Dockerfile         - Container image definition
+├── docker-compose.yml - Docker Compose configuration
+└── .golangci.yml      - Linter configuration
 ```
 
 ## Coding Guidelines
@@ -107,15 +115,22 @@ hashbox/
 ### Building the project
 ```bash
 # Format and build all binaries for multiple platforms
-./build_all.sh
+./scripts/build_all.sh
+
+# Build Docker image
+./scripts/docker_build.sh
 ```
 
 ### Running tests
 ```bash
 # Test per module (default approach)
-cd core && go test ./...
+cd pkg/core && go test ./...
+cd pkg/accountdb && go test ./...
+cd pkg/storagedb && go test ./...
+cd pkg/lockablefile && go test ./...
 cd server && go test ./...
 cd hashback && go test ./...
+cd util && go test ./...
 
 # Or test a specific package
 cd server && go test -v
