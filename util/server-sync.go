@@ -53,37 +53,26 @@ func buildSyncID(host string, port int) string {
 	return id
 }
 
-func matchesPattern(acc, ds string, patterns []string) bool {
-	if len(patterns) == 0 {
+// shouldInclude checks if the given account/dataset should be included based on include/exclude patterns.
+// If ds is empty, only account-level excludes can return false early; dataset-specific excludes are ignored
+// so the caller can still decide per-dataset. Any include for the account enables handling the account.
+func shouldInclude(acc string, ds string, include, exclude []string) bool {
+	for _, p := range exclude {
+		parts := strings.SplitN(p, ":", 2)
+		if parts[0] == acc && (len(parts) == 1 || parts[1] == ds) {
+			return false
+		}
+	}
+	if len(include) == 0 {
 		return true
 	}
-	for _, p := range patterns {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if strings.Contains(p, ":") {
-			parts := strings.SplitN(p, ":", 2)
-			if parts[0] == acc && (parts[1] == "" || parts[1] == ds) {
-				return true
-			}
-			continue
-		}
-		if p == acc {
+	for _, p := range include {
+		parts := strings.SplitN(p, ":", 2)
+		if parts[0] == acc && (ds == "" || len(parts) == 1 || parts[1] == ds) {
 			return true
 		}
 	}
 	return false
-}
-
-func shouldInclude(acc, ds string, include, exclude []string) bool {
-	if !matchesPattern(acc, ds, include) {
-		return false
-	}
-	if len(exclude) > 0 && matchesPattern(acc, ds, exclude) {
-		return false
-	}
-	return true
 }
 
 func (c *commandSet) syncRun(remoteHost string, remotePort int, include, exclude []string, dryRun bool) {
