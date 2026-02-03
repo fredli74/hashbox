@@ -212,3 +212,40 @@ func TestLockOrdersConcurrentWrites(t *testing.T) {
 		t.Fatalf("writes interleaved; saw label sequence %v:\n%s", sequence, string(out))
 	}
 }
+
+func TestLockDoublePanics(t *testing.T) {
+	dir := testDir(t, "double-lock")
+	lockPath := filepath.Join(dir, "lock.test")
+	l, err := OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer l.Close()
+
+	l.Lock()
+	defer l.Unlock()
+
+	defer func() {
+		if rec := recover(); rec == nil {
+			t.Fatal("expected panic on double lock")
+		}
+	}()
+	l.Lock()
+}
+
+func TestUnlockWithoutLockPanics(t *testing.T) {
+	dir := testDir(t, "unlock-without-lock")
+	lockPath := filepath.Join(dir, "lock.test")
+	l, err := OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer l.Close()
+
+	defer func() {
+		if rec := recover(); rec == nil {
+			t.Fatal("expected panic on unlock without lock")
+		}
+	}()
+	l.Unlock()
+}

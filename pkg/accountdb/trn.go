@@ -153,34 +153,29 @@ func (fs *Store) WriteTrnFile(accountNameH core.Byte128, datasetName core.String
 
 // TxReader is a tolerant streaming reader over a .trn file.
 type TxReader struct {
-	fh *lockablefile.LockableFile // locked file handle
+	fh *lockablefile.LockableFile
 }
 
 // NewTxReader opens and validates a .trn file and returns a reader.
 func (fs *Store) NewTxReader(accountNameH core.Byte128, datasetName core.String) (*TxReader, error) {
 	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionTransaction
-	lock, err := lockablefile.Open(filename)
+	fh, err := lockablefile.Open(filename)
 	if err != nil {
 		return nil, err
 	}
 
-	locked := false
 	defer func() {
+		// Handle early panics by closing the file, as it's typically done before the caller sets up a defer.
 		if rec := recover(); rec != nil {
-			if locked {
-				lock.Unlock()
-			}
-			lock.Close()
+			fh.Close()
 			panic(rec)
 		}
 	}()
 
-	lock.LockShared()
-	locked = true
-
-	f := lock
 	var header dbFileHeader
-	header.Unserialize(f)
+	fh.LockShared()
+	header.Unserialize(fh)
+	fh.Unlock()
 	if header.filetype != DbFileTypeTransaction {
 		core.Abort("File %s is not a valid transaction file", filename)
 	}
@@ -190,13 +185,12 @@ func (fs *Store) NewTxReader(accountNameH core.Byte128, datasetName core.String)
 	if header.datasetName != datasetName {
 		core.Abort("%s dataset name mismatch in header", filename)
 	}
-	return &TxReader{fh: lock}, nil
+	return &TxReader{fh: fh}, nil
 }
 
 // Close closes the reader.
 func (r *TxReader) Close() {
 	core.ASSERT(r != nil && r.fh != nil, "TxReader.Close on nil handle")
-	r.fh.Unlock()
 	r.fh.Close()
 	r.fh = nil
 }
@@ -208,6 +202,8 @@ func (r *TxReader) Seek(offset int64, whence int) (int64, error) {
 
 // Next returns the next tx or nil on short read/EOF.
 func (r *TxReader) Next() *DbTx {
+	r.fh.LockShared()
+	defer r.fh.Unlock()
 	defer func() {
 		if rec := recover(); rec != nil {
 			if e, ok := rec.(error); !ok || (!errors.Is(e, io.EOF) && !errors.Is(e, io.ErrUnexpectedEOF)) {

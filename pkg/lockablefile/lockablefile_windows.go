@@ -15,19 +15,25 @@ import (
 // Lock acquires an exclusive lock on the file using LockFileEx.
 func (l *LockableFile) Lock() {
 	core.ASSERT(l != nil && l.File != nil, "Lock called on nil file")
+	core.ASSERT(!l.locked, "Lock called on already locked file")
 	lockFileEx(l.Fd(), windows.LOCKFILE_EXCLUSIVE_LOCK)
+	l.locked = true
 }
 
 // LockShared acquires a shared lock on the file using LockFileEx.
 func (l *LockableFile) LockShared() {
 	core.ASSERT(l != nil && l.File != nil, "LockShared called on nil file")
+	core.ASSERT(!l.locked, "LockShared called on already locked file")
 	lockFileEx(l.Fd(), 0)
+	l.locked = true
 }
 
 // Unlock releases the lock using UnlockFileEx.
 func (l *LockableFile) Unlock() {
 	core.ASSERT(l != nil && l.File != nil, "Unlock called on nil file")
+	core.ASSERT(l.locked, "Unlock called on unlocked file")
 	unlockFileEx(l.Fd())
+	l.locked = false
 }
 
 func lockFileEx(fd uintptr, flags uint32) {

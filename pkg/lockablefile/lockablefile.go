@@ -15,6 +15,7 @@ import (
 // LockableFile embeds an *os.File and adds lock helpers.
 type LockableFile struct {
 	*os.File
+	locked bool
 }
 
 // Open wraps os.Open (read-only) and returns a LockableFile without taking the lock.
@@ -38,5 +39,6 @@ func OpenFile(path string, flag int, perm os.FileMode) (*LockableFile, error) {
 // Close releases any lock (via close) and closes the file.
 func (l *LockableFile) Close() {
 	core.ASSERT(l != nil && l.File != nil, "Close called on nil file")
+	l.locked = false
 	core.AbortOnError(l.File.Close())
 }
