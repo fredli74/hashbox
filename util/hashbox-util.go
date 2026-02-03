@@ -162,15 +162,15 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).ping(host, port)
 	})
 
-	cmd.Command("rebuild-db", "[account] [dataset]", func() {
-		var account, dataset string
-		if len(cmd.Args) >= 3 {
+	cmd.Command("rebuild-db", "[account]", func() {
+		if len(cmd.Args) > 3 {
+			core.Abort("rebuild-db accepts at most one account")
+		}
+		account := ""
+		if len(cmd.Args) == 3 {
 			account = cmd.Args[2]
 		}
-		if len(cmd.Args) >= 4 {
-			dataset = cmd.Args[3]
-		}
-		newCommandSet(datDirectory, idxDirectory).rebuildDB(account, dataset)
+		newCommandSet(datDirectory, idxDirectory).rebuildDB(account)
 	})
 
 	cmd.StringOption("include", "sync", "<acct[:dataset]>[,..]", "Include patterns for sync", &syncInclude, cmd.Standard)

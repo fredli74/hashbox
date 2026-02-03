@@ -122,12 +122,12 @@ func (c *commandSet) listStates(accountName string, dataset string) {
 	}
 }
 
-func (c *commandSet) rebuildDB(account, dataset string) {
+func (c *commandSet) rebuildDB(account string) {
 	store := accountdb.NewStore(c.dataDir)
 	accounts, err := store.ListAccounts()
 	core.AbortOnError(err, "list accounts: %v", err)
 	datasetCount := 0
-	stateCount := 0
+	accountCount := 0
 	for _, acc := range accounts {
 		if account != "" {
 			want := core.Hash([]byte(account))
@@ -135,30 +135,10 @@ func (c *commandSet) rebuildDB(account, dataset string) {
 				continue
 			}
 		}
-		info := store.ReadInfoFile(acc.AccountNameH)
-		if info == nil {
-			core.Abort("account info missing for %s", acc.Filename)
-		}
-		if dataset == "" {
-			info.Datasets = nil
-			store.WriteInfoFile(acc.AccountNameH, *info)
-		}
-		datasets, err := store.ListDatasets(&acc.AccountNameH)
-		core.AbortOnError(err, "list datasets for %s: %v", info.AccountName, err)
-		for _, ds := range datasets {
-			if dataset != "" {
-				want := core.Hash([]byte(dataset))
-				h := core.Hash([]byte(ds.DatasetName))
-				if ds.DatasetName != core.String(dataset) && h.Compare(want) != 0 {
-					continue
-				}
-			}
-			states := store.RebuildDB(acc.AccountNameH, ds.DatasetName)
-			datasetCount++
-			stateCount += len(states)
-		}
+		datasetCount += store.RebuildAccount(acc.AccountNameH)
+		accountCount++
 	}
-	fmt.Printf("Rebuilt %d datasets across %d accounts (%d states)\n", datasetCount, len(accounts), stateCount)
+	fmt.Printf("Rebuilt %d datasets across %d accounts\n", datasetCount, accountCount)
 }
 
 func (c *commandSet) showBlock(blockIDStr string, verify bool) {

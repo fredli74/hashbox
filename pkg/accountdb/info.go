@@ -163,7 +163,7 @@ type RebuiltDataset struct {
 }
 
 // RebuildAccount clears cached info and rebuilds db/info for all datasets under the account.
-func (fs *Store) RebuildAccount(accountNameH core.Byte128) {
+func (fs *Store) RebuildAccount(accountNameH core.Byte128) int {
 	if info := fs.ReadInfoFile(accountNameH); info != nil {
 		info.Datasets = nil
 		fs.WriteInfoFile(accountNameH, *info)
@@ -174,4 +174,5 @@ func (fs *Store) RebuildAccount(accountNameH core.Byte128) {
 		core.Log(core.LogDebug, "Regenerating file %s.db (%x.%s)", d.Filename[:45], d.AccountNameH[:], d.DatasetName)
 		fs.RebuildDB(accountNameH, d.DatasetName)
 	}
+	return len(datasets)
 }
