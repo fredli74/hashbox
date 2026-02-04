@@ -16,30 +16,22 @@ import (
 
 // Lock acquires an exclusive advisory lock on the file descriptor.
 func (l *LockableFile) Lock() {
-	core.ASSERT(l != nil && l.File != nil, "Lock called on nil file")
-	core.ASSERT(!l.locked, "Lock called on already locked file")
-	flock := unix.Flock_t{
-		Type:   unix.F_WRLCK,
-		Whence: int16(io.SeekStart),
-		Start:  0,
-		Len:    0, // whole file
-	}
-	core.AbortOnError(unix.FcntlFlock(l.Fd(), unix.F_SETLKW, &flock))
-	l.locked = true
+	l.lock(unix.F_WRLCK)
+}
+
+// TryLock attempts an exclusive lock without blocking.
+func (l *LockableFile) TryLock() bool {
+	return l.tryLock(unix.F_WRLCK)
 }
 
 // LockShared acquires a shared advisory lock on the file descriptor.
 func (l *LockableFile) LockShared() {
-	core.ASSERT(l != nil && l.File != nil, "LockShared called on nil file")
-	core.ASSERT(!l.locked, "LockShared called on already locked file")
-	flock := unix.Flock_t{
-		Type:   unix.F_RDLCK,
-		Whence: int16(io.SeekStart),
-		Start:  0,
-		Len:    0, // whole file
-	}
-	core.AbortOnError(unix.FcntlFlock(l.Fd(), unix.F_SETLKW, &flock))
-	l.locked = true
+	l.lock(unix.F_RDLCK)
+}
+
+// TryLockShared attempts a shared lock without blocking.
+func (l *LockableFile) TryLockShared() bool {
+	return l.tryLock(unix.F_RDLCK)
 }
 
 // Unlock releases the advisory lock.
@@ -54,4 +46,38 @@ func (l *LockableFile) Unlock() {
 	}
 	core.AbortOnError(unix.FcntlFlock(l.Fd(), unix.F_SETLK, &flock))
 	l.locked = false
+}
+
+func (l *LockableFile) lock(lockType int16) {
+	core.ASSERT(l != nil && l.File != nil, "Lock called on nil file")
+	core.ASSERT(!l.locked, "Lock called on already locked file")
+	flock := unix.Flock_t{
+		Type:   lockType,
+		Whence: int16(io.SeekStart),
+		Start:  0,
+		Len:    0,
+	}
+	core.AbortOnError(unix.FcntlFlock(l.Fd(), unix.F_SETLKW, &flock))
+	l.locked = true
+}
+
+func (l *LockableFile) tryLock(lockType int16) bool {
+	core.ASSERT(l != nil && l.File != nil, "TryLock called on nil file")
+	core.ASSERT(!l.locked, "TryLock called on already locked file")
+	flock := unix.Flock_t{
+		Type:   lockType,
+		Whence: int16(io.SeekStart),
+		Start:  0,
+		Len:    0,
+	}
+	err := unix.FcntlFlock(l.Fd(), unix.F_SETLK, &flock)
+	if err == nil {
+		l.locked = true
+		return true
+	}
+	if err == unix.EACCES || err == unix.EAGAIN {
+		return false
+	}
+	core.AbortOnError(err)
+	return false
 }

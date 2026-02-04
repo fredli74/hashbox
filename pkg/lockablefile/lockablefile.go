@@ -18,6 +18,11 @@ type LockableFile struct {
 	locked bool
 }
 
+// IsLocked reports whether this handle currently holds a lock.
+func (l *LockableFile) IsLocked() bool {
+	return l != nil && l.locked
+}
+
 // Open wraps os.Open (read-only) and returns a LockableFile without taking the lock.
 func Open(path string) (*LockableFile, error) {
 	f, err := os.Open(path)

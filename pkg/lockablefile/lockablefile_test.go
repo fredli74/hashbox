@@ -249,3 +249,33 @@ func TestUnlockWithoutLockPanics(t *testing.T) {
 	}()
 	l.Unlock()
 }
+
+func TestTryLock(t *testing.T) {
+	dir := testDir(t, "try-lock")
+	lockPath := filepath.Join(dir, "lock.test")
+	l, err := OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer l.Close()
+
+	if !l.TryLock() {
+		t.Fatal("TryLock should succeed on unlocked file")
+	}
+	l.Unlock()
+}
+
+func TestTryLockShared(t *testing.T) {
+	dir := testDir(t, "try-lock-shared")
+	lockPath := filepath.Join(dir, "lock.test")
+	l, err := OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer l.Close()
+
+	if !l.TryLockShared() {
+		t.Fatal("TryLockShared should succeed on unlocked file")
+	}
+	l.Unlock()
+}
