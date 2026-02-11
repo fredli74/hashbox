@@ -200,20 +200,24 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 
 			for done := false; !done; {
 				var workItem *blockQueueEntry
+				var workState int32
 
 				// Process split into two, first queue traversal under lock, then processing without lock
 				c.dispatchMutex.Lock()
 				for i := 0; workItem == nil && i < len(c.blockQueueList); i++ {
 					entry := c.blockQueueList[i]
-					state := atomic.LoadInt32(&entry.state)
-					switch state {
+					switch entry.state {
 					case blockStateNew: // ignore for now, waiting for singleExchange allocate response
 					case blockStateRequested:
 						workItem = entry
+						workState = blockStateProcessing
+						entry.state = blockStateProcessing
 					case blockStateProcessing: // skip, being compressed
 					case blockStateProcessed:
 						if i == 0 {
 							workItem = entry
+							workState = blockStateQueued
+							entry.state = blockStateQueued
 						}
 					case blockStateQueued: // skip, waiting to be sent
 					case blockStateSending: // skip, waiting for ACK
@@ -229,13 +233,10 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 						atomic.AddInt32(&c.blockQueueLen, -1)
 						i-- // adjust index
 					default:
-						Abort("ASSERT! Invalid state %d for blockQueue entry", state)
+						Abort("ASSERT! Invalid state %d for blockQueue entry", entry.state)
 					}
 				}
-				if workItem != nil {
-					// Transition to next state, so next worker does not pick it up
-					atomic.AddInt32(&workItem.state, 1)
-				} else if len(c.blockQueueList) == 0 {
+				if workItem == nil && len(c.blockQueueList) == 0 {
 					done = true
 					c.sendworkers--
 					//						fmt.Println("worker stopping")
@@ -244,21 +245,17 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 
 				// Process work item outside lock
 				if workItem != nil {
-					state := atomic.LoadInt32(&workItem.state)
-					switch state {
-					case blockStateNew:
-						panic("ASSERT!")
-					case blockStateRequested:
-						panic("ASSERT!")
+					switch workState {
 					case blockStateProcessing:
 						if !workItem.block.Compressed {
 							workItem.block.CompressData()
 							diff := bytearray.ChunkQuantize(int64(workItem.block.UncompressedSize)) - bytearray.ChunkQuantize(int64(workItem.block.CompressedSize))
 							atomic.AddInt64(&c.blockQueueSize, -diff)
 						}
-						atomic.AddInt32(&workItem.state, 1)
-					case blockStateProcessed:
-						panic("ASSERT!")
+						c.dispatchMutex.Lock()
+						ASSERT(workItem.state == blockStateProcessing, "ASSERT! Invalid state %d for blockQueue entry", workItem.state)
+						workItem.state = blockStateProcessed
+						c.dispatchMutex.Unlock()
 					case blockStateQueued:
 						atomic.AddInt64(&c.WriteData, int64(workItem.block.UncompressedSize))
 						atomic.AddInt64(&c.WriteDataCompressed, int64(workItem.block.CompressedSize))
@@ -266,10 +263,13 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 						c.Paint("*")
 						Log(LogTrace, "Upload block %x (links=%d, size=%d, compressed=%d)", workItem.block.BlockID, len(workItem.block.Links), workItem.block.UncompressedSize, workItem.block.CompressedSize)
 						msg := &ProtocolMessage{Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: workItem.block}}
+						c.dispatchMutex.Lock()
+						ASSERT(workItem.state == blockStateQueued, "ASSERT! Invalid state %d for blockQueue entry", workItem.state)
+						workItem.state = blockStateSending
+						c.dispatchMutex.Unlock()
 						c.blockWriteChannel <- &messageDispatch{msg: msg}
-						atomic.AddInt32(&workItem.state, 1)
 					default:
-						Abort("ASSERT! Invalid state %d for work item", state)
+						Abort("ASSERT! Invalid state %d for work item", workState)
 					}
 				} else {
 					time.Sleep(25 * time.Millisecond)
@@ -349,8 +349,8 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 	case *MsgServerReadBlock:
 		c.dispatchMutex.Lock()
 		q := c.blockQueueMap[d.BlockID]
-		if q != nil && atomic.LoadInt32(&q.state) == blockStateNew {
-			atomic.StoreInt32(&q.state, blockStateRequested)
+		if q != nil && q.state == blockStateNew {
+			q.state = blockStateRequested
 		}
 		c.dispatchMutex.Unlock()
 	case *MsgServerAcknowledgeBlock:
@@ -359,11 +359,11 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 		c.dispatchMutex.Lock()
 		q := c.blockQueueMap[d.BlockID]
 		if q != nil {
-			if atomic.LoadInt32(&q.state) == blockStateNew {
+			if q.state == blockStateNew {
 				// Block was not sent
 				skipped = true
 			}
-			atomic.StoreInt32(&q.state, blockStateCompleted)
+			q.state = blockStateCompleted
 		}
 		c.dispatchMutex.Unlock()
 
