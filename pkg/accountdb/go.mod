@@ -1,6 +1,6 @@
 module github.com/fredli74/hashbox/pkg/accountdb
 
-go 1.25.6
+go 1.26.0
 
 require (
 	github.com/fredli74/hashbox/pkg/core v0.0.0-00010101000000-000000000000
