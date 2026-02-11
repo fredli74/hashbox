@@ -446,11 +446,12 @@ func run() (returnValue int) {
 	})
 
 	optVerifyContent := false
-	optReadOnly := true
+	optRepair := false
 	cmd.BoolOption("content", "verify", "Uncompress and verifying block content", &optVerifyContent, cmd.Standard)
-	cmd.BoolOption("readonly", "verify", "Do not invalidate broken block trees", &optReadOnly, cmd.Standard)
+	cmd.BoolOption("repair", "verify", "Invalidate broken block trees and mark dataset states invalid", &optRepair, cmd.Standard)
 	cmd.Command("verify", "", func() {
-		if !optReadOnly {
+		readOnly := !optRepair
+		if !readOnly {
 			if lock, err := lockfile.Lock(filepath.Join(datDirectory, "hashbox.lck")); err != nil {
 				core.Abort("%v", err)
 			} else {
@@ -469,7 +470,7 @@ func run() (returnValue int) {
 		core.Log(core.LogInfo, "Verifying dataset storage")
 
 		verifiedBlocks := make(map[core.Byte128]bool) // Keep track of verifiedBlocks blocks
-		if !optReadOnly {
+		if !readOnly {
 			accountHandler.RebuildAccountFiles()
 		}
 		rootlist := accountHandler.CollectAllRootBlocks(false)
@@ -477,8 +478,8 @@ func run() (returnValue int) {
 		for i, r := range rootlist {
 			tag := fmt.Sprintf("%s.%s.%x", r.AccountName, r.DatasetName, r.StateID[:])
 			core.Log(core.LogDebug, "Verify data referenced by %s", tag)
-			if err := storageHandler.store.CheckBlockTree(r.BlockID, verifiedBlocks, optVerifyContent, optReadOnly); err != nil {
-				if optReadOnly {
+			if err := storageHandler.store.CheckBlockTree(r.BlockID, verifiedBlocks, optVerifyContent, readOnly); err != nil {
+				if readOnly {
 					core.Abort("%v", err)
 				} else {
 					core.Log(core.LogWarning, "Dataset %s is marked as invalid: %v", tag, err)
@@ -492,7 +493,7 @@ func run() (returnValue int) {
 		}
 
 		core.Log(core.LogInfo, "Verifying unreferenced index entries")
-		storageHandler.store.CheckIndexes(verifiedBlocks, optVerifyContent, optReadOnly)
+		storageHandler.store.CheckIndexes(verifiedBlocks, optVerifyContent, readOnly)
 
 		core.Log(core.LogInfo, "Verify completed in %.1f minutes", time.Since(start).Minutes())
 		if errorCount > 0 {

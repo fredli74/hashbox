@@ -60,9 +60,9 @@ After the sweep has completed, a report will be displayed on how much unused dat
 
 **Run a storage file check**
 
-`./hashbox-freebsd-amd64 verify [-content] [-readonly]`
+`./hashbox-freebsd-amd64 verify [-content] [-repair]`
 
-Optional arguments `-content` will verify all data content. `-readonly` can be used to run a verify while the server is still up.
+Optional arguments `-content` will verify all data content. `-repair` will invalidate broken block trees and mark dataset states invalid (this takes the storage lock).
 
 
 **Run a storage recovery**
