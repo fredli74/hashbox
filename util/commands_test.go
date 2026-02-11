@@ -71,7 +71,7 @@ func TestListDatasetsAndStates(t *testing.T) {
 	}
 
 	stateOut := captureOutput(t, func() {
-		cmds.listStates(string(accName), string(dataset))
+		cmds.listStatesTrn(string(accName), string(dataset))
 	})
 	if !strings.Contains(stateOut, "size=10B") || !strings.Contains(stateOut, "size=20B") {
 		t.Fatalf("unexpected state output: %s", stateOut)

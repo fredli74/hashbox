@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,7 +74,7 @@ func (c *commandSet) listDatasets(accountName string) {
 	}
 }
 
-func (c *commandSet) listStates(accountName string, dataset string) {
+func (c *commandSet) listStatesTrn(accountName string, dataset string) {
 	store := accountdb.NewStore(c.dataDir)
 	accName, accountNameH, err := resolveAccount(store, accountName)
 	core.AbortOnError(err, "resolve account: %v", err)
@@ -99,20 +100,13 @@ func (c *commandSet) listStates(accountName string, dataset string) {
 		switch tx.TxType {
 		case accountdb.DbTxTypeAdd:
 			state := tx.Data.(core.DatasetState)
-			isDeleted := deleted[state.StateID]
-			if !showDeleted && isDeleted {
-				continue
-			}
 			tsNote := time.Unix(0, tx.Timestamp).UTC().Format(time.RFC3339)
 			flagNote := ""
-			if isDeleted {
+			if deleted[state.StateID] {
 				flagNote = " (DELETED)"
 			}
 			fmt.Printf("%s + %x root=%x size=%s%s\n", tsNote, state.StateID[:], state.BlockID[:], compactHumanSize(state.Size), flagNote)
 		case accountdb.DbTxTypeDel:
-			if !showDeleted {
-				continue
-			}
 			stateID := tx.Data.(core.Byte128)
 			delTime := time.Unix(0, tx.Timestamp).UTC()
 			fmt.Printf("%s - %x\n", delTime.Format(time.RFC3339), stateID[:])
@@ -120,6 +114,44 @@ func (c *commandSet) listStates(accountName string, dataset string) {
 			core.Abort("unknown tx type %x in %s", tx.TxType, datasetName)
 		}
 	}
+}
+
+func (c *commandSet) listStatesDB(accountName string, dataset string) {
+	store := accountdb.NewStore(c.dataDir)
+	accName, accountNameH, err := resolveAccount(store, accountName)
+	core.AbortOnError(err, "resolve account: %v", err)
+	datasetName, err := resolveDatasetName(store, accountNameH, dataset)
+	core.AbortOnError(err, "resolve dataset: %v", err)
+
+	collection := store.ReadDBFile(accountNameH, datasetName)
+	if collection == nil || len(collection.States) == 0 {
+		fmt.Println("No states found")
+		return
+	}
+
+	fmt.Printf("Account: [%s] %s\n", formatHash(accountNameH), core.Escape(accName))
+	fmt.Printf("Dataset: [%s] %s\n", formatHash(core.Hash([]byte(datasetName))), core.Escape(datasetName))
+	for _, entry := range collection.States {
+		flagNote := ""
+		if entry.StateFlags&core.StateFlagInvalid == core.StateFlagInvalid {
+			flagNote = " (INVALID)"
+		}
+		tsNote := stateIDTimeNote(entry.State.StateID)
+		fmt.Printf("%s + %x root=%x size=%s%s\n", tsNote, entry.State.StateID[:], entry.State.BlockID[:], compactHumanSize(entry.State.Size), flagNote)
+	}
+}
+
+func stateIDTimeNote(stateID core.Byte128) string {
+	const tsWidth = len(time.RFC3339)
+	nanos := int64(binary.BigEndian.Uint64(stateID[:]))
+	if nanos == 0 {
+		return strings.Repeat(" ", tsWidth)
+	}
+	t := time.Unix(0, nanos).UTC()
+	if t.Year() < 2000 || t.Year() > 2050 {
+		return strings.Repeat(" ", tsWidth)
+	}
+	return t.Format(time.RFC3339)
 }
 
 func (c *commandSet) rebuildDB(account string) {

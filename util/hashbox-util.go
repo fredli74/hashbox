@@ -15,7 +15,7 @@ import (
 var (
 	datDirectory    string
 	idxDirectory    string
-	showDeleted     bool
+	listStatesTrn   bool
 	syncInclude     string
 	syncExclude     string
 	syncDryRun      bool
@@ -122,14 +122,19 @@ func main() {
 		}
 	})
 
-	cmd.BoolOption("show-deleted", "list-states", "Include deleted states when listing", &showDeleted, cmd.Standard)
+	cmd.BoolOption("trn", "list-states", "Read from transaction log (full history)", &listStatesTrn, cmd.Standard)
 	cmd.Command("list-states", "<account> <dataset>", func() {
 		if len(cmd.Args) < 4 {
 			core.Abort("account and dataset required")
 		}
 		accountName := cmd.Args[2]
 		dataset := cmd.Args[3]
-		newCommandSet(datDirectory, idxDirectory).listStates(accountName, dataset)
+		cmds := newCommandSet(datDirectory, idxDirectory)
+		if listStatesTrn {
+			cmds.listStatesTrn(accountName, dataset)
+		} else {
+			cmds.listStatesDB(accountName, dataset)
+		}
 	})
 
 	cmd.Command("delete-state", "<account> <dataset> <state-id> [<state-id>...]", func() {
