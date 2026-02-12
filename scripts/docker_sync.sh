@@ -15,13 +15,13 @@ fi
 echo "Running sync to $REMOTE..."
 set -- "$REMOTE"
 if [ -n "$INCLUDE" ]; then
-  set -- "$@" --include "$INCLUDE"
+  set -- "$@" -include "$INCLUDE"
 fi
 if [ -n "$EXCLUDE" ]; then
-  set -- "$@" --exclude "$EXCLUDE"
+  set -- "$@" -exclude "$EXCLUDE"
 fi
 if [ -n "$DRY_RUN" ]; then
-  set -- "$@" --dry-run
+  set -- "$@" -dry-run
 fi
 docker compose run --rm hashbox-util sync "$@"
 
