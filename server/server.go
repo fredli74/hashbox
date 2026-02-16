@@ -440,7 +440,7 @@ func run() (returnValue int) {
 		repairCount := storageHandler.store.RecoverData(startfile, endfile)
 
 		if repairCount > 0 {
-			core.Log(core.LogInfo, "Performed %d repairs. Please run a verify.", repairCount)
+			core.Log(core.LogInfo, "Recovered %d blocks. Run verify --repair to validate block trees and flag bad datasets.", repairCount)
 		}
 		core.Log(core.LogInfo, "Recover completed in %.1f minutes.", time.Since(start).Minutes())
 	})
