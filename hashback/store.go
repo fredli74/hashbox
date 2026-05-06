@@ -929,6 +929,11 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 	tempPath := r.cacheCurrent.Name()
 	newCachePath := r.cacheFilePathName(rootID)
 
+	// Close the current cache file before deleting old recovery cache files
+	// to avoid file locking issues on Windows
+	core.AbortOnError(r.cacheCurrent.Close())
+	r.cacheCurrent = nil
+
 	cleanup := fmt.Sprintf("%s.*.cache*", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
 	err := filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -947,9 +952,7 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 		return nil
 	})
 	core.AbortOnError(err)
-	core.AbortOnError(r.cacheCurrent.Close())
 	core.AbortOnError(os.Rename(tempPath, newCachePath))
-	r.cacheCurrent = nil
 }
 func (r *referenceEngine) Close() {
 	r.stop()
