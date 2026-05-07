@@ -926,13 +926,12 @@ func (r *referenceEngine) storeReferenceDir(entry *FileEntry, location int64) {
 func (r *referenceEngine) Commit(rootID core.Byte128) {
 	core.ASSERT(r.cacheCurrent != nil, "cacheCurrent must not be nil on commit")
 
+	// Stop the loader goroutine before cleanup: it may have partial files open.
+	// pushChannelEntry monitors stopChannel, so this unblocks any pending push immediately.
+	r.stop()
+
 	tempPath := r.cacheCurrent.Name()
 	newCachePath := r.cacheFilePathName(rootID)
-
-	// Close the current cache file before deleting old recovery cache files
-	// to avoid file locking issues on Windows
-	core.AbortOnError(r.cacheCurrent.Close())
-	r.cacheCurrent = nil
 
 	cleanup := fmt.Sprintf("%s.*.cache*", base64.RawURLEncoding.EncodeToString(r.datasetNameH[:]))
 	err := filepath.Walk(LocalStoragePath, func(path string, info os.FileInfo, err error) error {
@@ -952,7 +951,9 @@ func (r *referenceEngine) Commit(rootID core.Byte128) {
 		return nil
 	})
 	core.AbortOnError(err)
+	core.AbortOnError(r.cacheCurrent.Close())
 	core.AbortOnError(os.Rename(tempPath, newCachePath))
+	r.cacheCurrent = nil
 }
 func (r *referenceEngine) Close() {
 	r.stop()
