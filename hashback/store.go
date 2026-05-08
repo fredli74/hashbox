@@ -673,17 +673,17 @@ func (r *referenceEngine) downloadReference(referenceBlockID core.Byte128) {
 	r.pushChannelEntry(entryEOD)
 }
 
-func (r *referenceEngine) loadResumeFile(filename string) {
+func (r *referenceEngine) loadResumeFile(path string) {
 	treedepth := 0
 	func() {
 		defer func() {
 			if !r.stopped {
 				if r := recover(); r != nil {
-					core.Log(core.LogDebug, "Non-fatal error encountered while resuming backup %s : %v", filename, r)
+					core.Log(core.LogDebug, "Non-fatal error encountered while resuming backup %s : %v", filepath.Base(path), r)
 				}
 			}
 		}()
-		cacheRecover, _ := os.Open(filepath.Join(LocalStoragePath, filename))
+		cacheRecover, _ := os.Open(path)
 		if cacheRecover != nil {
 			defer func() {
 				core.AbortOnError(cacheRecover.Close())
@@ -701,6 +701,7 @@ func (r *referenceEngine) loadResumeFile(filename string) {
 				var entry FileEntry
 				core.Log(core.LogTrace, "Read cache entry at %x", offset)
 				offset += int64(entry.Unserialize(reader))
+
 				if resumeID.Compare(entry.ReferenceID) < 0 {
 					// We're guessing the resume referenceID just to make changedFiles count a little better
 					resumeID.Set(entry.ReferenceID[:])
@@ -786,11 +787,12 @@ func (r *referenceEngine) loader(rootBlockID *core.Byte128) {
 			return resumeFileList[i].ModTime().Before(resumeFileList[j].ModTime())
 		})
 		for i := len(resumeFileList) - 1; i >= 0; i-- {
-			r.loadResumeFile(resumeFileList[i].Name())
+			fullPath := filepath.Join(LocalStoragePath, resumeFileList[i].Name())
+			r.loadResumeFile(fullPath)
 			// Remove the resume file after it is consumed. Yes I know we could lose the last n* cached entries
 			// if process is aborted. But it is not that important, it's better to clean up to avoid downward
 			// spirals of making resume file after resume file after resume file
-			err := os.Remove(resumeFileList[i].Name())
+			err := os.Remove(fullPath)
 			if err != nil && !os.IsNotExist(err) {
 				core.AbortOnError(err)
 			}
