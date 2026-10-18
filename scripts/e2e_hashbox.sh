@@ -206,7 +206,14 @@ rm -rf "$RESTORE_DIR"
 mkdir -p "$RESTORE_DIR"
 
 echo "Running restore..."
-HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" restore "$DATASET" . "$RESTORE_DIR"
+# exit 1 means it finished but skipped entries, the tree comparison below decides
+# whether that is acceptable; only exit 2 (aborted) is a hard failure here
+restore_rc=0
+HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" restore "$DATASET" . "$RESTORE_DIR" || restore_rc=$?
+if [[ "$restore_rc" -gt 1 ]]; then
+  echo "restore aborted (exit $restore_rc)" >&2
+  exit "$restore_rc"
+fi
 
 echo "Running diff against restore..."
 HOME="$HB_HOME" "$CLIENT_BIN" "${CLIENT_FLAGS[@]}" diff "$DATASET" . "$RESTORE_DIR"

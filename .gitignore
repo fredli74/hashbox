@@ -3,3 +3,4 @@ desktop.ini
 hashback/hashback
 server/server
 **/test/*
+.vscode/

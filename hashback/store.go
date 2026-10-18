@@ -292,7 +292,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 	} else if entry.FileMode&uint32(os.ModeSocket) > 0 {
 		session.LogVerbose("Skipping (socket file) %s", path)
 		return nil, nil
-	} else if entry.FileMode&uint32(os.ModeSymlink) > 0 {
+	} else if entry.IsSymlink() {
 		entry.ContentType = ContentTypeSymLink
 		entry.FileSize = 0
 
@@ -316,7 +316,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		session.Files++
 		session.reference.storeReference(entry)
 
-	} else if entry.FileMode&uint32(os.ModeDir) > 0 {
+	} else if entry.IsDir() {
 		entry.ContentType = ContentTypeDirectory
 		entry.FileSize = 0
 

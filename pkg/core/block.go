@@ -183,6 +183,18 @@ func (b *HashboxBlock) zlibCompress() (dst bytearray.ByteArray) {
 	return dst
 }
 func (b *HashboxBlock) zlibUncompress() bytearray.ByteArray {
+	var dst bytearray.ByteArray
+	// registered first so it unwinds last and covers the whole function, a
+	// truncated or corrupt stream must not strand the chunks already written
+	defer func() {
+		if r := recover(); r != nil {
+			if dst.Len() > 0 {
+				dst.Release()
+			}
+			panic(r)
+		}
+	}()
+
 	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
 	AbortOnError(err)
 	zr, err := zlib.NewReader(&b.Data)
@@ -191,7 +203,6 @@ func (b *HashboxBlock) zlibUncompress() bytearray.ByteArray {
 		err := zr.Close()
 		AbortOnError(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	}()
-	var dst bytearray.ByteArray
 	_, err = io.Copy(&dst, zr)
 	AbortOnError(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	return dst

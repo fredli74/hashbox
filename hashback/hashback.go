@@ -34,6 +34,7 @@ import (
 var Version = "(dev-build)"
 
 const PROGRESS_INTERVAL_SECS = 10 * time.Second
+
 const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MiB max blocksize
 const MIN_BLOCK_SIZE int = 64 * 1024       // 64kb minimum blocksize (before splitting it)
 
@@ -98,6 +99,12 @@ const (
 	ContentTypeSymLink   = 4
 )
 
+func (e FileEntry) IsSymlink() bool {
+	return e.FileMode&uint32(os.ModeSymlink) > 0
+}
+func (e FileEntry) IsDir() bool {
+	return e.FileMode&uint32(os.ModeDir) > 0
+}
 func (e FileEntry) HasContentBlockID() bool {
 	return (e.ContentType == ContentTypeDirectory || e.ContentType == ContentTypeFileData || e.ContentType == ContentTypeFileChain)
 }
@@ -219,9 +226,12 @@ type BackupSession struct {
 	AccessKey    *core.Byte128
 	BackupKey    *core.Byte128
 	FullBackup   bool
+	Resume       bool
 	Verbose      bool
 	ShowProgress bool
 	Paint        bool
+	StopOnError  bool
+	Salvage      bool
 
 	Client   *core.Client
 	State    *core.DatasetState
@@ -233,8 +243,11 @@ type BackupSession struct {
 	Directories    int
 	Files          int
 	UnchangedFiles int
+	FailedEntries  int
 
 	DifferentFiles int
+
+	errorCounts map[string]int
 
 	ignoreList []ignoreEntry
 	reference  *referenceEngine
@@ -257,6 +270,8 @@ func (session *BackupSession) Connect() *core.Client {
 	session.Directories = 0
 	session.Files = 0
 	session.UnchangedFiles = 0
+	session.FailedEntries = 0
+	session.errorCounts = make(map[string]int)
 	session.DifferentFiles = 0
 
 	// fmt.Printf("%x\n", *session.AccessKey)
@@ -309,6 +324,9 @@ func (session *BackupSession) findPathMatch(rootBlockID core.Byte128, path strin
 
 	pathList := core.SplitPath(path)
 	dir, unmatched, err := session.changeDir(rootBlockID, pathList)
+	if dir == nil {
+		return nil, err
+	}
 	if unmatched == 1 {
 		filtered := dir.File[:0]
 		for _, x := range dir.File {
@@ -330,6 +348,46 @@ func (session *BackupSession) findPathMatch(rootBlockID core.Byte128, path strin
 
 var LocalStoragePath string
 
+// a run that ended on its own terms, reported without a stack trace
+// 1 = finished but entries were skipped, 2 = aborted before finishing
+type exitError struct {
+	error
+	code int
+}
+
+// restore is single threaded, errno text is a FormatMessage call on windows
+var errnoText = map[syscall.Errno]string{}
+
+// The class an error is counted under. Without this the summary degrades to one
+// line per path, which is what it exists to avoid. Sentinels first, they carry
+// no errno; the fallback is the whole message and is the case to keep rare.
+func errorCause(err error) string {
+	for _, sentinel := range errorClasses {
+		if errors.Is(err, sentinel) {
+			return sentinel.Error()
+		}
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		text, ok := errnoText[errno]
+		if !ok {
+			text = errno.Error()
+			errnoText[errno] = text
+		}
+		return text
+	}
+	return err.Error()
+}
+
+func errorIsAny(err error, targets ...error) bool {
+	for _, t := range targets {
+		if errors.Is(err, t) {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	bytearray.EnableAutoGC(60, 74)
 
@@ -341,8 +399,10 @@ func main() {
 			if lockFile != nil {
 				lockFile.Unlock()
 			}
+			if e, ok := r.(exitError); ok {
+				os.Exit(e.code)
+			}
 			panic(r)
-			// os.Exit(1)
 		}
 	}()
 
@@ -542,6 +602,10 @@ func main() {
 	var retainDays int64 = 0
 	var retainYearly bool = false
 	var intervalBackup int64 = 0
+	cmd.BoolOption("resume", "restore", "Skip files already matching the backup (size and modification time) instead of rewriting them", &session.Resume, cmd.Standard)
+	cmd.BoolOption("salvage", "restore", "Recover what is readable from a damaged backup, skipping entries that contain corrupt or unreadable blocks", &session.Salvage, cmd.Standard)
+	cmd.BoolOption("failfast", "restore", "Stop on the first entry that cannot be restored", &session.StopOnError, cmd.Standard)
+
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &CustomIgnoreList, cmd.Standard|cmd.Preference)
 	cmd.IntOption("interval", "store", "<minutes>", "Keep running backups every <minutes> until interrupted", &intervalBackup, cmd.Standard)

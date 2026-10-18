@@ -54,6 +54,15 @@ func isOfflineFile(fileInfo os.FileInfo) bool {
 	return sys != nil && sys.Size > 0 && sys.Blocks == 0
 }
 
+// the destination itself is unusable, every remaining entry would fail the same way
+func isFatalRestoreError(err error) bool {
+	return errorIsAny(err,
+		// no room, or the filesystem will not take writes
+		syscall.ENOSPC, syscall.EDQUOT, syscall.EROFS, syscall.EIO,
+		// the destination itself went away
+		syscall.ESTALE, syscall.ENOTCONN, syscall.ENODEV, syscall.ENXIO)
+}
+
 func minorPathError(r interface{}) error {
 	e, ok := r.(*os.PathError)
 	if ok && e.Err == syscall.EBADF { // "bad file descriptor" while reading some files on OSX

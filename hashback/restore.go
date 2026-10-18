@@ -14,9 +14,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -25,8 +29,12 @@ func (session *BackupSession) PrintRestoreProgress() {
 	if session.WriteData > 0 {
 		compression = 100.0 * (float64(session.WriteData) - float64(session.ReadData)) / float64(session.WriteData)
 	}
-	session.Log(">>> %.1f min, read: %s (%.0f%% compr), written: %s, %d folders, %d files",
-		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files)
+	var failed string
+	if session.FailedEntries > 0 {
+		failed = fmt.Sprintf(", %d failed", session.FailedEntries)
+	}
+	session.Log(">>> %.1f min, read: %s (%.0f%% compr), written: %s, %d folders, %d/%d files restored%s",
+		time.Since(session.Start).Minutes(), core.HumanSize(session.ReadData), compression, core.HumanSize(session.WriteData), session.Directories, session.Files-session.UnchangedFiles, session.Files, failed)
 
 	//fmt.Println(core.MemoryStats())
 }
@@ -42,13 +50,58 @@ func (session *BackupSession) PrintDiffProgress() {
 	//fmt.Println(core.MemoryStats())
 }
 
-func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, DecryptKey core.Byte128) error {
+// Classifies a recovered block read panic. A dead client or a server that
+// refuses the block is not damage to the backup, salvaging past it would
+// mislabel every remaining entry and end in a success exit code.
+func (session *BackupSession) salvageBlockError(r interface{}) error {
+	var remote core.RemoteError
+	if err, ok := r.(error); ok && errors.As(err, &remote) {
+		panic(exitError{fmt.Errorf("restore aborted, %s", err), 2})
+	}
+	return fmt.Errorf("%w, %v", errUnreadableBackup, r)
+}
+
+// Reads and unserializes a metadata block. Damage to the backup is a panic from
+// deep inside ReadBlock, and -salvage turns exactly that into an error so the
+// readable part of the dataset can still be recovered. The recover is scoped to
+// the block read on purpose, a wider one would also swallow assertions and
+// contract violations, which are never expected.
+func (session *BackupSession) readMetadataBlock(blockID core.Byte128, into core.Unserializer) (err error) {
+	if session.Salvage {
+		defer func() {
+			if r := recover(); r != nil {
+				err = session.salvageBlockError(r)
+			}
+		}()
+	}
+	block := session.Client.ReadBlock(blockID)
+	blockData := block.Data // own read position, VerifyBlock consumes the original
+	defer blockData.Release()
+
+	if !block.VerifyBlock() {
+		panic(fmt.Errorf("block %x corrupted, hash does not match", blockID))
+	}
+	into.Unserialize(&blockData)
+	return nil
+}
+
+func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, DecryptKey core.Byte128) (err error) {
 	if session.ShowProgress && time.Now().After(session.Progress) {
 		session.PrintRestoreProgress()
 		session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
 	}
 
+	if session.Salvage {
+		defer func() {
+			if r := recover(); r != nil {
+				err = session.salvageBlockError(r)
+			}
+		}()
+	}
 	block := session.Client.ReadBlock(blockID)
+	d := block.Data
+	defer d.Release() // before VerifyBlock, a recovered panic must not leak the slab
+
 	if !block.VerifyBlock() {
 		panic(fmt.Errorf("block %x corrupted, hash does not match", blockID))
 	}
@@ -56,13 +109,160 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 	session.ReadData += int64(block.CompressedSize)
 	// TODO: Decrypt block
 
-	d := block.Data
-	_, err := d.ReadSeek(0, io.SeekStart)
+	_, err = d.ReadSeek(0, io.SeekStart)
 	core.AbortOnError(err)
-	core.CopyOrPanic(f, &d)
+	if _, err = io.Copy(f, &d); err != nil {
+		return err
+	}
 	session.WriteData += int64(d.Len())
-	d.Release()
 	return nil
+}
+
+// Mode is not compared, restoreEntry writes ModTime last so a matching one marks
+// a completed entry, move that Chtimes and this stops being a safe check.
+func isEntryUpToDate(e *FileEntry, localinfo os.FileInfo, localpath string) bool {
+	core.ASSERT(!e.IsDir(), "isEntryUpToDate called for a directory entry")
+	core.ASSERT(localinfo != nil, "isEntryUpToDate called without a stat")
+	if e.IsSymlink() {
+		if localinfo.Mode()&os.ModeSymlink == 0 {
+			return false
+		}
+		link, err := os.Readlink(localpath)
+		return err == nil && link == string(e.FileLink)
+	}
+	// compare with second precision because of Dropbox Online Only files
+	return isRestorableFile(localinfo) && localinfo.Size() == e.FileSize &&
+		localinfo.ModTime().UnixNano()/1e9 == e.ModTime/1e9
+}
+
+// A placeholder (OneDrive/Dropbox on demand) is reported irregular but is still a
+// file. Checked narrowly, a fast symlink also has no blocks and would match.
+func isRestorableFile(localinfo os.FileInfo) bool {
+	return localinfo.Mode().IsRegular() ||
+		(localinfo.Mode()&os.ModeType == os.ModeIrregular && isOfflineFile(localinfo))
+}
+
+// Clears whatever blocks the destination, reporting whether anything is still
+// there afterwards.
+func prepareDestination(e *FileEntry, localinfo os.FileInfo, localpath string) (occupied bool, err error) {
+	if localinfo == nil {
+		return false, nil
+	}
+	if e.IsSymlink() {
+		// os.Symlink cannot overwrite, and a restore replaces what it finds
+		return false, os.Remove(localpath)
+	}
+	if e.IsDir() {
+		// MkdirAll resolves a symlink to a directory and would write the whole
+		// subtree into its target, so only a real directory is kept
+		if localinfo.IsDir() {
+			if localinfo.Mode().Perm()&0300 != 0300 {
+				// best effort, chmod needs ownership but the children may still be
+				// writable through group or other, so a failure must not skip them
+				_ = os.Chmod(localpath, localinfo.Mode().Perm()|0300)
+			}
+			return true, nil
+		}
+	} else if isRestorableFile(localinfo) {
+		// a read-only or unwritable file is dealt with by reopenForWrite, guessing
+		// from the mode bits is wrong for anything we do not own. A cloud
+		// placeholder is overwritten in place, removing it rehydrates the tree.
+		return true, nil
+	}
+	// a symlink would be followed by O_TRUNC, anything else is the wrong type
+	return false, os.Remove(localpath)
+}
+
+// Recreates the destination after an open failed on a file that is there but
+// cannot be reopened, which is what a previous restore leaves behind when the
+// stored mode is read-only. Returns the original error if that does not help.
+func reopenForWrite(localpath string, filemode os.FileMode, openErr error, occupied bool) (*os.File, error) {
+	// only a mode problem is fixed by recreating. Unlinking on anything else
+	// destroys a good file, and a cloud placeholder deleted here syncs upstream
+	if !occupied || !errors.Is(openErr, fs.ErrPermission) {
+		return nil, openErr
+	}
+	if err := os.Remove(localpath); err != nil {
+		return nil, openErr
+	}
+	fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filemode)
+	if err != nil {
+		return nil, openErr
+	}
+	return fil, nil
+}
+
+func (session *BackupSession) logRestoreError(err error) {
+	session.FailedEntries++
+	session.errorCounts[errorCause(err)]++
+	session.Log("FAILED %s", err.Error()) // .Error() so core.Log escapes it
+}
+
+func (session *BackupSession) PrintRestoreErrors() {
+	classes := slices.SortedFunc(maps.Keys(session.errorCounts), func(a, b string) int {
+		if n := session.errorCounts[b] - session.errorCounts[a]; n != 0 {
+			return n
+		}
+		return strings.Compare(a, b)
+	})
+	for _, c := range classes {
+		session.Log("    %6d  %s", session.errorCounts[c], c)
+	}
+}
+
+var (
+	errLostWithParent   = errors.New("lost with parent directory")
+	errUnreadableBackup = errors.New("unreadable backup data")
+)
+
+// counted classes that carry no errno, see errorCause
+var errorClasses = []error{errLostWithParent, errUnreadableBackup}
+
+// Counts and logs every entry below a failed directory. Reads blocks, writes nothing.
+func (session *BackupSession) reportLostSubtree(e *FileEntry, localpath string) {
+	if e.ContentType != ContentTypeDirectory {
+		return
+	}
+	var dir DirectoryBlock
+	if err := session.readMetadataBlock(e.ContentBlockID, &dir); err != nil {
+		session.logRestoreError(err)
+		return
+	}
+
+	for _, child := range dir.File {
+		childpath := filepath.Join(localpath, platformSafeFilename(string(child.FileName)))
+		session.logRestoreError(fmt.Errorf("%w: %s", errLostWithParent, childpath))
+		session.reportLostSubtree(child, childpath)
+	}
+}
+
+// Carries a directory failure that happened before its children were walked,
+// so the subtree can be accounted for once the run is known to continue.
+type lostSubtreeError struct {
+	error
+	entry     *FileEntry
+	localpath string
+}
+
+func (e lostSubtreeError) Unwrap() error { return e.error }
+
+// Only returned errors are tolerated, a panic still aborts. Damage to the
+// backup is turned into an error by readMetadataBlock/restoreFileData under
+// -salvage, so nothing here has to guess what a panic meant.
+func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string) {
+	err := session.restoreEntry(e, path)
+	if err == nil {
+		return
+	}
+	session.logRestoreError(err)
+	if session.StopOnError || isFatalRestoreError(err) {
+		panic(exitError{fmt.Errorf("restore aborted, %s", err), 2})
+	}
+	// only now that the run continues is counting the subtree worth the blocks
+	var lost lostSubtreeError
+	if errors.As(err, &lost) {
+		session.reportLostSubtree(lost.entry, lost.localpath)
+	}
 }
 
 func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
@@ -71,9 +271,25 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		session.Log("Platform restricted characters substituted in filename %s", string(e.FileName))
 	}
 	localpath := filepath.Join(path, localname)
-	session.LogVerbose(localpath)
 
-	if e.FileMode&uint32(os.ModeSymlink) > 0 {
+	// a directory is never up to date, its contents still have to be walked
+	localinfo, _ := os.Lstat(localpath)
+	if !e.IsDir() && session.Resume && localinfo != nil && isEntryUpToDate(e, localinfo, localpath) {
+		if !e.IsSymlink() {
+			session.Files++
+			session.UnchangedFiles++
+		}
+		session.LogVerbose("UNCHANGED %s", localpath)
+		return nil
+	}
+
+	occupied, err := prepareDestination(e, localinfo, localpath)
+	if err != nil {
+		return lostSubtreeError{err, e, localpath}
+	}
+
+	if e.IsSymlink() {
+		session.LogVerbose("SYMLINK %s -> %s", localpath, string(e.FileLink))
 		switch e.ContentType {
 		case ContentTypeSymLink:
 			if err := os.Symlink(string(e.FileLink), localpath); err != nil {
@@ -82,15 +298,21 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		default:
 			panic((fmt.Errorf("invalid ContentType for a symlink (%d)", e.ContentType)))
 		}
-	} else if e.FileMode&uint32(os.ModeDir) > 0 {
-		if err := os.MkdirAll(localpath, 0777); err != nil {
-			return err
+	} else if e.IsDir() {
+		session.LogVerbose("DIR %s", localpath)
+		if !occupied {
+			// the parent is always restored first, so MkdirAll and its extra stat
+			// would only repeat work already done
+			if err := os.Mkdir(localpath, 0777); err != nil && !errors.Is(err, fs.ErrExist) {
+				return lostSubtreeError{err, e, localpath}
+			}
 		}
 
 		switch e.ContentType {
 		case ContentTypeDirectory:
 			if err := session.restoreDir(e.ContentBlockID, localpath); err != nil {
-				return err
+				_ = os.Chmod(localpath, os.FileMode(e.FileMode)) // best effort, we are already failing
+				return fmt.Errorf("%w: %s", err, localpath)
 			}
 		case ContentTypeEmpty:
 		default:
@@ -104,13 +326,19 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		if e.ContentType != ContentTypeFileChain && e.ContentType != ContentTypeFileData && e.ContentType != ContentTypeEmpty {
 			panic((fmt.Errorf("invalid ContentType for a file (%d)", e.ContentType)))
 		}
-		err := func() error {
-			fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(e.FileMode) /*&os.ModePerm*/)
+		session.LogVerbose("%s", localpath)
+		// the full mode, open applies setuid/setgid/sticky on create and masking
+		// them here would silently drop them from every restored file
+		filemode := os.FileMode(e.FileMode)
+		err := func() (err error) {
+			fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filemode)
 			if err != nil {
-				return err
+				if fil, err = reopenForWrite(localpath, filemode, err, occupied); err != nil {
+					return err
+				}
 			}
 			defer func() {
-				core.AbortOnError(fil.Close())
+				err = errors.Join(err, fil.Close())
 			}()
 
 			switch e.ContentType {
@@ -119,9 +347,9 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 			case ContentTypeFileChain:
 				var chain FileChainBlock
 
-				blockData := session.Client.ReadBlock(e.ContentBlockID).Data
-				chain.Unserialize(&blockData)
-				blockData.Release()
+				if err := session.readMetadataBlock(e.ContentBlockID, &chain); err != nil {
+					return err
+				}
 
 				for i := range chain.ChainBlocks {
 					if err := session.restoreFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i]); err != nil {
@@ -133,11 +361,18 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 					return err
 				}
 			}
+			// writing clears setuid/setgid unless we hold CAP_FSETID, so put them
+			// back on the handle. Skipped for ordinary modes, a chmod that a
+			// filesystem rejects (vfat, smb) would fail an otherwise good entry.
+			if filemode&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+				return fil.Chmod(filemode)
+			}
 			return nil
 		}()
 		if err != nil {
 			return err
 		}
+		// last, so an interrupted entry never carries a matching mtime
 		if err := os.Chtimes(localpath, time.Now(), time.Unix(0, e.ModTime)); err != nil {
 			return err
 		}
@@ -146,26 +381,26 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 	return nil
 }
 
+// Returns an error only when the listing itself cannot be read, a failed child
+// is handled by tryRestoreEntry.
 func (session *BackupSession) restoreDir(blockID core.Byte128, path string) error {
 	var dir DirectoryBlock
 
-	blockData := session.Client.ReadBlock(blockID).Data
-	dir.Unserialize(&blockData)
-	blockData.Release()
+	if err := session.readMetadataBlock(blockID, &dir); err != nil {
+		return err
+	}
 
 	for _, e := range dir.File {
-		if err := session.restoreEntry(e, path); err != nil {
-			return err
-		}
+		session.tryRestoreEntry(e, path)
 	}
 	return nil
 }
 
 func (session *BackupSession) changeDir(blockID core.Byte128, pathList []string) (*DirectoryBlock, int, error) {
 	var dir DirectoryBlock
-	blockData := session.Client.ReadBlock(blockID).Data
-	dir.Unserialize(&blockData)
-	blockData.Release()
+	if err := session.readMetadataBlock(blockID, &dir); err != nil {
+		return nil, len(pathList), err
+	}
 
 	if len(pathList) > 0 {
 		for _, f := range dir.File {
@@ -182,19 +417,25 @@ func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath stri
 	if err := os.MkdirAll(restorepath, 0777); err != nil {
 		core.AbortOnError(err)
 	}
+	defer session.PrintRestoreErrors()
+	defer session.PrintRestoreProgress()
 
 	if len(restorelist) > 0 {
 		for _, r := range restorelist {
 			list, err := session.findPathMatch(rootBlockID, r)
 			core.AbortOnError(err)
 			for _, e := range list {
-				core.AbortOnError(session.restoreEntry(e, restorepath))
+				session.tryRestoreEntry(e, restorepath)
 			}
 		}
-	} else {
-		core.AbortOnError(session.restoreDir(rootBlockID, restorepath))
+	} else if err := session.restoreDir(rootBlockID, restorepath); err != nil {
+		// nothing was restored and nothing can be, not even under -salvage
+		panic(exitError{fmt.Errorf("restore aborted, %s: %s", err, restorepath), 2})
 	}
-	session.PrintRestoreProgress()
+
+	if session.FailedEntries > 0 {
+		panic(exitError{fmt.Errorf("restore completed with %d skipped entries, including everything below a skipped directory", session.FailedEntries), 1})
+	}
 }
 
 /*********************** DIFF *******************/
@@ -284,7 +525,7 @@ func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, e
 	}
 	same = true
 
-	if e.FileMode&uint32(os.ModeSymlink) > 0 {
+	if e.IsSymlink() {
 		switch e.ContentType {
 		case ContentTypeSymLink:
 			if localinfo.Mode()&os.ModeSymlink != os.ModeSymlink {
@@ -301,7 +542,7 @@ func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, e
 		default:
 			panic((fmt.Errorf("invalid ContentType for a symlink (%d)", e.ContentType)))
 		}
-	} else if e.FileMode&uint32(os.ModeDir) > 0 {
+	} else if e.IsDir() {
 		if !localinfo.IsDir() {
 			return false, errors.New("local path is not a directory")
 		}
