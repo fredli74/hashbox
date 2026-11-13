@@ -84,13 +84,18 @@ const (
 	ERROR_NOT_READY         = syscall.Errno(21)
 	ERROR_BAD_NETPATH       = syscall.Errno(53)
 	ERROR_UNEXP_NET_ERR     = syscall.Errno(59)
+	ERROR_IO_DEVICE         = syscall.Errno(1117)
 )
 
-// the destination itself is unusable, every remaining entry would fail the same way
+// Restore continues past a failed entry by default, so this list is not a safety
+// net and need not be complete, a missed errno only costs log noise. It stops
+// early where continuing is pointless or does harm.
 func isFatalRestoreError(err error) bool {
 	return errorIsAny(err,
 		// no room, or the volume will not take writes
 		ERROR_DISK_FULL, ERROR_HANDLE_DISK_FULL, ERROR_WRITE_PROTECT,
+		// a failing device, more writes only stress it
+		ERROR_IO_DEVICE,
 		// the destination itself went away
 		ERROR_NOT_READY, ERROR_BAD_NETPATH, ERROR_UNEXP_NET_ERR, syscall.ERROR_NETNAME_DELETED)
 }
