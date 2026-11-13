@@ -592,12 +592,7 @@ func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 }
 func (c *Client) ReadBlock(blockID Byte128) *HashboxBlock {
 	b := c.dispatchAndWait(MsgTypeReadBlock, &MsgClientReadBlock{BlockID: blockID}).(*MsgServerWriteBlock)
-	defer func() {
-		if r := recover(); r != nil { // corrupt data, the block is ours to free
-			b.Block.Release()
-			panic(r)
-		}
-	}()
+	defer releaseOnPanic(b.Block) // corrupt data, the block is ours to free
 	b.Block.UncompressData()
 	return b.Block
 }

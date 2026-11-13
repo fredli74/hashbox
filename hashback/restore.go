@@ -21,6 +21,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -53,7 +54,7 @@ func (session *BackupSession) PrintDiffProgress() {
 // Classifies a recovered block read panic. A dead client or a server that
 // refuses the block is not damage to the backup, salvaging past it would
 // mislabel every remaining entry and end in a success exit code.
-func (session *BackupSession) salvageBlockError(r interface{}) error {
+func salvageBlockError(r interface{}) error {
 	var remote core.RemoteError
 	if err, ok := r.(error); ok && errors.As(err, &remote) {
 		panic(exitError{fmt.Errorf("restore aborted, %s", err), 2})
@@ -61,61 +62,51 @@ func (session *BackupSession) salvageBlockError(r interface{}) error {
 	return fmt.Errorf("%w, %v", errUnreadableBackup, r)
 }
 
-// Reads and unserializes a metadata block. Damage to the backup is a panic from
-// deep inside ReadBlock, and -salvage turns exactly that into an error so the
-// readable part of the dataset can still be recovered. The recover is scoped to
-// the block read on purpose, a wider one would also swallow assertions and
+// Reads a verified block and hands it to use. Damage to the backup is a panic
+// from deep inside ReadBlock, and -salvage turns exactly that into an error so
+// the readable part of the dataset can still be recovered. The recover is
+// scoped to the read on purpose, a wider one would also swallow assertions and
 // contract violations, which are never expected.
-func (session *BackupSession) readMetadataBlock(blockID core.Byte128, into core.Unserializer) (err error) {
+func (session *BackupSession) readBlock(blockID core.Byte128, use func(block *core.HashboxBlock, r io.Reader) error) (err error) {
 	if session.Salvage {
 		defer func() {
 			if r := recover(); r != nil {
-				err = session.salvageBlockError(r)
+				err = salvageBlockError(r)
 			}
 		}()
 	}
 	block := session.Client.ReadBlock(blockID)
-	blockData := block.Data // own read position, VerifyBlock consumes the original
-	defer blockData.Release()
+	defer block.Release() // before VerifyBlock, a recovered panic must not leak the slab
 
 	if !block.VerifyBlock() {
 		panic(fmt.Errorf("block %x corrupted, hash does not match", blockID))
 	}
-	into.Unserialize(&blockData)
-	return nil
+	return use(block, &block.Data)
 }
 
-func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, DecryptKey core.Byte128) (err error) {
+// Metadata is not counted as read data, it never was.
+func (session *BackupSession) readMetadataBlock(blockID core.Byte128, into core.Unserializer) error {
+	return session.readBlock(blockID, func(_ *core.HashboxBlock, r io.Reader) error {
+		into.Unserialize(r)
+		return nil
+	})
+}
+
+func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, DecryptKey core.Byte128) error {
 	if session.ShowProgress && time.Now().After(session.Progress) {
 		session.PrintRestoreProgress()
 		session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
 	}
-
-	if session.Salvage {
-		defer func() {
-			if r := recover(); r != nil {
-				err = session.salvageBlockError(r)
-			}
-		}()
-	}
-	block := session.Client.ReadBlock(blockID)
-	d := block.Data
-	defer d.Release() // before VerifyBlock, a recovered panic must not leak the slab
-
-	if !block.VerifyBlock() {
-		panic(fmt.Errorf("block %x corrupted, hash does not match", blockID))
-	}
-
-	session.ReadData += int64(block.CompressedSize)
-	// TODO: Decrypt block
-
-	_, err = d.ReadSeek(0, io.SeekStart)
-	core.AbortOnError(err)
-	if _, err = io.Copy(f, &d); err != nil {
-		return err
-	}
-	session.WriteData += int64(d.Len())
-	return nil
+	return session.readBlock(blockID, func(block *core.HashboxBlock, r io.Reader) error {
+		session.ReadData += int64(block.CompressedSize)
+		// TODO: Decrypt block
+		n, err := io.Copy(f, r)
+		if err != nil {
+			return err
+		}
+		session.WriteData += n
+		return nil
+	})
 }
 
 // Mode is not compared, restoreEntry writes ModTime last so a matching one marks
@@ -218,6 +209,22 @@ var (
 // counted classes that carry no errno, see errorCause
 var errorClasses = []error{errLostWithParent, errUnreadableBackup}
 
+// The class an error is counted under. Without this the summary degrades to one
+// line per path, which is what it exists to avoid. Sentinels first, they carry
+// no errno; the fallback is the whole message and is the case to keep rare.
+func errorCause(err error) string {
+	for _, sentinel := range errorClasses {
+		if errors.Is(err, sentinel) {
+			return sentinel.Error()
+		}
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return errno.Error()
+	}
+	return err.Error()
+}
+
 // Counts and logs every entry below a failed directory. Reads blocks, writes nothing.
 func (session *BackupSession) reportLostSubtree(e *FileEntry, localpath string) {
 	if e.ContentType != ContentTypeDirectory {
@@ -240,7 +247,6 @@ func (session *BackupSession) reportLostSubtree(e *FileEntry, localpath string) 
 // so the subtree can be accounted for once the run is known to continue.
 type lostSubtreeError struct {
 	error
-	entry     *FileEntry
 	localpath string
 }
 
@@ -261,7 +267,7 @@ func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string) {
 	// only now that the run continues is counting the subtree worth the blocks
 	var lost lostSubtreeError
 	if errors.As(err, &lost) {
-		session.reportLostSubtree(lost.entry, lost.localpath)
+		session.reportLostSubtree(e, lost.localpath)
 	}
 }
 
@@ -285,7 +291,7 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 
 	occupied, err := prepareDestination(e, localinfo, localpath)
 	if err != nil {
-		return lostSubtreeError{err, e, localpath}
+		return lostSubtreeError{err, localpath}
 	}
 
 	if e.IsSymlink() {
@@ -300,12 +306,10 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		}
 	} else if e.IsDir() {
 		session.LogVerbose("DIR %s", localpath)
-		if !occupied {
-			// the parent is always restored first, so MkdirAll and its extra stat
-			// would only repeat work already done
-			if err := os.Mkdir(localpath, 0777); err != nil && !errors.Is(err, fs.ErrExist) {
-				return lostSubtreeError{err, e, localpath}
-			}
+		// the parent is always restored first, so MkdirAll and its extra stat
+		// would only repeat work already done. ErrExist covers what occupied did
+		if err := os.Mkdir(localpath, 0777); err != nil && !errors.Is(err, fs.ErrExist) {
+			return lostSubtreeError{err, localpath}
 		}
 
 		switch e.ContentType {
@@ -423,7 +427,10 @@ func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath stri
 	if len(restorelist) > 0 {
 		for _, r := range restorelist {
 			list, err := session.findPathMatch(rootBlockID, r)
-			core.AbortOnError(err)
+			if err != nil {
+				// the sibling branch aborts the same way, this one stack traced
+				panic(exitError{fmt.Errorf("restore aborted, %s", err), 2})
+			}
 			for _, e := range list {
 				session.tryRestoreEntry(e, restorepath)
 			}
@@ -493,28 +500,19 @@ func (session *BackupSession) diffFileData(f *os.File, blockID core.Byte128, Dec
 		session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
 	}
 
-	block := session.Client.ReadBlock(blockID)
-	if !block.VerifyBlock() {
-		panic((fmt.Errorf("block %x corrupted, hash does not match", blockID[:])))
-	}
+	same := true
+	core.AbortOnError(session.readBlock(blockID, func(block *core.HashboxBlock, r io.Reader) error {
+		session.ReadData += int64(block.CompressedSize)
+		// TODO: Decrypt block
 
-	session.ReadData += int64(block.CompressedSize)
-	// TODO: Decrypt block
-
-	d := block.Data
-	defer d.Release()
-
-	_, err := d.ReadSeek(0, io.SeekStart)
-	core.AbortOnError(err)
-	offset, err := f.Seek(0, io.SeekCurrent)
-	core.AbortOnError(err)
-
-	if !session.diffAndPrint(offset, &d, f) {
-		return false
-	}
-
-	session.WriteData += int64(d.Len())
-	return true
+		offset, err := f.Seek(0, io.SeekCurrent)
+		core.AbortOnError(err)
+		if same = session.diffAndPrint(offset, r, f); same {
+			session.WriteData += int64(block.Data.Len())
+		}
+		return nil
+	}))
+	return same
 }
 
 func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, err error) {
@@ -586,9 +584,7 @@ func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, e
 			case ContentTypeFileChain:
 				var chain FileChainBlock
 
-				blockData := session.Client.ReadBlock(e.ContentBlockID).Data
-				chain.Unserialize(&blockData)
-				blockData.Release()
+				core.AbortOnError(session.readMetadataBlock(e.ContentBlockID, &chain))
 
 				for i := range chain.ChainBlocks {
 					same = session.diffFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i])
@@ -612,10 +608,7 @@ func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, e
 // Todo: diffDir does not work with platform filename substitution
 func (session *BackupSession) diffDir(blockID core.Byte128, path string) {
 	var dir DirectoryBlock
-
-	blockData := session.Client.ReadBlock(blockID).Data
-	dir.Unserialize(&blockData)
-	blockData.Release()
+	core.AbortOnError(session.readMetadataBlock(blockID, &dir))
 
 	fil, err := os.Open(path)
 	core.AbortOnError(err)

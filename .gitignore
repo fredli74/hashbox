@@ -4,3 +4,4 @@ hashback/hashback
 server/server
 **/test/*
 .vscode/
+.claude/settings.local.json

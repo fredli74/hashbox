@@ -355,30 +355,6 @@ type exitError struct {
 	code int
 }
 
-// restore is single threaded, errno text is a FormatMessage call on windows
-var errnoText = map[syscall.Errno]string{}
-
-// The class an error is counted under. Without this the summary degrades to one
-// line per path, which is what it exists to avoid. Sentinels first, they carry
-// no errno; the fallback is the whole message and is the case to keep rare.
-func errorCause(err error) string {
-	for _, sentinel := range errorClasses {
-		if errors.Is(err, sentinel) {
-			return sentinel.Error()
-		}
-	}
-	var errno syscall.Errno
-	if errors.As(err, &errno) {
-		text, ok := errnoText[errno]
-		if !ok {
-			text = errno.Error()
-			errnoText[errno] = text
-		}
-		return text
-	}
-	return err.Error()
-}
-
 func errorIsAny(err error, targets ...error) bool {
 	for _, t := range targets {
 		if errors.Is(err, t) {
