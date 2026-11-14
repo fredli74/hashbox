@@ -18,6 +18,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -53,13 +54,19 @@ func (session *BackupSession) PrintDiffProgress() {
 
 // Classifies a recovered block read panic. A dead client or a server that
 // refuses the block is not damage to the backup, salvaging past it would
-// mislabel every remaining entry and end in a success exit code.
+// mislabel every remaining entry and end in a success exit code. A runtime
+// fault or a non-error value is a bug and still crashes.
 func salvageBlockError(r interface{}) error {
+	err, ok := r.(error)
+	var fault runtime.Error
+	if !ok || errors.As(err, &fault) {
+		panic(r)
+	}
 	var remote core.RemoteError
-	if err, ok := r.(error); ok && errors.As(err, &remote) {
+	if errors.As(err, &remote) {
 		panic(exitError{fmt.Errorf("restore aborted, %s", err), 2})
 	}
-	return fmt.Errorf("%w, %v", errUnreadableBackup, r)
+	return fmt.Errorf("%w, %v", errUnreadableBackup, err)
 }
 
 // Reads a verified block and hands it to use. Damage to the backup is a panic
