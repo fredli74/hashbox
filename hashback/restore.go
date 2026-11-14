@@ -204,10 +204,11 @@ func (session *BackupSession) PrintRestoreErrors() {
 var (
 	errLostWithParent   = errors.New("lost with parent directory")
 	errUnreadableBackup = errors.New("unreadable backup data")
+	errUnsafeName       = errors.New("unsafe file name in backup")
 )
 
 // counted classes that carry no errno, see errorCause
-var errorClasses = []error{errLostWithParent, errUnreadableBackup}
+var errorClasses = []error{errLostWithParent, errUnreadableBackup, errUnsafeName}
 
 // The class an error is counted under. Without this the summary degrades to one
 // line per path, which is what it exists to avoid. Sentinels first, they carry
@@ -277,6 +278,10 @@ func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
 		session.Log("Platform restricted characters substituted in filename %s", string(e.FileName))
 	}
 	localpath := filepath.Join(path, localname)
+	// the name is server input, only a plain name may be joined to the destination
+	if localname == "." || filepath.Base(localname) != localname || !filepath.IsLocal(localname) {
+		return lostSubtreeError{fmt.Errorf("%w: %q", errUnsafeName, localname), localpath}
+	}
 
 	// a directory is never up to date, its contents still have to be walked
 	localinfo, _ := os.Lstat(localpath)
