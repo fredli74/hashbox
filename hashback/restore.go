@@ -416,12 +416,9 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 			if _, err := dst.Write(nil); err != nil { // opens an empty file
 				return err
 			}
-			// writing clears setuid/setgid unless we hold CAP_FSETID, so put them
-			// back on the handle. Skipped for ordinary modes, a chmod that a
-			// filesystem rejects (vfat, smb) would fail an otherwise good entry.
-			if filemode&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
-				return dst.f.Chmod(filemode)
-			}
+			// open only sets the mode on create, and writing clears setuid/setgid.
+			// Best effort, vfat and smb refuse and the entry is still good.
+			_ = dst.f.Chmod(filemode)
 			return nil
 		}()
 		if err != nil {
