@@ -78,7 +78,8 @@ func (session *BackupSession) readBlock(blockID core.Byte128, use func(block *co
 	block := session.Client.ReadBlock(blockID)
 	defer block.Release() // before VerifyBlock, a recovered panic must not leak the slab
 
-	if !block.VerifyBlock() {
+	// VerifyBlock only proves the block matches its own ID
+	if block.BlockID != blockID || !block.VerifyBlock() {
 		panic(fmt.Errorf("block %x corrupted, hash does not match", blockID))
 	}
 	return use(block, &block.Data)
