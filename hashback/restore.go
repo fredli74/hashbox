@@ -205,10 +205,11 @@ var (
 	errLostWithParent   = errors.New("lost with parent directory")
 	errUnreadableBackup = errors.New("unreadable backup data")
 	errUnsafeName       = errors.New("unsafe file name in backup")
+	errNameCollision    = errors.New("same local name as an entry restored earlier")
 )
 
 // counted classes that carry no errno, see errorCause
-var errorClasses = []error{errLostWithParent, errUnreadableBackup, errUnsafeName}
+var errorClasses = []error{errLostWithParent, errUnreadableBackup, errUnsafeName, errNameCollision}
 
 // The class an error is counted under. Without this the summary degrades to one
 // line per path, which is what it exists to avoid. Sentinels first, they carry
@@ -256,8 +257,15 @@ func (e lostSubtreeError) Unwrap() error { return e.error }
 // Only returned errors are tolerated, a panic still aborts. Damage to the
 // backup is turned into an error by readMetadataBlock/restoreFileData under
 // -salvage, so nothing here has to guess what a panic meant.
-func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string) {
-	err := session.restoreEntry(e, path)
+func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string, restored restoredNames) {
+	localname := platformSafeFilename(string(e.FileName))
+	if localname != string(e.FileName) {
+		session.Log("Platform restricted characters substituted in filename %s", string(e.FileName))
+	}
+	localpath := filepath.Join(path, localname)
+	key := strings.ToLower(localname)
+	err := session.restoreEntry(e, localname, localpath, restored[key])
+	restored[key], _ = os.Lstat(localpath) // whatever is there now, failed or not
 	if err == nil {
 		return
 	}
@@ -272,19 +280,23 @@ func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string) {
 	}
 }
 
-func (session *BackupSession) restoreEntry(e *FileEntry, path string) error {
-	localname := platformSafeFilename(string(e.FileName))
-	if localname != string(e.FileName) {
-		session.Log("Platform restricted characters substituted in filename %s", string(e.FileName))
-	}
-	localpath := filepath.Join(path, localname)
+// Siblings restored so far by case folded local name. A fold match is only a
+// candidate, os.SameFile decides, so case sensitive targets keep both names.
+type restoredNames map[string]os.FileInfo
+
+// sibling is what an earlier entry with the same folded name left behind.
+func (session *BackupSession) restoreEntry(e *FileEntry, localname string, localpath string, sibling os.FileInfo) error {
 	// the name is server input, only a plain name may be joined to the destination
 	if localname == "." || filepath.Base(localname) != localname || !filepath.IsLocal(localname) {
 		return lostSubtreeError{fmt.Errorf("%w: %q", errUnsafeName, localname), localpath}
 	}
+	localinfo, _ := os.Lstat(localpath)
+	// a restore replaces what it finds, but never what this run just restored
+	if os.SameFile(sibling, localinfo) {
+		return lostSubtreeError{fmt.Errorf("%w: %s", errNameCollision, localpath), localpath}
+	}
 
 	// a directory is never up to date, its contents still have to be walked
-	localinfo, _ := os.Lstat(localpath)
 	if !e.IsDir() && session.Resume && localinfo != nil && isEntryUpToDate(e, localinfo, localpath) {
 		if !e.IsSymlink() {
 			session.Files++
@@ -399,8 +411,9 @@ func (session *BackupSession) restoreDir(blockID core.Byte128, path string) erro
 		return err
 	}
 
+	restored := restoredNames{}
 	for _, e := range dir.File {
-		session.tryRestoreEntry(e, path)
+		session.tryRestoreEntry(e, path, restored)
 	}
 	return nil
 }
@@ -430,6 +443,7 @@ func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath stri
 	defer session.PrintRestoreProgress()
 
 	if len(restorelist) > 0 {
+		restored := restoredNames{} // every match lands in the same directory
 		for _, r := range restorelist {
 			list, err := session.findPathMatch(rootBlockID, r)
 			if err != nil {
@@ -437,7 +451,7 @@ func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath stri
 				panic(exitError{fmt.Errorf("restore aborted, %s", err), 2})
 			}
 			for _, e := range list {
-				session.tryRestoreEntry(e, restorepath)
+				session.tryRestoreEntry(e, restorepath, restored)
 			}
 		}
 	} else if err := session.restoreDir(rootBlockID, restorepath); err != nil {
