@@ -191,7 +191,7 @@ func (l *lazyFile) Write(p []byte) (n int, err error) {
 
 // Recreates the destination after an open failed on a file that is there but
 // cannot be reopened, which is what a previous restore leaves behind when the
-// stored mode is read-only. Returns the original error if that does not help.
+// stored mode is read-only. Returns the original error if it cannot be removed.
 func reopenForWrite(localpath string, filemode os.FileMode, openErr error, occupied bool) (*os.File, error) {
 	// only a mode problem is fixed by recreating. Unlinking on anything else
 	// destroys a good file, and a cloud placeholder deleted here syncs upstream
@@ -201,11 +201,8 @@ func reopenForWrite(localpath string, filemode os.FileMode, openErr error, occup
 	if err := os.Remove(localpath); err != nil {
 		return nil, openErr
 	}
-	fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filemode)
-	if err != nil {
-		return nil, openErr
-	}
-	return fil, nil
+	// the file is gone, so the create error is the one that counts (ENOSPC)
+	return os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filemode)
 }
 
 func (session *BackupSession) logRestoreError(err error) {
