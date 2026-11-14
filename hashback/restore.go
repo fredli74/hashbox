@@ -92,7 +92,7 @@ func (session *BackupSession) readMetadataBlock(blockID core.Byte128, into core.
 	})
 }
 
-func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, DecryptKey core.Byte128) error {
+func (session *BackupSession) restoreFileData(w io.Writer, blockID core.Byte128, DecryptKey core.Byte128) error {
 	if session.ShowProgress && time.Now().After(session.Progress) {
 		session.PrintRestoreProgress()
 		session.Progress = time.Now().Add(PROGRESS_INTERVAL_SECS)
@@ -100,7 +100,7 @@ func (session *BackupSession) restoreFileData(f *os.File, blockID core.Byte128, 
 	return session.readBlock(blockID, func(block *core.HashboxBlock, r io.Reader) error {
 		session.ReadData += int64(block.CompressedSize)
 		// TODO: Decrypt block
-		n, err := io.Copy(f, r)
+		n, err := io.Copy(w, r)
 		if err != nil {
 			return err
 		}
@@ -356,7 +356,52 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 			filemode &^= os.ModeSetuid | os.ModeSetgid
 			session.Log("Setuid/setgid dropped, the backup holds no owner: %s", localpath)
 		}
+		// block errors do not carry the path
+		writeContent := func(w io.Writer) (err error) {
+			defer func() {
+				if err != nil {
+					err = fmt.Errorf("%w: %s", err, localpath)
+				}
+			}()
+			switch e.ContentType {
+			case ContentTypeFileChain:
+				var chain FileChainBlock
+				if err := session.readMetadataBlock(e.ContentBlockID, &chain); err != nil {
+					return err
+				}
+				for i := range chain.ChainBlocks {
+					if err := session.restoreFileData(w, chain.ChainBlocks[i], chain.DecryptKeys[i]); err != nil {
+						return err
+					}
+				}
+			case ContentTypeFileData:
+				return session.restoreFileData(w, e.ContentBlockID, e.DecryptKey)
+			}
+			return nil
+		}
 		err := func() (err error) {
+			// Something there to lose: fetch into a temp file first so unreadable
+			// blocks leave it untouched, then write over it in place to keep its
+			// owner, ACLs and placeholder state.
+			var content io.Reader
+			if occupied {
+				tmp, err := os.CreateTemp(filepath.Dir(localpath), ".hashback-*")
+				if err != nil {
+					return err
+				}
+				defer func() {
+					_ = tmp.Close()
+					_ = os.Remove(tmp.Name()) // after Close, windows keeps an open file
+				}()
+				if err := writeContent(tmp); err != nil {
+					return err
+				}
+				if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+					return err
+				}
+				content = tmp
+			}
+
 			fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filemode)
 			if err != nil {
 				if fil, err = reopenForWrite(localpath, filemode, err, occupied); err != nil {
@@ -367,25 +412,13 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 				err = errors.Join(err, fil.Close())
 			}()
 
-			switch e.ContentType {
-			case ContentTypeEmpty:
-				// No data
-			case ContentTypeFileChain:
-				var chain FileChainBlock
-
-				if err := session.readMetadataBlock(e.ContentBlockID, &chain); err != nil {
-					return err
-				}
-
-				for i := range chain.ChainBlocks {
-					if err := session.restoreFileData(fil, chain.ChainBlocks[i], chain.DecryptKeys[i]); err != nil {
-						return err
-					}
-				}
-			case ContentTypeFileData:
-				if err := session.restoreFileData(fil, e.ContentBlockID, e.DecryptKey); err != nil {
-					return err
-				}
+			if content != nil {
+				_, err = io.Copy(fil, content)
+			} else {
+				err = writeContent(fil)
+			}
+			if err != nil {
+				return err
 			}
 			// writing clears setuid/setgid unless we hold CAP_FSETID, so put them
 			// back on the handle. Skipped for ordinary modes, a chmod that a
