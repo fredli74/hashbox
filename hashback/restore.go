@@ -165,6 +165,23 @@ func prepareDestination(e *FileEntry, localinfo os.FileInfo, localpath string) (
 	return false, os.Remove(localpath)
 }
 
+// Opens the destination on the first write, so an existing file is only
+// truncated once the entry's first block has been read. A one block file is
+// fully read by then, a longer one can still fail part way.
+type lazyFile struct {
+	open func() (*os.File, error)
+	f    *os.File
+}
+
+func (l *lazyFile) Write(p []byte) (n int, err error) {
+	if l.f == nil {
+		if l.f, err = l.open(); err != nil {
+			return 0, err
+		}
+	}
+	return l.f.Write(p)
+}
+
 // Recreates the destination after an open failed on a file that is there but
 // cannot be reopened, which is what a previous restore leaves behind when the
 // stored mode is read-only. Returns the original error if that does not help.
@@ -381,51 +398,29 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 			return nil
 		}
 		err := func() (err error) {
-			// Something there to lose: fetch into a temp file first so unreadable
-			// blocks leave it untouched, then write over it in place to keep its
-			// owner, ACLs and placeholder state.
-			var content io.Reader
-			if occupied {
-				tmp, err := os.CreateTemp(filepath.Dir(localpath), ".hashback-*")
+			dst := &lazyFile{open: func() (*os.File, error) {
+				fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filemode)
 				if err != nil {
-					return err
+					return reopenForWrite(localpath, filemode, err, occupied)
 				}
-				defer func() {
-					_ = tmp.Close()
-					_ = os.Remove(tmp.Name()) // after Close, windows keeps an open file
-				}()
-				if err := writeContent(tmp); err != nil {
-					return err
-				}
-				if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-					return err
-				}
-				content = tmp
-			}
-
-			fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filemode)
-			if err != nil {
-				if fil, err = reopenForWrite(localpath, filemode, err, occupied); err != nil {
-					return err
-				}
-			}
+				return fil, nil
+			}}
 			defer func() {
-				err = errors.Join(err, fil.Close())
+				if dst.f != nil {
+					err = errors.Join(err, dst.f.Close())
+				}
 			}()
-
-			if content != nil {
-				_, err = io.Copy(fil, content)
-			} else {
-				err = writeContent(fil)
+			if err := writeContent(dst); err != nil {
+				return err
 			}
-			if err != nil {
+			if _, err := dst.Write(nil); err != nil { // opens an empty file
 				return err
 			}
 			// writing clears setuid/setgid unless we hold CAP_FSETID, so put them
 			// back on the handle. Skipped for ordinary modes, a chmod that a
 			// filesystem rejects (vfat, smb) would fail an otherwise good entry.
 			if filemode&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
-				return fil.Chmod(filemode)
+				return dst.f.Chmod(filemode)
 			}
 			return nil
 		}()
