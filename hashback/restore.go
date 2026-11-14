@@ -259,7 +259,7 @@ func (session *BackupSession) reportLostSubtree(e *FileEntry, localpath string) 
 	}
 	var dir DirectoryBlock
 	if err := session.readMetadataBlock(e.ContentBlockID, &dir); err != nil {
-		session.logRestoreError(err)
+		session.logRestoreError(fmt.Errorf("%w: %s", err, localpath))
 		return
 	}
 
