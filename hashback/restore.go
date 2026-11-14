@@ -349,8 +349,13 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 		}
 		session.LogVerbose("%s", localpath)
 		// the full mode, open applies setuid/setgid/sticky on create and masking
-		// them here would silently drop them from every restored file
+		// them here would silently drop them from every restored file. Not as
+		// root: the backup holds no owner, so the file would be root's.
 		filemode := os.FileMode(e.FileMode)
+		if filemode&(os.ModeSetuid|os.ModeSetgid) != 0 && os.Geteuid() == 0 {
+			filemode &^= os.ModeSetuid | os.ModeSetgid
+			session.Log("Setuid/setgid dropped, the backup holds no owner: %s", localpath)
+		}
 		err := func() (err error) {
 			fil, err := os.OpenFile(localpath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filemode)
 			if err != nil {
