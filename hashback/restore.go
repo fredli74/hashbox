@@ -311,8 +311,10 @@ type restoredNames map[string]os.FileInfo
 
 // sibling is what an earlier entry with the same folded name left behind.
 func (session *BackupSession) restoreEntry(e *FileEntry, localname string, localpath string, sibling os.FileInfo) error {
-	// the name is server input, only a plain name may be joined to the destination
-	if localname == "." || filepath.Base(localname) != localname || !filepath.IsLocal(localname) {
+	// the name is server input, only a plain name may be joined to the destination.
+	// Store names a "/" source "/", its tree is restored into the destination itself
+	isRoot := localname == "/" && e.IsDir()
+	if !isRoot && (localname == "." || filepath.Base(localname) != localname || !filepath.IsLocal(localname)) {
 		return lostSubtreeError{fmt.Errorf("%w: %q", errUnsafeName, localname), localpath}
 	}
 	localinfo, _ := os.Lstat(localpath)
