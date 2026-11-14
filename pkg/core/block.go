@@ -99,7 +99,7 @@ func (b *HashboxBlock) Unserialize(r io.Reader) (size int) {
 	var nBytes uint32
 	size += ReadUint32(r, &nBytes) // Data length
 	b.Data.Truncate(0)
-	size += CopyNOrPanic(&b.Data, r, int(nBytes))
+	size += CopyNOrPanic(&b.Data, r, int64(nBytes))
 
 	b.Compressed = true
 	b.CompressedSize = int(nBytes)

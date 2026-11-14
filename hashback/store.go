@@ -122,7 +122,7 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 		var blockData bytearray.ByteArray
 
 		// Fill the fileData buffer
-		core.CopyNOrPanic(&fileData, file, maxBlockSize-fileData.Len())
+		core.CopyNOrPanic(&fileData, file, int64(maxBlockSize-fileData.Len()))
 		_, err := fileData.ReadSeek(0, io.SeekCurrent) // TODO: figure out why this line is here because I do not remember
 		core.AbortOnError(err)
 

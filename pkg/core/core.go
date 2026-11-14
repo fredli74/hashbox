@@ -105,7 +105,7 @@ func (m *String) Unserialize(r io.Reader) (size int) {
 	size += ReadUint32(r, &l)
 	// grown as bytes arrive, the length is unchecked wire input
 	var b strings.Builder
-	size += CopyNOrPanic(&b, r, int(l))
+	size += CopyNOrPanic(&b, r, int64(l))
 	*m = String(b.String())
 	return
 }
