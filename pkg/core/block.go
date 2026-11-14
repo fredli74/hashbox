@@ -83,9 +83,12 @@ func (b *HashboxBlock) UnserializeHeader(r io.Reader) (size int) {
 	size += b.BlockID.Unserialize(r)
 	var nLinks uint32
 	size += ReadUint32(r, &nLinks)
-	b.Links = make([]Byte128, nLinks)
-	for i := 0; i < int(nLinks); i++ {
-		size += b.Links[i].Unserialize(r)
+	// grown as links arrive, the count is unchecked wire input
+	b.Links = []Byte128{}
+	for range nLinks {
+		var l Byte128
+		size += l.Unserialize(r)
+		b.Links = append(b.Links, l)
 	}
 	size += ReadUint8(r, &b.DataType)
 	return

@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"io"
+	"strings"
 )
 
 // Unserializer is our own form of BinaryUnmarshaler but it works directly off a stream so we do not need to know the full size beforehand
@@ -102,9 +103,10 @@ func (m String) Serialize(w io.Writer) (size int) {
 func (m *String) Unserialize(r io.Reader) (size int) {
 	var l uint32
 	size += ReadUint32(r, &l)
-	b := make([]byte, l)
-	size += ReadBytes(r, b)
-	*m = String(b)
+	// grown as bytes arrive, the length is unchecked wire input
+	var b strings.Builder
+	size += CopyNOrPanic(&b, r, int(l))
+	*m = String(b.String())
 	return
 }
 
@@ -140,11 +142,12 @@ func (a DatasetArray) Serialize(w io.Writer) (size int) {
 func (a *DatasetArray) Unserialize(r io.Reader) (size int) {
 	var n uint32
 	size += ReadUint32(r, &n)
-	A := make([]Dataset, n)
-	for i := 0; i < int(n); i++ {
-		size += A[i].Unserialize(r)
+	*a = DatasetArray{} // grown as entries arrive, the count is unchecked wire input
+	for range n {
+		var e Dataset
+		size += e.Unserialize(r)
+		*a = append(*a, e)
 	}
-	*a = A
 	return
 }
 func (a DatasetArray) Len() int           { return len(a) }
@@ -207,11 +210,12 @@ func (a DatasetStateArray) Serialize(w io.Writer) (size int) {
 func (a *DatasetStateArray) Unserialize(r io.Reader) (size int) {
 	var n uint32
 	size += ReadUint32(r, &n)
-	A := make([]DatasetStateEntry, n)
-	for i := 0; i < int(n); i++ {
-		size += A[i].Unserialize(r)
+	*a = DatasetStateArray{} // grown as entries arrive, the count is unchecked wire input
+	for range n {
+		var e DatasetStateEntry
+		size += e.Unserialize(r)
+		*a = append(*a, e)
 	}
-	*a = A
 	return
 }
 func (a DatasetStateArray) Len() int      { return len(a) }
