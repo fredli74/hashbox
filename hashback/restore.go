@@ -482,8 +482,9 @@ func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath stri
 	defer session.PrintRestoreProgress()
 
 	if len(restorelist) > 0 {
-		restored := restoredNames{} // every match lands in the same directory
 		for _, r := range restorelist {
+			// per pattern, an entry matched by two patterns is not a collision
+			restored := restoredNames{}
 			list, err := session.findPathMatch(rootBlockID, r)
 			if err != nil {
 				// the sibling branch aborts the same way, this one stack traced
