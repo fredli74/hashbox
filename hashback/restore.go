@@ -151,7 +151,7 @@ func prepareDestination(e *FileEntry, localinfo os.FileInfo, localpath string) (
 			if localinfo.Mode().Perm()&0300 != 0300 {
 				// best effort, chmod needs ownership but the children may still be
 				// writable through group or other, so a failure must not skip them
-				_ = os.Chmod(localpath, localinfo.Mode().Perm()|0300)
+				_ = os.Chmod(localpath, localinfo.Mode()|0300) // Perm() would clear setgid
 			}
 			return true, nil
 		}
