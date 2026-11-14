@@ -506,8 +506,9 @@ func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChan
 
 // dispatchAndWait will always return the response you were waiting for or throw a panic, so there is no need to check return values
 func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{} {
+	// Never closed here: dispatchMessage closes it when the client is closing,
+	// a second close would replace the RemoteError below with a runtime panic
 	waiter := make(chan interface{}, 1)
-	defer close(waiter)
 	c.dispatchMessage(msgType, msgData, waiter)
 	select {
 	case R, ok := <-waiter:
