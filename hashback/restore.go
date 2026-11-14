@@ -126,8 +126,9 @@ func isEntryUpToDate(e *FileEntry, localinfo os.FileInfo, localpath string) bool
 		if localinfo.Mode()&os.ModeSymlink == 0 {
 			return false
 		}
+		// Windows stores the target with backslashes
 		link, err := os.Readlink(localpath)
-		return err == nil && link == string(e.FileLink)
+		return err == nil && link == filepath.FromSlash(string(e.FileLink))
 	}
 	// compare with second precision because of Dropbox Online Only files
 	return isRestorableFile(localinfo) && localinfo.Size() == e.FileSize &&
@@ -596,7 +597,7 @@ func (session *BackupSession) diffEntry(e *FileEntry, path string) (same bool, e
 			if err != nil {
 				return false, err
 			}
-			if link != string(e.FileLink) {
+			if link != filepath.FromSlash(string(e.FileLink)) {
 				return false, fmt.Errorf("symlink points to %s and not %s", link, string(e.FileLink))
 			}
 
