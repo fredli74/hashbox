@@ -371,7 +371,7 @@ func main() {
 
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Println(r)
+			fmt.Println(core.Escape(fmt.Sprint(r))) // may carry names from the backup
 			if lockFile != nil {
 				lockFile.Unlock()
 			}
