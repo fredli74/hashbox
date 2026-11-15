@@ -8,6 +8,7 @@ package storagedb
 import (
 	"bytes"
 	"io"
+	"io/fs"
 
 	"github.com/fredli74/hashbox/pkg/core"
 )
@@ -117,7 +118,9 @@ func (store *Store) readBlockFile(blockID core.Byte128) (*core.HashboxBlock, err
 	dataFileNumber, dataOffset := metaEntry.location.Get()
 	dataFile := store.getNumberedFile(storageFileTypeData, dataFileNumber, false)
 	if dataFile == nil {
-		core.Abort("Error reading block from file %x, file does not exist", dataFileNumber)
+		// damage to one block, the client is told and the server keeps serving
+		core.Log(core.LogError, "Error reading block %x from file %x, file does not exist", blockID, dataFileNumber)
+		return nil, fs.ErrNotExist
 	}
 	_, err = dataFile.Reader.Seek(dataOffset, io.SeekStart)
 	core.AbortOnError(err)
