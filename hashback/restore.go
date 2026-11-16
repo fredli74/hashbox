@@ -226,11 +226,10 @@ var (
 	errLostWithParent   = errors.New("lost with parent directory")
 	errUnreadableBackup = errors.New("unreadable backup data")
 	errUnsafeName       = errors.New("unsafe file name in backup")
-	errNameCollision    = errors.New("same local name as an entry restored earlier")
 )
 
 // counted classes that carry no errno, see errorCause
-var errorClasses = []error{errLostWithParent, errUnreadableBackup, errUnsafeName, errNameCollision}
+var errorClasses = []error{errLostWithParent, errUnreadableBackup, errUnsafeName}
 
 // The class an error is counted under. Without this the summary degrades to one
 // line per path, which is what it exists to avoid. Sentinels first, they carry
@@ -279,16 +278,13 @@ func (e lostSubtreeError) Unwrap() error { return e.error }
 // Only returned errors are tolerated, a panic still aborts. Damage to the
 // backup is turned into an error by readBlock, so nothing here has to guess
 // what a panic meant.
-func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string, restored restoredNames) {
+func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string) {
 	localname := platformSafeFilename(string(e.FileName))
 	if localname != string(e.FileName) {
 		session.Log("Platform restricted characters substituted in filename %s", string(e.FileName))
 	}
 	localpath := filepath.Join(path, localname)
-	key := strings.ToLower(localname)
-	err := session.restoreEntry(e, localname, localpath, restored[key])
-	now, _ := os.Lstat(localpath) // whatever is there now, failed or not
-	restored[key] = append(restored[key], now)
+	err := session.restoreEntry(e, localname, localpath)
 	if err == nil {
 		return
 	}
@@ -303,13 +299,9 @@ func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string, restore
 	}
 }
 
-// Siblings restored so far by case folded local name. A fold match is only a
-// candidate, os.SameFile decides, so case sensitive targets keep both names.
-// All of them are kept, foo FOO foo must not let the second foo pass.
-type restoredNames map[string][]os.FileInfo
-
-// siblings are what earlier entries with the same folded name left behind.
-func (session *BackupSession) restoreEntry(e *FileEntry, localname string, localpath string, siblings []os.FileInfo) error {
+// Two backup names that are one local name (README and readme on a case
+// insensitive filesystem) are restored in turn, the last one wins.
+func (session *BackupSession) restoreEntry(e *FileEntry, localname string, localpath string) error {
 	// the name is server input, only a plain name may be joined to the destination.
 	// Store names a "/" source "/", its tree is restored into the destination itself
 	isRoot := localname == "/" && e.IsDir() && !e.IsSymlink()
@@ -317,10 +309,6 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 		return lostSubtreeError{fmt.Errorf("%w: %q", errUnsafeName, localname), localpath}
 	}
 	localinfo, _ := os.Lstat(localpath)
-	// a restore replaces what it finds, but never what this run just restored
-	if slices.ContainsFunc(siblings, func(s os.FileInfo) bool { return os.SameFile(s, localinfo) }) {
-		return lostSubtreeError{fmt.Errorf("%w: %s", errNameCollision, localpath), localpath}
-	}
 
 	// a directory is never up to date, its contents still have to be walked
 	if !e.IsDir() && session.Resume && localinfo != nil && isEntryUpToDate(e, localinfo, localpath) {
@@ -453,9 +441,8 @@ func (session *BackupSession) restoreDir(blockID core.Byte128, path string) erro
 		return err
 	}
 
-	restored := restoredNames{}
 	for _, e := range dir.File {
-		session.tryRestoreEntry(e, path, restored)
+		session.tryRestoreEntry(e, path)
 	}
 	return nil
 }
@@ -485,19 +472,13 @@ func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath stri
 	defer session.PrintRestoreProgress()
 
 	if len(restorelist) > 0 {
-		restored := restoredNames{}     // every pattern lands in restorepath
-		matched := map[FileEntry]bool{} // an entry two patterns match is restored once
 		for _, r := range restorelist {
 			list, err := session.findPathMatch(rootBlockID, r)
 			if err != nil {
-				// the sibling branch aborts the same way, this one stack traced
 				panic(exitError{fmt.Errorf("restore aborted, %s", err), 2})
 			}
 			for _, e := range list {
-				if !matched[*e] {
-					matched[*e] = true
-					session.tryRestoreEntry(e, restorepath, restored)
-				}
+				session.tryRestoreEntry(e, restorepath)
 			}
 		}
 	} else if err := session.restoreDir(rootBlockID, restorepath); err != nil {
