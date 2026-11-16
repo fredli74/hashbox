@@ -312,7 +312,7 @@ type restoredNames map[string][]os.FileInfo
 func (session *BackupSession) restoreEntry(e *FileEntry, localname string, localpath string, siblings []os.FileInfo) error {
 	// the name is server input, only a plain name may be joined to the destination.
 	// Store names a "/" source "/", its tree is restored into the destination itself
-	isRoot := localname == "/" && e.IsDir()
+	isRoot := localname == "/" && e.IsDir() && !e.IsSymlink()
 	if !isRoot && (localname == "." || filepath.Base(localname) != localname || !filepath.IsLocal(localname)) {
 		return lostSubtreeError{fmt.Errorf("%w: %q", errUnsafeName, localname), localpath}
 	}
