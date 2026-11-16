@@ -257,7 +257,8 @@ func (session *BackupSession) reportLostSubtree(e *FileEntry, localpath string) 
 	}
 	var dir DirectoryBlock
 	if err := session.readMetadataBlock(e.ContentBlockID, &dir); err != nil {
-		session.logRestoreError(fmt.Errorf("%w: %s", err, localpath))
+		// the directory is already counted, only its contents are unknown
+		session.Log("Contents not counted, %s: %s", err.Error(), localpath)
 		return
 	}
 
