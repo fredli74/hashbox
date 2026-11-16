@@ -183,11 +183,15 @@ func (b *FileChainBlock) Unserialize(r io.Reader) (size int) {
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
-	b.ChainBlocks = make([]core.Byte128, l)
-	b.DecryptKeys = make([]core.Byte128, l)
-	for i := range b.ChainBlocks {
-		size += b.ChainBlocks[i].Unserialize(r)
-		size += b.DecryptKeys[i].Unserialize(r)
+	// grown as entries arrive, the count is unchecked backup input
+	b.ChainBlocks = []core.Byte128{}
+	b.DecryptKeys = []core.Byte128{}
+	for range l {
+		var block, key core.Byte128
+		size += block.Unserialize(r)
+		size += key.Unserialize(r)
+		b.ChainBlocks = append(b.ChainBlocks, block)
+		b.DecryptKeys = append(b.DecryptKeys, key)
 	}
 	return
 }
@@ -212,10 +216,11 @@ func (b *DirectoryBlock) Unserialize(r io.Reader) (size int) {
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
-	b.File = make([]*FileEntry, l)
-	for i := range b.File {
-		b.File[i] = new(FileEntry)
-		size += b.File[i].Unserialize(r)
+	b.File = []*FileEntry{} // grown as entries arrive, the count is unchecked backup input
+	for range l {
+		e := new(FileEntry)
+		size += e.Unserialize(r)
+		b.File = append(b.File, e)
 	}
 	return
 }
