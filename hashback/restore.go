@@ -288,7 +288,8 @@ func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string, restore
 	localpath := filepath.Join(path, localname)
 	key := strings.ToLower(localname)
 	err := session.restoreEntry(e, localname, localpath, restored[key])
-	restored[key], _ = os.Lstat(localpath) // whatever is there now, failed or not
+	now, _ := os.Lstat(localpath) // whatever is there now, failed or not
+	restored[key] = append(restored[key], now)
 	if err == nil {
 		return
 	}
@@ -305,10 +306,11 @@ func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string, restore
 
 // Siblings restored so far by case folded local name. A fold match is only a
 // candidate, os.SameFile decides, so case sensitive targets keep both names.
-type restoredNames map[string]os.FileInfo
+// All of them are kept, foo FOO foo must not let the second foo pass.
+type restoredNames map[string][]os.FileInfo
 
-// sibling is what an earlier entry with the same folded name left behind.
-func (session *BackupSession) restoreEntry(e *FileEntry, localname string, localpath string, sibling os.FileInfo) error {
+// siblings are what earlier entries with the same folded name left behind.
+func (session *BackupSession) restoreEntry(e *FileEntry, localname string, localpath string, siblings []os.FileInfo) error {
 	// the name is server input, only a plain name may be joined to the destination.
 	// Store names a "/" source "/", its tree is restored into the destination itself
 	isRoot := localname == "/" && e.IsDir()
@@ -317,7 +319,7 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 	}
 	localinfo, _ := os.Lstat(localpath)
 	// a restore replaces what it finds, but never what this run just restored
-	if os.SameFile(sibling, localinfo) {
+	if slices.ContainsFunc(siblings, func(s os.FileInfo) bool { return os.SameFile(s, localinfo) }) {
 		return lostSubtreeError{fmt.Errorf("%w: %s", errNameCollision, localpath), localpath}
 	}
 
