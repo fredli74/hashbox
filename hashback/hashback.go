@@ -230,7 +230,6 @@ type BackupSession struct {
 	Verbose      bool
 	ShowProgress bool
 	Paint        bool
-	StopOnError  bool
 
 	Client   *core.Client
 	State    *core.DatasetState
@@ -578,7 +577,6 @@ func main() {
 	var retainYearly bool = false
 	var intervalBackup int64 = 0
 	cmd.BoolOption("resume", "restore", "Skip files already matching the backup (size and modification time) instead of rewriting them", &session.Resume, cmd.Standard)
-	cmd.BoolOption("failfast", "restore", "Stop on the first entry that cannot be restored", &session.StopOnError, cmd.Standard)
 
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &CustomIgnoreList, cmd.Standard|cmd.Preference)

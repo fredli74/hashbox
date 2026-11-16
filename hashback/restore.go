@@ -289,7 +289,7 @@ func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string) {
 		return
 	}
 	session.logRestoreError(err)
-	if session.StopOnError || isFatalRestoreError(err) {
+	if isFatalRestoreError(err) {
 		panic(exitError{fmt.Errorf("restore aborted, %s", err), 2})
 	}
 	// only now that the run continues is counting the subtree worth the blocks
