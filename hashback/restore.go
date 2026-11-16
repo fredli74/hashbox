@@ -308,6 +308,19 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 	if !isRoot && (localname == "." || filepath.Base(localname) != localname || !filepath.IsLocal(localname)) {
 		return lostSubtreeError{fmt.Errorf("%w: %q", errUnsafeName, localname), localpath}
 	}
+	// backup input too, checked before anything local is changed
+	var valid bool
+	switch {
+	case e.IsSymlink():
+		valid = e.ContentType == ContentTypeSymLink
+	case e.IsDir():
+		valid = e.ContentType == ContentTypeDirectory || e.ContentType == ContentTypeEmpty
+	default:
+		valid = e.ContentType == ContentTypeFileChain || e.ContentType == ContentTypeFileData || e.ContentType == ContentTypeEmpty
+	}
+	if !valid {
+		return fmt.Errorf("%w, invalid content type %d: %s", errUnreadableBackup, e.ContentType, localpath)
+	}
 	localinfo, _ := os.Lstat(localpath)
 
 	// a directory is never up to date, its contents still have to be walked
@@ -327,13 +340,8 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 
 	if e.IsSymlink() {
 		session.LogVerbose("SYMLINK %s -> %s", localpath, string(e.FileLink))
-		switch e.ContentType {
-		case ContentTypeSymLink:
-			if err := os.Symlink(string(e.FileLink), localpath); err != nil {
-				return err
-			}
-		default:
-			panic((fmt.Errorf("invalid ContentType for a symlink (%d)", e.ContentType)))
+		if err := os.Symlink(string(e.FileLink), localpath); err != nil {
+			return err
 		}
 	} else if e.IsDir() {
 		session.LogVerbose("DIR %s", localpath)
@@ -343,24 +351,17 @@ func (session *BackupSession) restoreEntry(e *FileEntry, localname string, local
 			return lostSubtreeError{err, localpath}
 		}
 
-		switch e.ContentType {
-		case ContentTypeDirectory:
+		if e.ContentType == ContentTypeDirectory {
 			if err := session.restoreDir(e.ContentBlockID, localpath); err != nil {
 				_ = os.Chmod(localpath, os.FileMode(e.FileMode)) // best effort, we are already failing
 				return fmt.Errorf("%w: %s", err, localpath)
 			}
-		case ContentTypeEmpty:
-		default:
-			panic((fmt.Errorf("invalid ContentType for a directory (%d)", e.ContentType)))
 		}
 		if err := os.Chmod(localpath, os.FileMode(e.FileMode) /*&os.ModePerm*/); err != nil {
 			return err
 		}
 		session.Directories++
 	} else {
-		if e.ContentType != ContentTypeFileChain && e.ContentType != ContentTypeFileData && e.ContentType != ContentTypeEmpty {
-			panic((fmt.Errorf("invalid ContentType for a file (%d)", e.ContentType)))
-		}
 		session.LogVerbose("%s", localpath)
 		// the full mode, open applies setuid/setgid/sticky on create and masking
 		// them here would silently drop them from every restored file. Not as
