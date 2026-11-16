@@ -252,7 +252,7 @@ func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
 		mt := reflect.TypeOf(m.Data).Elem()
 
 		for i := 0; i < mt.NumField(); i++ {
-			if mv.Field(i).Kind() == reflect.Ptr { // pointer value, need to create the underlying type
+			if mv.Field(i).Kind() == reflect.Pointer { // pointer value, need to create the underlying type
 				mv.Field(i).Set(reflect.New(mv.Field(i).Type().Elem()))
 				size += mv.Field(i).Interface().(Unserializer).Unserialize(r)
 			} else {
