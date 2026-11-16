@@ -56,7 +56,7 @@ func (session *BackupSession) PrintDiffProgress() {
 // refuses the block is not damage to the backup, salvaging past it would
 // mislabel every remaining entry and end in a success exit code. A runtime
 // fault or a non-error value is a bug and still crashes.
-func salvageBlockError(r interface{}) error {
+func blockReadError(r interface{}) error {
 	err, ok := r.(error)
 	var fault runtime.Error
 	if !ok || errors.As(err, &fault) {
@@ -70,18 +70,16 @@ func salvageBlockError(r interface{}) error {
 }
 
 // Reads a verified block and hands it to use. Damage to the backup is a panic
-// from deep inside ReadBlock, and -salvage turns exactly that into an error so
-// the readable part of the dataset can still be recovered. The recover is
+// from deep inside ReadBlock, turned into an error here so the readable part
+// of the dataset can still be recovered. The recover is
 // scoped to the read on purpose, a wider one would also swallow assertions and
 // contract violations, which are never expected.
 func (session *BackupSession) readBlock(blockID core.Byte128, use func(block *core.HashboxBlock, r io.Reader) error) (err error) {
-	if session.Salvage {
-		defer func() {
-			if r := recover(); r != nil {
-				err = salvageBlockError(r)
-			}
-		}()
-	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = blockReadError(r)
+		}
+	}()
 	block := session.Client.ReadBlock(blockID)
 	defer block.Release() // before VerifyBlock, a recovered panic must not leak the slab
 
@@ -279,8 +277,8 @@ type lostSubtreeError struct {
 func (e lostSubtreeError) Unwrap() error { return e.error }
 
 // Only returned errors are tolerated, a panic still aborts. Damage to the
-// backup is turned into an error by readMetadataBlock/restoreFileData under
-// -salvage, so nothing here has to guess what a panic meant.
+// backup is turned into an error by readBlock, so nothing here has to guess
+// what a panic meant.
 func (session *BackupSession) tryRestoreEntry(e *FileEntry, path string, restored restoredNames) {
 	localname := platformSafeFilename(string(e.FileName))
 	if localname != string(e.FileName) {
@@ -503,7 +501,7 @@ func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath stri
 			}
 		}
 	} else if err := session.restoreDir(rootBlockID, restorepath); err != nil {
-		// nothing was restored and nothing can be, not even under -salvage
+		// nothing was restored and nothing can be
 		panic(exitError{fmt.Errorf("restore aborted, %s: %s", err, restorepath), 2})
 	}
 
