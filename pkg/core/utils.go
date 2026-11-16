@@ -92,8 +92,12 @@ func CopyOrPanic(dst io.Writer, src io.Reader) int {
 	AbortOnError(err)
 	return int(written)
 }
-func CopyNOrPanic(dst io.Writer, src io.Reader, n int) int {
-	written, err := io.CopyN(dst, src, int64(n))
+
+// CopyNOrPanic takes an int64 count so a wire count of 2^31 or more stays
+// positive on 32-bit builds, as an int it turns negative and io.CopyN copies
+// nothing without an error.
+func CopyNOrPanic(dst io.Writer, src io.Reader, n int64) int {
+	written, err := io.CopyN(dst, src, n)
 	AbortOnError(err)
 	return int(written)
 }

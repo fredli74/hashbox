@@ -40,20 +40,21 @@ func init() {
 // TODO: Add other windows filename restrictions
 // CON, PRN, AUX, NUL, COM1, COM2, COM3, COM4, COM5, COM6, COM7, COM8, COM9, LPT1, LPT2, LPT3, LPT4, LPT5, LPT6, LPT7, LPT8, and LPT9.
 // Filenames containing only spaces or periods
+// built once, Replace is called for every restored and every backed up entry
+var platformReplacer = strings.NewReplacer(
+	"\\", "_",
+	"/", "_",
+	":", "_",
+	"*", "_",
+	"?", "_",
+	"\"", "_",
+	"<", "_",
+	">", "_",
+	"|", "_",
+)
+
 func platformSafeFilename(src string) (dst string) {
-	r := strings.NewReplacer(
-		"\\", "_",
-		"/", "_",
-		":", "_",
-		"*", "_",
-		"?", "_",
-		"\"", "_",
-		"<", "_",
-		">", "_",
-		"|", "_",
-	)
-	dst = r.Replace(src)
-	return dst
+	return platformReplacer.Replace(src)
 }
 
 func userHomeFolder() string {
@@ -73,11 +74,37 @@ func isOfflineFile(fileInfo os.FileInfo) bool {
 	return sys != nil && sys.FileAttributes&FILE_ATTRIBUTE_OFFLINE == FILE_ATTRIBUTE_OFFLINE
 }
 
+// the ones syscall does not already declare on windows
+const (
+	ERROR_WRITE_PROTECT     = syscall.Errno(19)
+	ERROR_SHARING_VIOLATION = syscall.Errno(32)
+	ERROR_LOCK_VIOLATION    = syscall.Errno(33)
+	ERROR_HANDLE_DISK_FULL  = syscall.Errno(39)
+	ERROR_DISK_FULL         = syscall.Errno(112)
+	ERROR_NOT_READY         = syscall.Errno(21)
+	ERROR_BAD_NETPATH       = syscall.Errno(53)
+	ERROR_UNEXP_NET_ERR     = syscall.Errno(59)
+	ERROR_IO_DEVICE         = syscall.Errno(1117)
+)
+
+// Restore continues past a failed entry by default, so this list is not a safety
+// net and need not be complete, a missed errno only costs log noise. It stops
+// early where continuing is pointless or does harm.
+func isFatalRestoreError(err error) bool {
+	return errorIsAny(err,
+		// no room, or the volume will not take writes
+		ERROR_DISK_FULL, ERROR_HANDLE_DISK_FULL, ERROR_WRITE_PROTECT,
+		// a failing device, more writes only stress it
+		ERROR_IO_DEVICE,
+		// the destination itself went away
+		ERROR_NOT_READY, ERROR_BAD_NETPATH, ERROR_UNEXP_NET_ERR, syscall.ERROR_NETNAME_DELETED)
+}
+
 func minorPathError(r interface{}) error {
 	e, ok := r.(*os.PathError)
-	if ok && (e.Err == syscall.Errno(32) || // ERROR_SHARING_VIOLATION
-		e.Err == syscall.Errno(33) || // ERROR_LOCK_VIOLATION
-		e.Err == syscall.Errno(5)) { // ERROR_ACCESS_DENIED
+	if ok && (e.Err == ERROR_SHARING_VIOLATION ||
+		e.Err == ERROR_LOCK_VIOLATION ||
+		e.Err == syscall.ERROR_ACCESS_DENIED) {
 		return e
 	}
 	return nil

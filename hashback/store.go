@@ -122,7 +122,7 @@ func (session *BackupSession) storeFile(path string, entry *FileEntry) (err erro
 		var blockData bytearray.ByteArray
 
 		// Fill the fileData buffer
-		core.CopyNOrPanic(&fileData, file, maxBlockSize-fileData.Len())
+		core.CopyNOrPanic(&fileData, file, int64(maxBlockSize-fileData.Len()))
 		_, err := fileData.ReadSeek(0, io.SeekCurrent) // TODO: figure out why this line is here because I do not remember
 		core.AbortOnError(err)
 
@@ -292,7 +292,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 	} else if entry.FileMode&uint32(os.ModeSocket) > 0 {
 		session.LogVerbose("Skipping (socket file) %s", path)
 		return nil, nil
-	} else if entry.FileMode&uint32(os.ModeSymlink) > 0 {
+	} else if entry.IsSymlink() {
 		entry.ContentType = ContentTypeSymLink
 		entry.FileSize = 0
 
@@ -316,7 +316,7 @@ func (session *BackupSession) storePath(path string, toplevel bool) (entry *File
 		session.Files++
 		session.reference.storeReference(entry)
 
-	} else if entry.FileMode&uint32(os.ModeDir) > 0 {
+	} else if entry.IsDir() {
 		entry.ContentType = ContentTypeDirectory
 		entry.FileSize = 0
 

@@ -34,6 +34,7 @@ import (
 var Version = "(dev-build)"
 
 const PROGRESS_INTERVAL_SECS = 10 * time.Second
+
 const MAX_BLOCK_SIZE int = 8 * 1024 * 1024 // 8MiB max blocksize
 const MIN_BLOCK_SIZE int = 64 * 1024       // 64kb minimum blocksize (before splitting it)
 
@@ -98,6 +99,12 @@ const (
 	ContentTypeSymLink   = 4
 )
 
+func (e FileEntry) IsSymlink() bool {
+	return e.FileMode&uint32(os.ModeSymlink) > 0
+}
+func (e FileEntry) IsDir() bool {
+	return e.FileMode&uint32(os.ModeDir) > 0
+}
 func (e FileEntry) HasContentBlockID() bool {
 	return (e.ContentType == ContentTypeDirectory || e.ContentType == ContentTypeFileData || e.ContentType == ContentTypeFileChain)
 }
@@ -176,11 +183,15 @@ func (b *FileChainBlock) Unserialize(r io.Reader) (size int) {
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
-	b.ChainBlocks = make([]core.Byte128, l)
-	b.DecryptKeys = make([]core.Byte128, l)
-	for i := range b.ChainBlocks {
-		size += b.ChainBlocks[i].Unserialize(r)
-		size += b.DecryptKeys[i].Unserialize(r)
+	// grown as entries arrive, the count is unchecked backup input
+	b.ChainBlocks = []core.Byte128{}
+	b.DecryptKeys = []core.Byte128{}
+	for range l {
+		var block, key core.Byte128
+		size += block.Unserialize(r)
+		size += key.Unserialize(r)
+		b.ChainBlocks = append(b.ChainBlocks, block)
+		b.DecryptKeys = append(b.DecryptKeys, key)
 	}
 	return
 }
@@ -205,10 +216,11 @@ func (b *DirectoryBlock) Unserialize(r io.Reader) (size int) {
 	}
 	var l uint32
 	size += core.ReadUint32(r, &l)
-	b.File = make([]*FileEntry, l)
-	for i := range b.File {
-		b.File[i] = new(FileEntry)
-		size += b.File[i].Unserialize(r)
+	b.File = []*FileEntry{} // grown as entries arrive, the count is unchecked backup input
+	for range l {
+		e := new(FileEntry)
+		size += e.Unserialize(r)
+		b.File = append(b.File, e)
 	}
 	return
 }
@@ -219,6 +231,7 @@ type BackupSession struct {
 	AccessKey    *core.Byte128
 	BackupKey    *core.Byte128
 	FullBackup   bool
+	Resume       bool
 	Verbose      bool
 	ShowProgress bool
 	Paint        bool
@@ -233,8 +246,11 @@ type BackupSession struct {
 	Directories    int
 	Files          int
 	UnchangedFiles int
+	FailedEntries  int
 
 	DifferentFiles int
+
+	errorCounts map[string]int
 
 	ignoreList []ignoreEntry
 	reference  *referenceEngine
@@ -257,6 +273,8 @@ func (session *BackupSession) Connect() *core.Client {
 	session.Directories = 0
 	session.Files = 0
 	session.UnchangedFiles = 0
+	session.FailedEntries = 0
+	session.errorCounts = make(map[string]int)
 	session.DifferentFiles = 0
 
 	// fmt.Printf("%x\n", *session.AccessKey)
@@ -309,6 +327,9 @@ func (session *BackupSession) findPathMatch(rootBlockID core.Byte128, path strin
 
 	pathList := core.SplitPath(path)
 	dir, unmatched, err := session.changeDir(rootBlockID, pathList)
+	if dir == nil {
+		return nil, err
+	}
 	if unmatched == 1 {
 		filtered := dir.File[:0]
 		for _, x := range dir.File {
@@ -330,6 +351,22 @@ func (session *BackupSession) findPathMatch(rootBlockID core.Byte128, path strin
 
 var LocalStoragePath string
 
+// a run that ended on its own terms, reported without a stack trace
+// 1 = finished but entries were skipped, 2 = aborted before finishing
+type exitError struct {
+	error
+	code int
+}
+
+func errorIsAny(err error, targets ...error) bool {
+	for _, t := range targets {
+		if errors.Is(err, t) {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	bytearray.EnableAutoGC(60, 74)
 
@@ -337,12 +374,14 @@ func main() {
 
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Println(r)
+			fmt.Println(core.Escape(fmt.Sprint(r))) // may carry names from the backup
 			if lockFile != nil {
 				lockFile.Unlock()
 			}
+			if e, ok := r.(exitError); ok {
+				os.Exit(e.code)
+			}
 			panic(r)
-			// os.Exit(1)
 		}
 	}()
 
@@ -542,6 +581,8 @@ func main() {
 	var retainDays int64 = 0
 	var retainYearly bool = false
 	var intervalBackup int64 = 0
+	cmd.BoolOption("resume", "restore", "Skip files already matching the backup (size and modification time) instead of rewriting them", &session.Resume, cmd.Standard)
+
 	cmd.StringOption("pid", "store", "<filename>", "Create a PID file (lock-file)", &pidName, cmd.Standard)
 	cmd.StringListOption("ignore", "store", "<pattern>", "Ignore files matching pattern", &CustomIgnoreList, cmd.Standard|cmd.Preference)
 	cmd.IntOption("interval", "store", "<minutes>", "Keep running backups every <minutes> until interrupted", &intervalBackup, cmd.Standard)

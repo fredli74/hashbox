@@ -46,6 +46,17 @@ func (b *HashboxBlock) Release() {
 	b.Data.Release()
 }
 
+// Frees a pooled buffer that a panic is about to orphan. Chunks are hand
+// managed, so an unwound allocation is never reclaimed.
+type releaser interface{ Release() }
+
+func releaseOnPanic(r releaser) {
+	if p := recover(); p != nil {
+		r.Release()
+		panic(p)
+	}
+}
+
 func (b *HashboxBlock) SerializeLinks(w io.Writer) (size int) {
 	size += WriteUint32(w, uint32(len(b.Links)))
 	for i := range b.Links {
@@ -72,9 +83,12 @@ func (b *HashboxBlock) UnserializeHeader(r io.Reader) (size int) {
 	size += b.BlockID.Unserialize(r)
 	var nLinks uint32
 	size += ReadUint32(r, &nLinks)
-	b.Links = make([]Byte128, nLinks)
-	for i := 0; i < int(nLinks); i++ {
-		size += b.Links[i].Unserialize(r)
+	// grown as links arrive, the count is unchecked wire input
+	b.Links = []Byte128{}
+	for range nLinks {
+		var l Byte128
+		size += l.Unserialize(r)
+		b.Links = append(b.Links, l)
 	}
 	size += ReadUint8(r, &b.DataType)
 	return
@@ -85,7 +99,7 @@ func (b *HashboxBlock) Unserialize(r io.Reader) (size int) {
 	var nBytes uint32
 	size += ReadUint32(r, &nBytes) // Data length
 	b.Data.Truncate(0)
-	size += CopyNOrPanic(&b.Data, r, int(nBytes))
+	size += CopyNOrPanic(&b.Data, r, int64(nBytes))
 
 	b.Compressed = true
 	b.CompressedSize = int(nBytes)
@@ -107,6 +121,8 @@ func (b *HashboxBlock) HashData() (BlockID Byte128) {
 
 	copy(BlockID[:], hash.Sum(nil)[:16])
 
+	_, err = b.Data.ReadSeek(0, bytearray.SEEK_SET)
+	AbortOnError(err)
 	return BlockID
 }
 
@@ -157,13 +173,7 @@ func (b *HashboxBlock) VerifyBlock() bool {
 			b.Compressed = false
 			verifyID = b.HashData()
 		case BlockDataTypeZlib:
-			c := b.zlibUncompress()
-			hash := md5.New()
-			b.SerializeLinks(hash)
-			WriteUint32(hash, uint32(c.Len()))
-			CopyOrPanic(hash, &c)
-			copy(verifyID[:], hash.Sum(nil)[:16])
-			c.Release()
+			verifyID = b.hashUncompressed()
 		default:
 			panic(errors.New("unsupported block data type"))
 		}
@@ -173,7 +183,22 @@ func (b *HashboxBlock) VerifyBlock() bool {
 	return bytes.Equal(verifyID[:], b.BlockID[:])
 }
 
+// Hashes the inflated form without keeping it, for a block still compressed.
+func (b *HashboxBlock) hashUncompressed() (id Byte128) {
+	c := b.zlibUncompress()
+	defer c.Release()
+
+	hash := md5.New()
+	b.SerializeLinks(hash)
+	WriteUint32(hash, uint32(c.Len()))
+	CopyOrPanic(hash, &c)
+	copy(id[:], hash.Sum(nil)[:16])
+	return id
+}
+
 func (b *HashboxBlock) zlibCompress() (dst bytearray.ByteArray) {
+	defer releaseOnPanic(&dst)
+
 	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
 	AbortOnError(err)
 	zw := zpool.GetWriter(&dst)
@@ -183,6 +208,11 @@ func (b *HashboxBlock) zlibCompress() (dst bytearray.ByteArray) {
 	return dst
 }
 func (b *HashboxBlock) zlibUncompress() bytearray.ByteArray {
+	var dst bytearray.ByteArray
+	// registered first so it unwinds last and covers the whole function, a
+	// truncated or corrupt stream must not strand the chunks already written
+	defer releaseOnPanic(&dst)
+
 	_, err := b.Data.ReadSeek(0, bytearray.SEEK_SET)
 	AbortOnError(err)
 	zr, err := zlib.NewReader(&b.Data)
@@ -191,7 +221,6 @@ func (b *HashboxBlock) zlibUncompress() bytearray.ByteArray {
 		err := zr.Close()
 		AbortOnError(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	}()
-	var dst bytearray.ByteArray
 	_, err = io.Copy(&dst, zr)
 	AbortOnError(err, "Error during ZlibUncompress of block %x: %v", b.BlockID[:], err)
 	return dst

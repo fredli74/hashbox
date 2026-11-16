@@ -69,6 +69,13 @@ type Client struct {
 	lastError         error                 // last error encountered
 }
 
+// RemoteError marks a failure of the client or the server, as opposed to damage
+// found in the data itself. Nothing can be read after one is raised, so a caller
+// recovering block reads must not treat it as a bad block.
+type RemoteError struct{ error }
+
+func (e RemoteError) Unwrap() error { return e.error }
+
 func NewClient(address string, account string, accesskey Byte128) *Client {
 
 	client := &Client{
@@ -189,7 +196,7 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 					if !ok {
 						err = fmt.Errorf("%v", r)
 					}
-					c.lastError = err
+					c.lastError = RemoteError{err}
 					select {
 					case c.errorChannel <- err:
 					default:
@@ -436,7 +443,7 @@ func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage
 func (c *Client) ioHandler() {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised inside the goroutine
-			c.lastError = r.(error)
+			c.lastError = RemoteError{r.(error)}
 			c.errorChannel <- r.(error)
 			close(c.errorChannel) // close it to trigger everyone to stop
 		}
@@ -499,19 +506,20 @@ func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChan
 
 // dispatchAndWait will always return the response you were waiting for or throw a panic, so there is no need to check return values
 func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{} {
+	// Never closed here: dispatchMessage closes it when the client is closing,
+	// a second close would replace the RemoteError below with a runtime panic
 	waiter := make(chan interface{}, 1)
-	defer close(waiter)
 	c.dispatchMessage(msgType, msgData, waiter)
 	select {
 	case R, ok := <-waiter:
 		if !ok {
-			panic(errors.New("server disconnected while waiting for a response"))
+			panic(RemoteError{errors.New("server disconnected while waiting for a response")})
 		}
 		switch t := R.(type) {
 		case *ProtocolMessage:
 			switch dt := t.Data.(type) {
 			case *MsgServerError:
-				panic(errors.New("Received error from server: " + string(dt.ErrorMessage)))
+				panic(RemoteError{errors.New("Received error from server: " + string(dt.ErrorMessage))})
 			default:
 				return t.Data
 			}
@@ -521,7 +529,7 @@ func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{
 			panic(c.lastError)
 		}
 		AbortOnError(err)
-		panic(errors.New("connection was closed while waiting for a response"))
+		panic(RemoteError{errors.New("connection was closed while waiting for a response")})
 	}
 	panic(errors.New("ASSERT! We should not reach this point"))
 }
@@ -585,6 +593,7 @@ func (c *Client) StoreBlock(block *HashboxBlock) Byte128 {
 }
 func (c *Client) ReadBlock(blockID Byte128) *HashboxBlock {
 	b := c.dispatchAndWait(MsgTypeReadBlock, &MsgClientReadBlock{BlockID: blockID}).(*MsgServerWriteBlock)
+	defer releaseOnPanic(b.Block) // corrupt data, the block is ours to free
 	b.Block.UncompressData()
 	return b.Block
 }
@@ -595,6 +604,7 @@ func (c *Client) Commit() {
 		}()
 	}
 }
+
 func (c *Client) Done() bool {
 	if c.lastError != nil {
 		panic(c.lastError)

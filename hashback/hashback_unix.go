@@ -54,6 +54,19 @@ func isOfflineFile(fileInfo os.FileInfo) bool {
 	return sys != nil && sys.Size > 0 && sys.Blocks == 0
 }
 
+// Restore continues past a failed entry by default, so this list is not a safety
+// net and need not be complete, a missed errno only costs log noise. It stops
+// early where continuing is pointless or does harm.
+func isFatalRestoreError(err error) bool {
+	return errorIsAny(err,
+		// no room, or the filesystem will not take writes
+		syscall.ENOSPC, syscall.EDQUOT, syscall.EROFS,
+		// a failing device, more writes only stress it
+		syscall.EIO,
+		// the destination itself went away
+		syscall.ESTALE, syscall.ENOTCONN, syscall.ENODEV, syscall.ENXIO)
+}
+
 func minorPathError(r interface{}) error {
 	e, ok := r.(*os.PathError)
 	if ok && e.Err == syscall.EBADF { // "bad file descriptor" while reading some files on OSX

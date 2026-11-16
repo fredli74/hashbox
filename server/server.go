@@ -311,10 +311,14 @@ func run() (returnValue int) {
 		}()
 
 		// blocking channel read
+		var crashed error // already logged by the handler
 		select {
 		case <-done:
-		case <-accountHandler.signal:
-		case <-storageHandler.signal:
+		case crashed = <-accountHandler.signal:
+		case crashed = <-storageHandler.signal:
+		}
+		if crashed != nil {
+			returnValue = 1 // so a supervisor restarts us
 		}
 
 		core.Log(core.LogInfo, "Hashbox Server terminating")

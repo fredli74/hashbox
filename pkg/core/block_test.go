@@ -50,6 +50,11 @@ func TestBlockCompressVerifyAndUncompress(t *testing.T) {
 	if !block.VerifyBlock() {
 		t.Fatal("uncompressed block failed verification")
 	}
+	// restore reads the data right after verifying, so verify must rewind
+	verified, _ := block.Data.ReadSlice()
+	if string(verified) != string(originalCopy) {
+		t.Fatal("data not readable from the start after VerifyBlock")
+	}
 }
 
 func TestHashDataPanicsWhenCompressed(t *testing.T) {
