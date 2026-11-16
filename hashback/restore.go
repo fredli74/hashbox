@@ -467,7 +467,7 @@ func (session *BackupSession) changeDir(blockID core.Byte128, pathList []string)
 
 func (session *BackupSession) Restore(rootBlockID core.Byte128, restorepath string, restorelist ...string) {
 	if err := os.MkdirAll(restorepath, 0777); err != nil {
-		core.AbortOnError(err)
+		panic(exitError{fmt.Errorf("restore aborted, %s", err), 2})
 	}
 	defer session.PrintRestoreErrors()
 	defer session.PrintRestoreProgress()
