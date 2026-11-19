@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/fredli74/hashbox/pkg/core"
+	"github.com/fredli74/hashbox/pkg/lockablefile"
 )
 
 // DBStateCollection mirrors the cached .db representation.
@@ -26,32 +27,34 @@ func (c *DBStateCollection) Serialize(w io.Writer) {
 }
 func (c *DBStateCollection) Unserialize(r io.Reader) {
 	c.States.Unserialize(r)
-	{
-		c.Size = 0
-		maxSize := int64(0)
-		hash := md5.New()
-		for _, s := range c.States {
-			s.Serialize(hash)
-			if s.State.Size > maxSize {
-				maxSize = s.State.Size
-			}
-			c.Size += s.State.UniqueSize // TODO: this calculation is wrong the moment you start deleting stuff, it needs to be reworked
+	c.summarize()
+}
+
+// Sets Size and ListH from States.
+func (c *DBStateCollection) summarize() {
+	c.Size = 0
+	maxSize := int64(0)
+	hash := md5.New()
+	for _, s := range c.States {
+		s.Serialize(hash)
+		if s.State.Size > maxSize {
+			maxSize = s.State.Size
 		}
-		copy(c.ListH[:], hash.Sum(nil)[:16])
-		c.Size += maxSize
+		c.Size += s.State.UniqueSize // TODO: this calculation is wrong the moment you start deleting stuff, it needs to be reworked
 	}
+	copy(c.ListH[:], hash.Sum(nil)[:16])
+	c.Size += maxSize
 }
 
 // ReadDBFile reads a .db cache file.
 func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) *DBStateCollection {
 	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionDatabase
-	file, err := os.Open(filename)
+	file, err := lockablefile.Open(filename)
 	if err != nil {
 		return nil
 	}
-	defer func() {
-		core.AbortOnError(file.Close())
-	}()
+	defer file.Close()
+	file.LockShared()
 	var header dbFileHeader
 	header.Unserialize(file)
 	if header.filetype != DbFileTypeDatabase {
@@ -69,17 +72,18 @@ func (fs *Store) ReadDBFile(accountNameH core.Byte128, datasetName core.String) 
 func (fs *Store) WriteDBFile(accountNameH core.Byte128, datasetName core.String, c *DBStateCollection) {
 	fs.ensureAccountDir()
 	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionDatabase
-	file, err := os.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
+	file, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666)
 	core.AbortOnError(err)
-	defer func() {
-		core.AbortOnError(file.Close())
-	}()
+	defer file.Close()
+	file.Lock()
+	core.AbortOnError(file.Truncate(0))
 
 	header := dbFileHeader{filetype: DbFileTypeDatabase, version: DbVersion, datasetName: datasetName}
 	header.Serialize(file)
 	c.Serialize(file)
 
-	fs.updateInfoFile(accountNameH, datasetName)
+	c.summarize()
+	fs.updateInfoFile(accountNameH, datasetName, c)
 }
 
 // RebuildDB regenerates the cached DB file for a dataset from its transaction log.

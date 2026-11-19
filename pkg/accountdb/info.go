@@ -100,13 +100,8 @@ func (fs *Store) ListAccounts() ([]AccountListing, error) {
 	return out, nil
 }
 
-func (fs *Store) updateInfoFile(accountNameH core.Byte128, datasetName core.String) {
-	collection := fs.ReadDBFile(accountNameH, datasetName)
-	if collection == nil {
-		core.Abort("updateInfoFile was called on a DB file which cannot be opened")
-	}
-
-	// Now also update account info
+// Takes the collection just written, rereading the .db would lock it a second time.
+func (fs *Store) updateInfoFile(accountNameH core.Byte128, datasetName core.String, collection *DBStateCollection) {
 	info := fs.ReadInfoFile(accountNameH)
 	if info == nil {
 		core.Abort("unable to read account info file %s", fs.accountFilepath(accountNameH)+".info")
