@@ -72,6 +72,11 @@ Optional arguments `-content` will verify all data content. `-repair` will inval
 Recover will go through all data files and rebuild index and meta data. Optional arguments can be specified to restrict the recovery to only a range of data files.
 
 
+**Hashbox Util**
+
+`hashbox-util` lists and manages accounts, datasets and states directly on the server's data directory, and syncs to another server. The commands that change accounts, datasets or states (marked "server stopped" in its help) must only be run with the server stopped, or backups that finish meanwhile can be lost. The listing commands and `sync` are safe while the server runs.
+
+
 ## Hashbox Backup Client (Hashback) ##
 * Each file is split into blocks based on a rolling checksum.
 * Each block hash (block ID) is calculated and sent to the server.

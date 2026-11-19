@@ -84,7 +84,7 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).listAccounts()
 	})
 
-	cmd.Command("delete-account", "<account>", func() {
+	cmd.Command("delete-account", "<account>  (server stopped)", func() {
 		if len(cmd.Args) < 3 {
 			core.Abort("account required")
 		}
@@ -99,7 +99,7 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).listDatasets(accountName)
 	})
 
-	cmd.Command("move-dataset", "<src-account> <src-dataset> <dst-account> [dst-dataset]", func() {
+	cmd.Command("move-dataset", "<src-account> <src-dataset> <dst-account> [dst-dataset]  (server stopped)", func() {
 		if len(cmd.Args) < 5 {
 			core.Abort("srcAccount srcDataset dstAccount required")
 		}
@@ -110,7 +110,7 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).moveDataset(cmd.Args[2], cmd.Args[3], cmd.Args[4], dstDataset)
 	})
 
-	cmd.Command("delete-dataset", "<account> <dataset> [<dataset>...]", func() {
+	cmd.Command("delete-dataset", "<account> <dataset> [<dataset>...]  (server stopped)", func() {
 		if len(cmd.Args) < 4 {
 			core.Abort("account and at least one dataset required")
 		}
@@ -137,14 +137,14 @@ func main() {
 		}
 	})
 
-	cmd.Command("delete-state", "<account> <dataset> <state-id> [<state-id>...]", func() {
+	cmd.Command("delete-state", "<account> <dataset> <state-id> [<state-id>...]  (server stopped)", func() {
 		if len(cmd.Args) < 5 {
 			core.Abort("account, dataset, and at least one stateID required")
 		}
 		newCommandSet(datDirectory, idxDirectory).deleteStates(cmd.Args[2], cmd.Args[3], cmd.Args[4:])
 	})
 
-	cmd.Command("purge-states", "<account> <dataset>", func() {
+	cmd.Command("purge-states", "<account> <dataset>  (server stopped)", func() {
 		if len(cmd.Args) < 4 {
 			core.Abort("account and dataset required")
 		}
@@ -167,7 +167,7 @@ func main() {
 		newCommandSet(datDirectory, idxDirectory).ping(host, port)
 	})
 
-	cmd.Command("rebuild-db", "[account]", func() {
+	cmd.Command("rebuild-db", "[account]  (server stopped)", func() {
 		if len(cmd.Args) > 3 {
 			core.Abort("rebuild-db accepts at most one account")
 		}
