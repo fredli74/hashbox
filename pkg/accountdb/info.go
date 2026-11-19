@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/fredli74/hashbox/pkg/core"
+	"github.com/fredli74/hashbox/pkg/lockablefile"
 )
 
 type AccountListing struct {
@@ -35,14 +36,14 @@ type AccountInfo struct {
 }
 
 // ReadInfoFile loads an account .info file.
+// The shared lock keeps a concurrent write (the server's) from being read half done.
 func (fs *Store) ReadInfoFile(accountNameH core.Byte128) *AccountInfo {
-	file, err := os.Open(fs.accountFilepath(accountNameH) + ".info")
+	file, err := lockablefile.Open(fs.accountFilepath(accountNameH) + ".info")
 	if err != nil {
 		return nil
 	}
-	defer func() {
-		core.AbortOnError(file.Close())
-	}()
+	defer file.Close()
+	file.LockShared()
 	var a AccountInfo
 	a.AccountName.Unserialize(file)
 	a.AccessKey.Unserialize(file)
@@ -53,11 +54,12 @@ func (fs *Store) ReadInfoFile(accountNameH core.Byte128) *AccountInfo {
 // WriteInfoFile writes an account .info file.
 func (fs *Store) WriteInfoFile(accountNameH core.Byte128, info AccountInfo) {
 	fs.ensureAccountDir()
-	file, err := os.OpenFile(fs.accountFilepath(accountNameH)+".info", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
+	file, err := lockablefile.OpenFile(fs.accountFilepath(accountNameH)+".info", os.O_RDWR|os.O_CREATE, 0666)
 	core.AbortOnError(err)
-	defer func() {
-		core.AbortOnError(file.Close())
-	}()
+	defer file.Close()
+	file.Lock()
+	// truncated under the lock, a reader holding it must not see the file emptied
+	core.AbortOnError(file.Truncate(0))
 	info.AccountName.Serialize(file)
 	info.AccessKey.Serialize(file)
 	info.Datasets.Serialize(file)
