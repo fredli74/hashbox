@@ -247,6 +247,8 @@ type syncSession struct {
 
 	addedStates   int64
 	deletedStates int64
+
+	accountNames map[core.Byte128]string // an account name never changes
 }
 
 func newSyncSession(accountDB *accountdb.Store, dataDB *storagedb.Store, remoteHost string, remotePort int) *syncSession {
@@ -258,6 +260,8 @@ func newSyncSession(accountDB *accountdb.Store, dataDB *storagedb.Store, remoteH
 		remoteHost: remoteHost,
 		remotePort: remotePort,
 		statTick:   10 * time.Second,
+
+		accountNames: map[core.Byte128]string{},
 	}
 }
 
@@ -535,11 +539,15 @@ func (sync *syncSession) close() {
 }
 
 func (sync *syncSession) accountName(accHash core.Byte128) string {
-	info := sync.accountDB.ReadInfoFile(accHash)
-	if info == nil {
-		return formatHash(accHash)
+	if name, ok := sync.accountNames[accHash]; ok {
+		return name
 	}
-	return string(info.AccountName)
+	name := formatHash(accHash)
+	if info := sync.accountDB.ReadInfoFile(accHash); info != nil {
+		name = string(info.AccountName)
+	}
+	sync.accountNames[accHash] = name
+	return name
 }
 
 func (sync *syncSession) reportStats(overwriteLine bool) {
