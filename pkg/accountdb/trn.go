@@ -136,11 +136,13 @@ func (fs *Store) ReadTrnFile(accountNameH core.Byte128, datasetName core.String)
 func (fs *Store) WriteTrnFile(accountNameH core.Byte128, datasetName core.String, txs []DbTx) {
 	fs.ensureAccountDir()
 	filename := fs.DatasetFilepath(accountNameH, datasetName) + DbFileExtensionTransaction
-	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
+	lock, err := lockablefile.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666)
 	core.AbortOnError(err)
 	defer lock.Close()
 	lock.Lock()
 	defer lock.Unlock()
+	// truncated under the lock, a reader holding it must not see the file emptied
+	core.AbortOnError(lock.Truncate(0))
 
 	header := dbFileHeader{filetype: DbFileTypeTransaction, version: DbVersion, datasetName: datasetName}
 	header.Serialize(lock)
