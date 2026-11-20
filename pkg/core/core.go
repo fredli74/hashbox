@@ -198,6 +198,27 @@ func (e *DatasetStateEntry) Unserialize(r io.Reader) (size int) {
 	return
 }
 
+type Byte128Array []Byte128
+
+func (a Byte128Array) Serialize(w io.Writer) (size int) {
+	size += WriteUint32(w, uint32(len(a)))
+	for i := range a {
+		size += a[i].Serialize(w)
+	}
+	return
+}
+func (a *Byte128Array) Unserialize(r io.Reader) (size int) {
+	var n uint32
+	size += ReadUint32(r, &n)
+	*a = Byte128Array{} // grown as entries arrive, the count is unchecked wire input
+	for range n {
+		var b Byte128
+		size += b.Unserialize(r)
+		*a = append(*a, b)
+	}
+	return
+}
+
 type DatasetStateArray []DatasetStateEntry
 
 func (a DatasetStateArray) Serialize(w io.Writer) (size int) {

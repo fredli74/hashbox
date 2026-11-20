@@ -83,10 +83,8 @@ func handleConnection(conn net.Conn) {
 				reply.Data = &core.MsgServerError{ErrorMessage: "Client uses an outdated protocol version"}
 			case core.MsgTypeGreeting:
 				c := incoming.Data.(*core.MsgClientGreeting)
-				if c.Version < core.ProtocolVersion {
-					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
-					reply.Data = &core.MsgServerError{ErrorMessage: "Client uses an outdated protocol version"}
-				} else if c.Version > core.ProtocolVersion {
+				// older clients only use messages this server still has
+				if c.Version > core.ProtocolVersion {
 					reply.Type = core.MsgTypeError & core.MsgTypeServerMask
 					reply.Data = &core.MsgServerError{ErrorMessage: "Server uses an outdated protocol version"}
 				} else {
@@ -166,6 +164,15 @@ func handleConnection(conn net.Conn) {
 							reply.Type = core.MsgTypeReadBlock & core.MsgTypeServerMask
 							reply.Data = &core.MsgServerReadBlock{BlockID: c.BlockID}
 						}
+					case core.MsgTypeMissingBlocks:
+						c := incoming.Data.(*core.MsgClientMissingBlocks)
+						var missing core.Byte128Array
+						for _, b := range c.BlockIDs {
+							if !storageHandler.doesBlockExist(b) {
+								missing = append(missing, b)
+							}
+						}
+						reply.Data = &core.MsgServerMissingBlocks{BlockIDs: missing}
 					case core.MsgTypeReadBlock:
 						c := incoming.Data.(*core.MsgClientReadBlock)
 						block := storageHandler.readBlock(c.BlockID)

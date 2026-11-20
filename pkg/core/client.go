@@ -561,6 +561,12 @@ func (c *Client) VerifyBlock(blockID Byte128) bool {
 	}
 }
 
+// MissingBlocks returns the blocks in blockIDs that the server does not have.
+func (c *Client) MissingBlocks(blockIDs []Byte128) []Byte128 {
+	r := c.dispatchAndWait(MsgTypeMissingBlocks, &MsgClientMissingBlocks{BlockIDs: blockIDs}).(*MsgServerMissingBlocks)
+	return r.BlockIDs
+}
+
 func (c *Client) StoreData(dataType byte, data bytearray.ByteArray, links []Byte128) Byte128 {
 	// Create a block
 	block := NewHashboxBlock(dataType, data, links)

@@ -35,7 +35,7 @@ func (s *Session) GenerateSessionKey(AccessKey Byte128) {
 //
 
 const (
-	ProtocolVersion Uint32 = 1
+	ProtocolVersion Uint32 = 2 // 2 = 0.8.5, adds MsgTypeMissingBlocks
 
 	MsgTypeOldGreeting  uint32 = 0x686F6C61 // = "hola"
 	MsgTypeGreeting     uint32 = 0x68616C6F // = "halo"
@@ -46,6 +46,7 @@ const (
 	MsgTypeReadBlock        uint32 = 0x72656164 // = "read"
 	MsgTypeWriteBlock       uint32 = 0x77726974 // = "writ"
 	MsgTypeAcknowledgeBlock uint32 = 0x61636B6E // = "ackn"
+	MsgTypeMissingBlocks    uint32 = 0x6D697373 // = "miss"
 
 	MsgTypeAccountInfo        uint32 = 0x696E666F // = "info"
 	MsgTypeAddDatasetState    uint32 = 0x61646473 // = "adds"
@@ -112,6 +113,16 @@ type MsgServerAcknowledgeBlock struct { // <- "ACKN"
 // MsgServerReadBlock sent from the server to retreive Block data from client.
 type MsgServerReadBlock struct { // <- "READ"
 	BlockID Byte128 // ID of Block to read
+}
+
+// MsgClientMissingBlocks asks which of the blocks the server does not have, one round trip for many blocks.
+type MsgClientMissingBlocks struct { // -> "miss"
+	BlockIDs Byte128Array // Blocks to check
+}
+
+// MsgServerMissingBlocks sent as a response to MsgClientMissingBlocks.
+type MsgServerMissingBlocks struct { // <- "MISS"
+	BlockIDs Byte128Array // The requested blocks that the server does not have
 }
 
 // MsgClientWriteBlock sent to the server to write a Block. Server calculates its own BlockID from the block to verify its integrity.
@@ -217,6 +228,8 @@ func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
 		m.Data = new(MsgClientWriteBlock)
 	case MsgTypeAllocateBlock | MsgTypeClientMask:
 		m.Data = new(MsgClientAllocateBlock)
+	case MsgTypeMissingBlocks | MsgTypeClientMask:
+		m.Data = new(MsgClientMissingBlocks)
 	case MsgTypeAccountInfo | MsgTypeClientMask:
 		m.Data = new(MsgClientAccountInfo)
 	case MsgTypeAddDatasetState | MsgTypeClientMask:
@@ -232,6 +245,8 @@ func (m *ProtocolMessage) Unserialize(r io.Reader) (size int) {
 		m.Data = new(MsgServerAcknowledgeBlock)
 	case MsgTypeReadBlock & MsgTypeServerMask:
 		m.Data = new(MsgServerReadBlock)
+	case MsgTypeMissingBlocks & MsgTypeServerMask:
+		m.Data = new(MsgServerMissingBlocks)
 	case MsgTypeWriteBlock & MsgTypeServerMask:
 		m.Data = new(MsgServerWriteBlock)
 	case MsgTypeAccountInfo & MsgTypeServerMask:
@@ -286,6 +301,8 @@ func (m ProtocolMessage) Details() string {
 		return fmt.Sprintf("%x %s.%x", t.AccountNameH, t.DatasetName, t.StateID)
 	case (*MsgClientAllocateBlock):
 		return fmt.Sprintf("%x", t.BlockID)
+	case (*MsgClientMissingBlocks):
+		return fmt.Sprintf("[%d]Block", len(t.BlockIDs))
 	case (*MsgClientReadBlock):
 		return fmt.Sprintf("%x", t.BlockID)
 	case (*MsgClientWriteBlock):
@@ -300,6 +317,8 @@ func (m ProtocolMessage) Details() string {
 		return fmt.Sprintf("%x", t.BlockID)
 	case (*MsgServerReadBlock):
 		return fmt.Sprintf("%x", t.BlockID)
+	case (*MsgServerMissingBlocks):
+		return fmt.Sprintf("[%d]Block", len(t.BlockIDs))
 	case (*MsgServerWriteBlock):
 		return fmt.Sprintf("%x", t.Block.BlockID)
 	case (*MsgServerError):

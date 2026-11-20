@@ -101,6 +101,11 @@ func TestClientServerDataset(t *testing.T) {
 	blockID := client.StoreBlock(block)
 	client.Commit()
 
+	absent := core.Hash([]byte("not stored"))
+	if missing := client.MissingBlocks([]core.Byte128{blockID, absent}); len(missing) != 1 || missing[0] != absent {
+		t.Errorf("MissingBlocks returned %x, expected only %x", missing, absent)
+	}
+
 	var array core.DatasetStateArray
 	var stateID core.Byte128 // randomByte128()
 

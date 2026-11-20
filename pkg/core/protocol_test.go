@@ -165,6 +165,22 @@ func TestMessageSerialization(t *testing.T) {
 		}
 	}
 
+	if ok, dump := protocolPipeCompare(MsgTypeMissingBlocks, &MsgClientMissingBlocks{Byte128Array{randomByte128(), randomByte128()}}); !ok {
+		t.Errorf("MsgClientMissingBlocks did not pass serialization / deserialization test:\n%s", dump)
+	} else {
+		if testing.Verbose() {
+			t.Logf("MsgClientMissingBlocks passed:\n%s", dump)
+		}
+	}
+
+	if ok, dump := protocolPipeCompare(MsgTypeMissingBlocks&MsgTypeServerMask, &MsgServerMissingBlocks{Byte128Array{randomByte128()}}); !ok {
+		t.Errorf("MsgServerMissingBlocks did not pass serialization / deserialization test:\n%s", dump)
+	} else {
+		if testing.Verbose() {
+			t.Logf("MsgServerMissingBlocks passed:\n%s", dump)
+		}
+	}
+
 	if ok, dump := protocolPipeCompare(MsgTypeAcknowledgeBlock&MsgTypeServerMask, &MsgServerAcknowledgeBlock{randomByte128()}); !ok {
 		t.Errorf("MsgServerAcknowledgeBlock did not pass serialization / deserialization test:\n%s", dump)
 	} else {
