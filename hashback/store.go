@@ -673,14 +673,89 @@ func (r *referenceEngine) downloadReference(referenceBlockID core.Byte128) {
 	r.pushChannelEntry(entryEOD)
 }
 
+const resumeWindow = 10000 // resume cache entries checked against the server together
+
+type resumeNode struct {
+	entry  *FileEntry
+	parent *resumeNode
+	state  int // resumeUnknown, resumeTrusted or resumeMissing
+}
+
+const (
+	resumeUnknown = iota
+	resumeTrusted // on the server, or under a folder that is
+	resumeMissing // not on the server, its children are asked
+)
+
+// resolveResume marks every node in window trusted or missing, asking the server one level per call:
+// nodes under a missing folder are asked, nodes under a trusted folder are trusted.
+// The cache is depth first, a folder always comes before its children, so one pass per level is enough.
+func resolveResume(window []*resumeNode, missingBlocks func([]core.Byte128) []core.Byte128) {
+	for {
+		var ask []core.Byte128
+		var asked []*resumeNode
+		for _, n := range window {
+			if n.state != resumeUnknown {
+				continue
+			}
+			switch n.parent.state {
+			case resumeTrusted:
+				core.Log(core.LogTrace, "Skipping cache verification for %s as parent is already verified", n.entry.FileName)
+				n.state = resumeTrusted
+			case resumeMissing:
+				ask = append(ask, n.entry.ContentBlockID)
+				asked = append(asked, n)
+			}
+		}
+		if len(ask) == 0 {
+			break
+		}
+		missing := map[core.Byte128]bool{}
+		for _, id := range missingBlocks(ask) {
+			missing[id] = true
+		}
+		for _, n := range asked {
+			if missing[n.entry.ContentBlockID] {
+				n.state = resumeMissing
+			} else {
+				core.Log(core.LogTrace, "Cache entry for %s verified against server", n.entry.FileName)
+				n.state = resumeTrusted
+			}
+		}
+	}
+}
+
 func (r *referenceEngine) loadResumeFile(path string) {
 	treedepth := 0
+	var window []*resumeNode
+	flush := func() {
+		resolveResume(window, r.session.Client.MissingBlocks)
+		for _, n := range window {
+			core.ASSERT(n.state != resumeUnknown, "resume entry left unresolved", n.entry.FileName)
+			switch {
+			case n.entry.FileName == "": // EOD
+				treedepth--
+			case n.entry.ContentType == ContentTypeDirectory:
+				treedepth++
+			case n.state == resumeMissing:
+				core.Log(core.LogTrace, "Unable to verify %s against server", n.entry.FileName)
+				continue
+			}
+			r.pushChannelEntry(n.entry)
+		}
+		window = nil
+	}
 	func() {
 		defer func() {
 			if !r.stopped {
 				if r := recover(); r != nil {
 					core.Log(core.LogDebug, "Non-fatal error encountered while resuming backup %s : %v", filepath.Base(path), r)
 				}
+			}
+		}()
+		defer func() {
+			if !r.stopped {
+				flush() // also the entries read before an error or a truncated tail
 			}
 		}()
 		cacheRecover, _ := os.Open(path)
@@ -695,7 +770,7 @@ func (r *referenceEngine) loadResumeFile(path string) {
 			cacheSize := info.Size()
 			reader := bufio.NewReader(cacheRecover)
 
-			skipcheck := 0
+			folder := &resumeNode{state: resumeMissing} // top level entries are always asked
 			var resumeID core.Byte128
 			for offset := int64(0); offset < cacheSize; {
 				var entry FileEntry
@@ -707,36 +782,24 @@ func (r *referenceEngine) loadResumeFile(path string) {
 					resumeID.Set(entry.ReferenceID[:])
 				}
 
-				if entry.FileName == "" { // EOD
-					treedepth--
-					if skipcheck > 0 {
-						skipcheck--
-					}
-				} else {
-					if entry.ContentType == ContentTypeDirectory {
-						treedepth++
-						if skipcheck > 0 {
-							skipcheck++
-						} else if r.session.Client.VerifyBlock(entry.ContentBlockID) {
-							core.Log(core.LogTrace, "Cache entry for %s verified against server", entry.FileName)
-							skipcheck = 1
-						}
-					} else if skipcheck > 0 {
-						core.Log(core.LogTrace, "Skipping cache verification for %s as parent is already verified", entry.FileName)
-					} else if !entry.HasContentBlockID() {
-						core.Log(core.LogTrace, "Cache entry for %s has no content to verify", entry.FileName)
-					} else if r.session.Client.VerifyBlock(entry.ContentBlockID) {
-						core.Log(core.LogTrace, "Cache entry for %s verified against server", entry.FileName)
-					} else {
-						core.Log(core.LogTrace, "Unable to verify %s against server", entry.FileName)
-						continue
-					}
-
-					if entry.ReferenceID.Compare(resumeID) == 0 {
-						entry.ReferenceID = r.session.State.StateID // self reference
-					}
+				n := &resumeNode{entry: &entry, parent: folder}
+				switch {
+				case entry.FileName == "": // EOD
+					n.state = resumeTrusted
+					folder = folder.parent
+				case !entry.HasContentBlockID():
+					core.Log(core.LogTrace, "Cache entry for %s has no content to verify", entry.FileName)
+					n.state = resumeTrusted
+				case entry.ContentType == ContentTypeDirectory:
+					folder = n
 				}
-				r.pushChannelEntry(&entry)
+				if entry.FileName != "" && entry.ReferenceID.Compare(resumeID) == 0 {
+					entry.ReferenceID = r.session.State.StateID // self reference
+				}
+				window = append(window, n)
+				if len(window) >= resumeWindow {
+					flush()
+				}
 			}
 		}
 	}()
