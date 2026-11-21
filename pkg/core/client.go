@@ -7,8 +7,10 @@
 package core
 
 import (
+	"bufio"
 	"io"
 	"runtime/debug"
+	"slices"
 
 	"github.com/fredli74/bytearray"
 
@@ -27,7 +29,7 @@ const DEFAULT_CONNECTION_TIMEOUT time.Duration = 5 * time.Minute
 
 type messageDispatch struct {
 	msg           *ProtocolMessage
-	returnChannel chan interface{}
+	returnChannel chan *ProtocolMessage
 }
 
 type Client struct {
@@ -52,7 +54,6 @@ type Client struct {
 
 	QueueMax   int64         // max size of the outgoing block queue (in bytes)
 	ThreadMax  int32         // maximum number of goroutines started by send queue (defaults to runtime.NumCPU)
-	Retry      bool          // retry on network errors/EOF
 	RetryMax   int           // max retry attempts; -1 means retry forever, 0 disables retries
 	RetryWait  time.Duration // interval between retries
 	retryCount int           // total retries this session
@@ -67,6 +68,9 @@ type Client struct {
 	blockWriteChannel chan *messageDispatch // input to goroutine; next block in queue to store
 	errorChannel      chan error            // output from goroutine; ioHandler encountered an error
 	lastError         error                 // last error encountered
+
+	inflightMutex sync.Mutex
+	inflight      []*messageDispatch // written and waiting for a reply, in send order, resent after a reconnect
 }
 
 // RemoteError marks a failure of the client or the server, as opposed to damage
@@ -88,12 +92,11 @@ func NewClient(address string, account string, accesskey Byte128) *Client {
 
 		QueueMax:  DEFAULT_QUEUE_SIZE,
 		ThreadMax: int32(runtime.NumCPU() / 2),
-		Retry:     true,
 		RetryMax:  -1,
 		RetryWait: 15 * time.Second,
 
 		dispatchChannel:   make(chan *messageDispatch, 1024),
-		blockWriteChannel: make(chan *messageDispatch, 1),
+		blockWriteChannel: make(chan *messageDispatch, maxInFlight),
 	}
 
 	if address != "" {
@@ -138,7 +141,7 @@ func (c *Client) Close(polite bool) {
 	c.dispatchMutex.Unlock()
 
 	if connection := c.connection; connection != nil {
-		AbortOnError(connection.Close()) // This will cancel a blocking IO-read if we have one
+		_ = connection.Close() // wakes a blocking read, the connection may already be closed after an error
 	}
 	c.wg.Wait()
 }
@@ -148,7 +151,6 @@ const (
 	blockStateRequested
 	blockStateProcessing
 	blockStateProcessed
-	blockStateQueued
 	blockStateSending
 	blockStateCompleted
 )
@@ -207,26 +209,36 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 
 			for done := false; !done; {
 				var workItem *blockQueueEntry
-				var workState int32
 
 				// Process split into two, first queue traversal under lock, then processing without lock
 				c.dispatchMutex.Lock()
+				// Blocks are handed to the writer under the lock and in queue order, so a parent never reaches
+				// the server before its children. Later blocks may be written while earlier ones wait for their ACK.
+				inOrder := !c.closing // the write channel is closed under this lock
 				for i := 0; workItem == nil && i < len(c.blockQueueList); i++ {
 					entry := c.blockQueueList[i]
 					switch entry.state {
-					case blockStateNew: // ignore for now, waiting for singleExchange allocate response
+					case blockStateNew: // ignore for now, waiting for the allocate response
+						inOrder = false
 					case blockStateRequested:
 						workItem = entry
-						workState = blockStateProcessing
 						entry.state = blockStateProcessing
 					case blockStateProcessing: // skip, being compressed
+						inOrder = false
 					case blockStateProcessed:
-						if i == 0 {
-							workItem = entry
-							workState = blockStateQueued
-							entry.state = blockStateQueued
+						if inOrder {
+							select {
+							case c.blockWriteChannel <- &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: entry.block}}}:
+								entry.state = blockStateSending
+								atomic.AddInt64(&c.WriteData, int64(entry.block.UncompressedSize))
+								atomic.AddInt64(&c.WriteDataCompressed, int64(entry.block.CompressedSize))
+								atomic.AddInt32(&c.transmittedBlocks, 1)
+								c.Paint("*")
+								Log(LogTrace, "Upload block %x (links=%d, size=%d, compressed=%d)", entry.block.BlockID, len(entry.block.Links), entry.block.UncompressedSize, entry.block.CompressedSize)
+							default: // the writer is full, try again later
+								inOrder = false
+							}
 						}
-					case blockStateQueued: // skip, waiting to be sent
 					case blockStateSending: // skip, waiting for ACK
 					case blockStateCompleted:
 						if entry.block.Compressed {
@@ -250,34 +262,17 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 				}
 				c.dispatchMutex.Unlock()
 
-				// Process work item outside lock
+				// Compress the work item outside the lock
 				if workItem != nil {
-					switch workState {
-					case blockStateProcessing:
-						if !workItem.block.Compressed {
-							workItem.block.CompressData()
-							diff := bytearray.ChunkQuantize(int64(workItem.block.UncompressedSize)) - bytearray.ChunkQuantize(int64(workItem.block.CompressedSize))
-							atomic.AddInt64(&c.blockQueueSize, -diff)
-						}
-						c.dispatchMutex.Lock()
-						ASSERT(workItem.state == blockStateProcessing, "ASSERT! Invalid state %d for blockQueue entry", workItem.state)
-						workItem.state = blockStateProcessed
-						c.dispatchMutex.Unlock()
-					case blockStateQueued:
-						atomic.AddInt64(&c.WriteData, int64(workItem.block.UncompressedSize))
-						atomic.AddInt64(&c.WriteDataCompressed, int64(workItem.block.CompressedSize))
-						atomic.AddInt32(&c.transmittedBlocks, 1) //	c.transmittedBlocks++
-						c.Paint("*")
-						Log(LogTrace, "Upload block %x (links=%d, size=%d, compressed=%d)", workItem.block.BlockID, len(workItem.block.Links), workItem.block.UncompressedSize, workItem.block.CompressedSize)
-						msg := &ProtocolMessage{Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: workItem.block}}
-						c.dispatchMutex.Lock()
-						ASSERT(workItem.state == blockStateQueued, "ASSERT! Invalid state %d for blockQueue entry", workItem.state)
-						workItem.state = blockStateSending
-						c.dispatchMutex.Unlock()
-						c.blockWriteChannel <- &messageDispatch{msg: msg}
-					default:
-						Abort("ASSERT! Invalid state %d for work item", workState)
+					if !workItem.block.Compressed {
+						workItem.block.CompressData()
+						diff := bytearray.ChunkQuantize(int64(workItem.block.UncompressedSize)) - bytearray.ChunkQuantize(int64(workItem.block.CompressedSize))
+						atomic.AddInt64(&c.blockQueueSize, -diff)
 					}
+					c.dispatchMutex.Lock()
+					ASSERT(workItem.state == blockStateProcessing, "ASSERT! Invalid state %d for blockQueue entry", workItem.state)
+					workItem.state = blockStateProcessed
+					c.dispatchMutex.Unlock()
 				} else {
 					time.Sleep(25 * time.Millisecond)
 				}
@@ -335,13 +330,17 @@ func (c *Client) Connect() {
 	c.Dial()
 	c.Authorize()
 }
+
+// singleExchange sends one message and waits for its reply, used for the handshake before streaming starts.
 func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispatch) *ProtocolMessage {
-	// Send an outgoing message
 	outgoing.msg.Num = uint16(atomic.AddUint32(&c.msgNum, 1) - 1)
 	WriteMessage(connection, outgoing.msg)
-
-	// Wait for the reply
 	incoming := ReadMessage(connection)
+	c.handleReply(incoming, outgoing)
+	return incoming
+}
+
+func (c *Client) handleReply(incoming *ProtocolMessage, outgoing *messageDispatch) {
 	if incoming.Num != outgoing.msg.Num {
 		panic(errors.New("ASSERT! This should never happen unless the server is coded wrong"))
 	}
@@ -379,67 +378,14 @@ func (c *Client) singleExchange(connection *TimeoutConn, outgoing *messageDispat
 			c.Paint("-")
 		}
 	}
-	return incoming
 }
 
-func (c *Client) retryingExchange(outgoing *messageDispatch) (r *ProtocolMessage) {
-	if c.ServerAddress == "" {
-		// Only used in unit testing
-		return c.singleExchange(c.connection, outgoing)
-	}
+// maxInFlight is how many messages are written ahead of their replies.
+const maxInFlight = 1024
 
-	for ever := true; ever && !c.closing; {
-		ever = func() (retry bool) {
-			retry = outgoing.msg.Type != MsgTypeGreeting && outgoing.msg.Type != MsgTypeGoodbye && outgoing.msg.Type != MsgTypeAuthenticate &&
-				(c.RetryMax < 0 || c.retryCount < c.RetryMax)
-
-			defer func() {
-				if retry {
-					err := recover()
-					if err == nil {
-						return
-					}
-
-					c.connection = nil
-					switch e := err.(type) {
-					case net.Error:
-						Log(LogError, e.Error())
-						Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
-						return // Network error, retry and retry again
-					case error:
-						if e == io.EOF {
-							Log(LogError, "Lost connection with server (%v)", e.Error())
-							Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
-							return // Network stream closed, non fatal
-						}
-						Log(LogError, "%v", e)
-					default:
-						Log(LogError, "Unknown error in client communication")
-						Log(LogError, fmt.Sprint(e))
-					}
-					// Any other error is fatal
-					panic(err)
-				}
-			}()
-
-			if c.connection == nil {
-				if retry {
-					c.retryCount++
-					Log(LogInfo, "Retrying connection in %s", c.RetryWait)
-					time.Sleep(c.RetryWait)
-					Log(LogInfo, "Reconnecting to server")
-					c.Connect()
-				}
-			} else {
-				r = c.singleExchange(c.connection, outgoing)
-				retry = false
-			}
-			return
-		}()
-	}
-	return r
-}
-
+// ioHandler streams outgoing messages: they are written without waiting for replies, and a reader
+// matches the replies, which the server sends in order. After a reconnect the messages still waiting
+// for a reply are resent in order; every client message is safe to repeat.
 func (c *Client) ioHandler() {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised inside the goroutine
@@ -450,35 +396,143 @@ func (c *Client) ioHandler() {
 		c.wg.Done()
 	}()
 
-	for {
-		select {
-		case outgoing, ok := <-c.dispatchChannel:
-			if !ok {
-				// Channel is closed
-				return
-			}
-			c.retryingExchange(outgoing)
-		default:
-			select {
-			case outgoing, ok := <-c.dispatchChannel:
-				if !ok {
-					// Channel is closed
-					return
-				}
-				c.retryingExchange(outgoing)
-			case outgoing, ok := <-c.blockWriteChannel:
-				if !ok {
-					// Channel is closed
-					return
-				}
-				c.retryingExchange(outgoing)
-			}
-		}
+	// waits for the first message, the connection may be set up after NewClient
+	if _, ok := c.nextOutgoing(nil); !ok {
+		return
+	}
+	for !c.streamConnection() {
 	}
 }
 
-// dispatchMessage returns a result channel if a returnChannel was specified, otherwise it just returns nil
-func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChannel chan interface{}) {
+// nextOutgoing takes the next message, other messages before block writes, numbers it and adds it to the in-flight list.
+func (c *Client) nextOutgoing(failed chan any) (*messageDispatch, bool) {
+	var outgoing *messageDispatch
+	var ok bool
+	select {
+	case outgoing, ok = <-c.dispatchChannel:
+	default:
+		select {
+		case outgoing, ok = <-c.dispatchChannel:
+		case outgoing, ok = <-c.blockWriteChannel:
+		case r := <-failed:
+			panic(r)
+		}
+	}
+	if ok {
+		outgoing.msg.Num = uint16(atomic.AddUint32(&c.msgNum, 1) - 1)
+		c.inflightMutex.Lock()
+		c.inflight = append(c.inflight, outgoing)
+		c.inflightMutex.Unlock()
+	}
+	return outgoing, ok
+}
+
+// streamConnection streams on one connection, reconnecting first if needed.
+// Returns true when the client is closed, false to reconnect; a fatal error panics.
+func (c *Client) streamConnection() (closed bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			closed = c.closing
+			if !closed {
+				c.retryOrPanic(r)
+				c.connection = nil // a handshake that failed during reconnect
+			}
+		}
+	}()
+	if c.connection == nil {
+		c.retryCount++
+		Log(LogInfo, "Retrying connection in %s", c.RetryWait)
+		time.Sleep(c.RetryWait)
+		Log(LogInfo, "Reconnecting to server")
+		c.Connect()
+	}
+	connection := c.connection
+	pending := make(chan struct{}, maxInFlight) // one token per message waiting for its reply
+	failed := make(chan any, 1)
+	exited := make(chan struct{})
+	c.wg.Add(1)
+	go c.readReplies(connection, pending, failed, exited)
+	defer func() {
+		close(pending)
+		if !closed { // on close, Close() closes the connection
+			_ = connection.Close() // wakes the reader if it is reading
+		}
+		<-exited
+	}()
+	// a token is handed to the reader after each write, a full channel holds the sender back
+	send := func(outgoing *messageDispatch) {
+		WriteMessage(connection, outgoing.msg)
+		select {
+		case pending <- struct{}{}:
+		case r := <-failed:
+			panic(r)
+		}
+	}
+
+	c.inflightMutex.Lock()
+	resend := slices.Clone(c.inflight)
+	c.inflightMutex.Unlock()
+	for _, outgoing := range resend {
+		send(outgoing)
+	}
+	for {
+		outgoing, ok := c.nextOutgoing(failed)
+		if !ok {
+			return true
+		}
+		send(outgoing)
+	}
+}
+
+// readReplies matches replies to the messages in flight, reading only while one is waiting, so an idle connection never times out.
+func (c *Client) readReplies(connection *TimeoutConn, pending chan struct{}, failed chan any, exited chan struct{}) {
+	defer c.wg.Done()
+	defer close(exited)
+	defer func() {
+		if r := recover(); r != nil {
+			failed <- r
+		}
+	}()
+	reader := bufio.NewReader(connection) // one read per buffer, not per field
+	for range pending {
+		incoming := ReadMessage(reader)
+		c.inflightMutex.Lock()
+		outgoing := c.inflight[0]
+		c.inflight[0] = nil // the answered message, often a block write, is not kept alive by the slice
+		c.inflight = c.inflight[1:]
+		c.inflightMutex.Unlock()
+		c.handleReply(incoming, outgoing)
+	}
+}
+
+// retryOrPanic returns if the error lost the connection and a reconnect is allowed, otherwise it panics with it.
+func (c *Client) retryOrPanic(err any) {
+	c.inflightMutex.Lock()
+	goodbye := slices.ContainsFunc(c.inflight, func(outgoing *messageDispatch) bool { return outgoing.msg.Type == MsgTypeGoodbye })
+	c.inflightMutex.Unlock()
+	if c.ServerAddress == "" || goodbye || (c.RetryMax >= 0 && c.retryCount >= c.RetryMax) {
+		panic(err)
+	}
+	switch e := err.(type) {
+	case net.Error:
+		Log(LogError, e.Error())
+		Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
+	case error:
+		if e != io.EOF {
+			Log(LogError, "%v", e)
+			panic(err)
+		}
+		Log(LogError, "Lost connection with server (%v)", e.Error())
+		Log(LogInfo, "Stacktrace from panic: %s", debug.Stack())
+	default:
+		Log(LogError, "Unknown error in client communication")
+		Log(LogError, fmt.Sprint(e))
+		panic(err)
+	}
+}
+
+// dispatchMessage queues a message, returnChannel (if set) receives the reply
+func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChannel chan *ProtocolMessage) {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised (most likely the channel was closed)
 			if c.lastError != nil {
@@ -508,22 +562,22 @@ func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChan
 func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{} {
 	// Never closed here: dispatchMessage closes it when the client is closing,
 	// a second close would replace the RemoteError below with a runtime panic
-	waiter := make(chan interface{}, 1)
+	waiter := make(chan *ProtocolMessage, 1)
 	c.dispatchMessage(msgType, msgData, waiter)
+	return c.waitReply(waiter)
+}
+
+// waitReply waits for the reply of a dispatched message, see dispatchAndWait.
+func (c *Client) waitReply(waiter chan *ProtocolMessage) interface{} {
 	select {
-	case R, ok := <-waiter:
+	case reply, ok := <-waiter:
 		if !ok {
 			panic(RemoteError{errors.New("server disconnected while waiting for a response")})
 		}
-		switch t := R.(type) {
-		case *ProtocolMessage:
-			switch dt := t.Data.(type) {
-			case *MsgServerError:
-				panic(RemoteError{errors.New("Received error from server: " + string(dt.ErrorMessage))})
-			default:
-				return t.Data
-			}
+		if e, isError := reply.Data.(*MsgServerError); isError {
+			panic(RemoteError{errors.New("Received error from server: " + string(e.ErrorMessage))})
 		}
+		return reply.Data
 	case err := <-c.errorChannel:
 		if c.lastError != nil {
 			panic(c.lastError)
@@ -531,7 +585,6 @@ func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{
 		AbortOnError(err)
 		panic(RemoteError{errors.New("connection was closed while waiting for a response")})
 	}
-	panic(errors.New("ASSERT! We should not reach this point"))
 }
 
 func (c *Client) GetAccountInfo() *MsgServerAccountInfo {
@@ -559,6 +612,22 @@ func (c *Client) VerifyBlock(blockID Byte128) bool {
 	default:
 		panic(errors.New("unknown response from server"))
 	}
+}
+
+// MissingBlocks returns the blocks in blockIDs that the server does not have.
+// All checks are sent before the first reply is read, so they cost about one round trip together.
+func (c *Client) MissingBlocks(blockIDs []Byte128) (missing []Byte128) {
+	waiters := make([]chan *ProtocolMessage, len(blockIDs))
+	for i, blockID := range blockIDs {
+		waiters[i] = make(chan *ProtocolMessage, 1)
+		c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: blockID}, waiters[i])
+	}
+	for i, blockID := range blockIDs {
+		if _, ok := c.waitReply(waiters[i]).(*MsgServerReadBlock); ok {
+			missing = append(missing, blockID)
+		}
+	}
+	return missing
 }
 
 func (c *Client) StoreData(dataType byte, data bytearray.ByteArray, links []Byte128) Byte128 {
