@@ -602,18 +602,6 @@ func (c *Client) RemoveDatasetState(datasetName string, stateID Byte128) {
 	c.dispatchAndWait(MsgTypeRemoveDatasetState, &MsgClientRemoveDatasetState{AccountNameH: c.AccountNameH, DatasetName: String(datasetName), StateID: stateID})
 }
 
-func (c *Client) VerifyBlock(blockID Byte128) bool {
-	r := c.dispatchAndWait(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: blockID})
-	switch r.(type) {
-	case *MsgServerAcknowledgeBlock:
-		return true
-	case *MsgServerReadBlock:
-		return false
-	default:
-		panic(errors.New("unknown response from server"))
-	}
-}
-
 // MissingBlocks returns the blocks in blockIDs that the server does not have.
 // All checks are sent before the first reply is read, so they cost about one round trip together.
 func (c *Client) MissingBlocks(blockIDs []Byte128) (missing []Byte128) {
