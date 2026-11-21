@@ -436,6 +436,9 @@ func (c *Client) streamConnection() (closed bool) {
 		c.retryCount++
 		Log(LogInfo, "Retrying connection in %s", c.RetryWait)
 		time.Sleep(c.RetryWait)
+		if c.closing {
+			return true
+		}
 		Log(LogInfo, "Reconnecting to server")
 		c.Connect()
 	}
