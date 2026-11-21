@@ -30,6 +30,7 @@ const DEFAULT_CONNECTION_TIMEOUT time.Duration = 5 * time.Minute
 type messageDispatch struct {
 	msg           *ProtocolMessage
 	returnChannel chan *ProtocolMessage
+	entry         *blockQueueEntry // the queue's own allocate or write, only its reply moves the entry's state
 }
 
 type Client struct {
@@ -228,7 +229,7 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 					case blockStateProcessed:
 						if inOrder {
 							select {
-							case c.blockWriteChannel <- &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: entry.block}}}:
+							case c.blockWriteChannel <- &messageDispatch{msg: &ProtocolMessage{Type: MsgTypeWriteBlock, Data: &MsgClientWriteBlock{Block: entry.block}}, entry: entry}:
 								entry.state = blockStateSending
 								atomic.AddInt64(&c.WriteData, int64(entry.block.UncompressedSize))
 								atomic.AddInt64(&c.WriteDataCompressed, int64(entry.block.CompressedSize))
@@ -281,7 +282,7 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 	}
 
 	c.dispatchMutex.Unlock()
-	c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: block.BlockID}, nil)
+	c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: block.BlockID}, nil, entry)
 	return true
 }
 
@@ -348,36 +349,28 @@ func (c *Client) handleReply(incoming *ProtocolMessage, outgoing *messageDispatc
 		outgoing.returnChannel <- incoming
 	}
 
-	// Handle block queue
-	switch d := incoming.Data.(type) {
-	case *MsgServerError:
-		panic(errors.New("Received error from server: " + string(d.ErrorMessage)))
+	if e, isError := incoming.Data.(*MsgServerError); isError {
+		panic(errors.New("Received error from server: " + string(e.ErrorMessage)))
+	}
+	q := outgoing.entry
+	if q == nil {
+		return
+	}
+	// the queue's own allocate is answered before its write is sent
+	c.dispatchMutex.Lock()
+	switch incoming.Data.(type) {
 	case *MsgServerReadBlock:
-		c.dispatchMutex.Lock()
-		q := c.blockQueueMap[d.BlockID]
-		if q != nil && q.state == blockStateNew {
-			q.state = blockStateRequested
-		}
-		c.dispatchMutex.Unlock()
+		ASSERT(q.state == blockStateNew, "ASSERT! Invalid state %d for blockQueue entry", q.state)
+		q.state = blockStateRequested
 	case *MsgServerAcknowledgeBlock:
-		var skipped bool = false
-
-		c.dispatchMutex.Lock()
-		q := c.blockQueueMap[d.BlockID]
-		if q != nil {
-			if q.state == blockStateNew {
-				// Block was not sent
-				skipped = true
-			}
-			q.state = blockStateCompleted
-		}
-		c.dispatchMutex.Unlock()
-
-		if skipped {
-			atomic.AddInt32(&c.skippedBlocks, 1) //c.skippedBlocks++
+		ASSERT(q.state == blockStateNew || q.state == blockStateSending, "ASSERT! Invalid state %d for blockQueue entry", q.state)
+		if q.state == blockStateNew { // the server already has it, it was never sent
+			atomic.AddInt32(&c.skippedBlocks, 1)
 			c.Paint("-")
 		}
+		q.state = blockStateCompleted
 	}
+	c.dispatchMutex.Unlock()
 }
 
 // maxInFlight is how many messages are written ahead of their replies.
@@ -532,7 +525,7 @@ func (c *Client) retryOrPanic(err any) {
 }
 
 // dispatchMessage queues a message, returnChannel (if set) receives the reply
-func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChannel chan *ProtocolMessage) {
+func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChannel chan *ProtocolMessage, entry *blockQueueEntry) {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised (most likely the channel was closed)
 			if c.lastError != nil {
@@ -544,7 +537,7 @@ func (c *Client) dispatchMessage(msgType uint32, msgData interface{}, returnChan
 
 	if !c.closing {
 		select {
-		case c.dispatchChannel <- &messageDispatch{msg: &ProtocolMessage{Type: msgType, Data: msgData}, returnChannel: returnChannel}:
+		case c.dispatchChannel <- &messageDispatch{msg: &ProtocolMessage{Type: msgType, Data: msgData}, returnChannel: returnChannel, entry: entry}:
 			return
 		case err := <-c.errorChannel:
 			if c.lastError != nil {
@@ -563,7 +556,7 @@ func (c *Client) dispatchAndWait(msgType uint32, msgData interface{}) interface{
 	// Never closed here: dispatchMessage closes it when the client is closing,
 	// a second close would replace the RemoteError below with a runtime panic
 	waiter := make(chan *ProtocolMessage, 1)
-	c.dispatchMessage(msgType, msgData, waiter)
+	c.dispatchMessage(msgType, msgData, waiter, nil)
 	return c.waitReply(waiter)
 }
 
@@ -608,7 +601,7 @@ func (c *Client) MissingBlocks(blockIDs []Byte128) (missing []Byte128) {
 	waiters := make([]chan *ProtocolMessage, len(blockIDs))
 	for i, blockID := range blockIDs {
 		waiters[i] = make(chan *ProtocolMessage, 1)
-		c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: blockID}, waiters[i])
+		c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: blockID}, waiters[i], nil)
 	}
 	for i, blockID := range blockIDs {
 		if _, ok := c.waitReply(waiters[i]).(*MsgServerReadBlock); ok {
