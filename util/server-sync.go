@@ -434,7 +434,8 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 	var skipped int32 = 0
 	var sent int32 = 0
 	var sentBytes int64 = 0
-	queue := []core.Byte128{root}
+	// every block in the queue is missing on the peer, children are checked in one round trip per parent
+	queue := sync.client.MissingBlocks([]core.Byte128{root})
 	index := 0
 	type progressEvent struct {
 		action   string
@@ -457,20 +458,14 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 			if index < len(queue) {
 				b = queue[index]
 				core.Log(core.LogTrace, "queue descend idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
-				if sync.client.VerifyBlock(b) {
-					core.Log(core.LogTrace, "skip existing block %x (queue=%d)", b[:], len(queue))
-					queue = append(queue[:index], queue[index+1:]...)
-					skipped++
-					progressCh <- progressEvent{action: "-", block: b, index: index, queueLen: len(queue), skipped: skipped, sent: sent}
-					continue
-				}
 				meta := sync.dataDB.ReadBlockMeta(b)
 				if meta == nil {
 					core.Abort("block %x metadata missing locally", b[:])
 				}
-				links := meta.Links
+				links := sync.client.MissingBlocks(meta.Links)
+				skipped += int32(len(meta.Links) - len(links))
 				if len(links) > 0 {
-					core.Log(core.LogDebug, "enqueue children for %x (links=%d queue=%d)", b[:], len(links), len(queue))
+					core.Log(core.LogDebug, "enqueue children for %x (links=%d missing=%d queue=%d)", b[:], len(meta.Links), len(links), len(queue))
 					queue = append(queue, make([]core.Byte128, len(links))...)
 					copy(queue[index+len(links)+1:], queue[index+1:])
 					copy(queue[index+1:], links)
@@ -478,7 +473,7 @@ func (sync *syncSession) sendBlockTree(root core.Byte128) {
 					progressCh <- progressEvent{action: "*", block: b, index: index, queueLen: len(queue), skipped: skipped, sent: sent}
 					continue
 				}
-				// No links, fall through to send
+				// No missing links, fall through to send
 			} else {
 				// draining queue, send block
 				index = len(queue) - 1
