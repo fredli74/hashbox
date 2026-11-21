@@ -345,12 +345,12 @@ func (c *Client) handleReply(incoming *ProtocolMessage, outgoing *messageDispatc
 	if incoming.Num != outgoing.msg.Num {
 		panic(errors.New("ASSERT! This should never happen unless the server is coded wrong"))
 	}
-	if outgoing.returnChannel != nil {
-		outgoing.returnChannel <- incoming
-	}
-
+	// a server error is fatal to the client, waiters wake on the error channel
 	if e, isError := incoming.Data.(*MsgServerError); isError {
 		panic(errors.New("Received error from server: " + string(e.ErrorMessage)))
+	}
+	if outgoing.returnChannel != nil {
+		outgoing.returnChannel <- incoming
 	}
 	q := outgoing.entry
 	if q == nil {
@@ -491,10 +491,12 @@ func (c *Client) readReplies(connection *TimeoutConn, pending chan struct{}, fai
 		incoming := ReadMessage(reader)
 		c.inflightMutex.Lock()
 		outgoing := c.inflight[0]
+		c.inflightMutex.Unlock()
+		c.handleReply(incoming, outgoing) // a message whose reply failed stays in flight, a reconnect resends it
+		c.inflightMutex.Lock()
 		c.inflight[0] = nil // the answered message, often a block write, is not kept alive by the slice
 		c.inflight = c.inflight[1:]
 		c.inflightMutex.Unlock()
-		c.handleReply(incoming, outgoing)
 	}
 }
 
@@ -566,9 +568,6 @@ func (c *Client) waitReply(waiter chan *ProtocolMessage) interface{} {
 	case reply, ok := <-waiter:
 		if !ok {
 			panic(RemoteError{errors.New("server disconnected while waiting for a response")})
-		}
-		if e, isError := reply.Data.(*MsgServerError); isError {
-			panic(RemoteError{errors.New("Received error from server: " + string(e.ErrorMessage))})
 		}
 		return reply.Data
 	case err := <-c.errorChannel:
