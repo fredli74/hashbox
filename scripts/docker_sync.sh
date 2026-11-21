@@ -8,12 +8,13 @@ fi
 
 REMOTE="$1"
 if [ -z "$REMOTE" ]; then
-  echo "Usage: $0 <remote> (e.g. 10.0.0.5:7411)"
+  echo "Usage: $0 <remote> [sync options] (e.g. 10.0.0.5:7411 -dry-run)"
   exit 1
 fi
 
+shift
 echo "Running sync to $REMOTE..."
-set -- "$REMOTE"
+set -- "$REMOTE" "$@"
 if [ -n "$INCLUDE" ]; then
   set -- "$@" -include "$INCLUDE"
 fi
