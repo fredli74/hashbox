@@ -3,6 +3,7 @@ set -x
 version=`git describe HEAD --tags --always --abbrev=0`
 revision=`git describe HEAD --tags --always`
 GOPATH=$(go env GOPATH)
+export CGO_ENABLED=0 # static binaries, the native linux build would otherwise need the build host's glibc
 
 rm "$GOPATH/bin/hashbox/"*.zip
 rm "$GOPATH/bin/hashbox/"*
