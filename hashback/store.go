@@ -737,6 +737,9 @@ func (r *referenceEngine) loadResumeFile(path string) {
 				treedepth--
 			case n.entry.ContentType == ContentTypeDirectory:
 				treedepth++
+				if n.state == resumeMissing {
+					n.entry.ContentBlockID = core.Byte128{} // not on the server, storeDir must not skip storing it
+				}
 			case n.state == resumeMissing:
 				core.Log(core.LogTrace, "Unable to verify %s against server", n.entry.FileName)
 				continue
