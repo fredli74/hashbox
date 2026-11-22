@@ -432,6 +432,9 @@ func (c *Client) streamConnection() (closed bool) {
 			closed = c.closing
 			if !closed {
 				c.retryOrPanic(r)
+				if c.connection != nil {
+					_ = c.connection.Close() // a reconnect whose handshake failed
+				}
 				c.connection = nil // reconnect on the next call
 			}
 		}
