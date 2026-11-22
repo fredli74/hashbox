@@ -382,8 +382,12 @@ const maxInFlight = 1024
 func (c *Client) ioHandler() {
 	defer func() {
 		if r := recover(); !c.closing && r != nil { // a panic was raised inside the goroutine
-			c.lastError = RemoteError{r.(error)}
-			c.errorChannel <- r.(error)
+			err, ok := r.(error)
+			if !ok {
+				err = fmt.Errorf("%v", r)
+			}
+			c.lastError = RemoteError{err}
+			c.errorChannel <- err
 			close(c.errorChannel) // close it to trigger everyone to stop
 		}
 		c.wg.Done()
