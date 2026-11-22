@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -430,93 +432,59 @@ func (sync *syncSession) sendAddTransaction(accountHash core.Byte128, datasetNam
 	}
 }
 
+// sendBlockTree stores the blocks of the tree that the peer does not have. The tree is checked a level at a
+// time, one MissingBlocks for all links of the level's missing blocks, then stored deepest level first, so a
+// parent always reaches the peer after its children.
 func (sync *syncSession) sendBlockTree(root core.Byte128) {
-	var skipped int32 = 0
-	var sent int32 = 0
-	var sentBytes int64 = 0
-	// every block in the queue is missing on the peer, children are checked in one round trip per parent
-	queue := sync.client.MissingBlocks([]core.Byte128{root})
-	index := 0
-	type progressEvent struct {
-		action   string
-		block    core.Byte128
-		index    int
-		queueLen int
-		skipped  int32
-		sent     int32
+	skipped := 0
+	sent := 0
+	var sentBytes int64
+	lastReport := time.Now()
+	report := func(overwriteLine bool) {
+		if time.Since(lastReport) >= sync.statTick {
+			sync.reportStats(overwriteLine)
+			lastReport = time.Now()
+		}
 	}
-	progressCh := make(chan progressEvent, 64)
-	doneCh := make(chan struct{})
-	go func() {
-		defer close(doneCh)
-		defer close(progressCh)
-		for {
-			if len(queue) == 0 {
-				return
+
+	levels := [][]core.Byte128{sync.client.MissingBlocks([]core.Byte128{root})}
+	for missing := levels[0]; len(missing) > 0; {
+		var links []core.Byte128
+		for _, b := range missing {
+			meta := sync.dataDB.ReadBlockMeta(b)
+			if meta == nil {
+				core.Abort("block %x metadata missing locally", b[:])
 			}
-			var b core.Byte128
-			if index < len(queue) {
-				b = queue[index]
-				core.Log(core.LogTrace, "queue descend idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
-				meta := sync.dataDB.ReadBlockMeta(b)
-				if meta == nil {
-					core.Abort("block %x metadata missing locally", b[:])
-				}
-				links := sync.client.MissingBlocks(meta.Links)
-				skipped += int32(len(meta.Links) - len(links))
-				if len(links) > 0 {
-					core.Log(core.LogDebug, "enqueue children for %x (links=%d missing=%d queue=%d)", b[:], len(meta.Links), len(links), len(queue))
-					queue = append(queue, make([]core.Byte128, len(links))...)
-					copy(queue[index+len(links)+1:], queue[index+1:])
-					copy(queue[index+1:], links)
-					index++
-					progressCh <- progressEvent{action: "*", block: b, index: index, queueLen: len(queue), skipped: skipped, sent: sent}
-					continue
-				}
-				// No missing links, fall through to send
-			} else {
-				// draining queue, send block
-				index = len(queue) - 1
-				b = queue[index]
-				core.Log(core.LogTrace, "queue unwind idx=%d size=%d (%d/%d) head=%x", index, len(queue), index+1, len(queue), b[:])
-			}
+			links = append(links, meta.Links...)
+		}
+		// a block linked more than once in a level, like the zero blocks of a sparse file, is checked and stored once
+		slices.SortFunc(links, func(a, b core.Byte128) int { return bytes.Compare(a[:], b[:]) })
+		links = slices.Compact(links)
+		missing = sync.client.MissingBlocks(links)
+		skipped += len(links) - len(missing)
+		core.Log(core.LogDebug, "level %d: %d links, %d missing", len(levels), len(links), len(missing))
+		levels = append(levels, missing)
+		report(false)
+	}
+
+	for i := len(levels) - 1; i >= 0; i-- {
+		for _, b := range levels[i] {
 			data := sync.dataDB.ReadBlock(b)
 			if data == nil {
 				core.Abort("block %x missing locally", b[:])
 			}
 			sentBytes += int64(data.Data.Len())
-			core.Log(core.LogDebug, "send block %x size=%s queue=%d (%d/%d)", b[:], core.CompactHumanSize(int64(data.Data.Len())), len(queue), index+1, len(queue))
+			core.Log(core.LogDebug, "send block %x size=%s level=%d", b[:], core.CompactHumanSize(int64(data.Data.Len())), i)
 			if sync.dryRun {
-				core.Log(core.LogTrace, "dry-run: skip send %x", b[:])
 				data.Release()
 			} else {
 				sync.client.StoreBlock(data)
 			}
 			sent++
-			progressCh <- progressEvent{action: "+", block: b, index: index, queueLen: len(queue), skipped: skipped, sent: sent}
-			queue = append(queue[:index], queue[index+1:]...)
-		}
-	}()
-
-	printUpdate := func(ev progressEvent) {
-		fmt.Printf("\r\x1b[KSyncing %d/%d (sent %d, skipped %d) %s %x\r", ev.index+1, ev.queueLen, ev.sent, ev.skipped, ev.action, ev.block[:])
-	}
-	ticker := time.NewTicker(sync.statTick)
-	defer ticker.Stop()
-	for {
-		select {
-		case ev, ok := <-progressCh:
-			if ok {
-				printUpdate(ev)
-			}
-		case <-ticker.C:
-			sync.reportStats(false)
-		case <-doneCh:
-			goto waitQueue
+			report(false)
 		}
 	}
 
-waitQueue:
 	if _, _, queued, _ := sync.client.GetStats(); queued > 0 {
 		core.Log(core.LogInfo, "Waiting for queued blocks to be sent to remote server")
 	}
@@ -524,7 +492,7 @@ waitQueue:
 		sync.reportStats(true)
 		time.Sleep(50 * time.Millisecond)
 	}
-	core.Log(core.LogInfo, "Sent all blocks for tree rooted at %x (sent %d, data %s)", root[:], sent, core.HumanSize(sentBytes))
+	core.Log(core.LogInfo, "Sent all blocks for tree rooted at %x (sent %d, skipped %d, data %s)", root[:], sent, skipped, core.HumanSize(sentBytes))
 }
 func (sync *syncSession) close() {
 	if sync.client != nil {
