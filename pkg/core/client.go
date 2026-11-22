@@ -256,7 +256,7 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 						Abort("ASSERT! Invalid state %d for blockQueue entry", entry.state)
 					}
 				}
-				if workItem == nil && len(c.blockQueueList) == 0 {
+				if workItem == nil && (len(c.blockQueueList) == 0 || c.closing) {
 					done = true
 					c.sendworkers--
 					//						fmt.Println("worker stopping")
