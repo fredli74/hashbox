@@ -66,12 +66,12 @@ type Client struct {
 	blockQueueList []*blockQueueEntry
 
 	dispatchChannel   chan *messageDispatch // input to goroutine; buffered list of outgoing messages to dispatch
-	blockWriteChannel chan *messageDispatch // input to goroutine; next block in queue to store
+	blockWriteChannel chan *messageDispatch // input to goroutine; blocks handed over in queue order
 	errorChannel      chan error            // output from goroutine; ioHandler encountered an error
 	lastError         error                 // last error encountered
 
 	inflightMutex sync.Mutex
-	inflight      []*messageDispatch // written and waiting for a reply, in send order, resent after a reconnect
+	inflight      []*messageDispatch // numbered and waiting for a reply, in send order, resent after a reconnect
 }
 
 // RemoteError marks a failure of the client or the server, as opposed to damage
@@ -190,7 +190,7 @@ func (c *Client) queueBlock(block *HashboxBlock) bool {
 	if c.sendworkers < 1 || c.sendworkers < c.ThreadMax {
 		c.sendworkers++
 		go func() {
-			defer func() { // a panic was raised inside the goroutine (most likely the channel was closed)
+			defer func() { // a panic was raised inside the goroutine
 				if r := recover(); !c.closing && r != nil {
 					if c.lastError != nil {
 						panic(c.lastError)
@@ -432,7 +432,7 @@ func (c *Client) streamConnection() (closed bool) {
 			closed = c.closing
 			if !closed {
 				c.retryOrPanic(r)
-				c.connection = nil // a handshake that failed during reconnect
+				c.connection = nil // reconnect on the next call
 			}
 		}
 	}()
@@ -450,7 +450,6 @@ func (c *Client) streamConnection() (closed bool) {
 	pending := make(chan struct{}, maxInFlight) // one token per message waiting for its reply
 	failed := make(chan any, 1)
 	exited := make(chan struct{})
-	c.wg.Add(1)
 	go c.readReplies(connection, pending, failed, exited)
 	defer func() {
 		close(pending)
@@ -486,8 +485,7 @@ func (c *Client) streamConnection() (closed bool) {
 
 // readReplies matches replies to the messages in flight, reading only while one is waiting, so an idle connection never times out.
 func (c *Client) readReplies(connection *TimeoutConn, pending chan struct{}, failed chan any, exited chan struct{}) {
-	defer c.wg.Done()
-	defer close(exited)
+	defer close(exited) // streamConnection waits for it before returning
 	defer func() {
 		if r := recover(); r != nil {
 			failed <- r
