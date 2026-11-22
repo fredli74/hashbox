@@ -788,6 +788,9 @@ func (r *referenceEngine) loadResumeFile(path string) {
 				n := &resumeNode{entry: &entry, parent: folder}
 				switch {
 				case entry.FileName == "": // EOD
+					if folder.parent == nil {
+						panic(errors.New("resume cache closes a folder it never opened")) // the deferred flush keeps what was read
+					}
 					n.state = resumeTrusted
 					folder = folder.parent
 				case !entry.HasContentBlockID():
