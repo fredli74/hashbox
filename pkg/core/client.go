@@ -606,8 +606,12 @@ func (c *Client) MissingBlocks(blockIDs []Byte128) (missing []Byte128) {
 		c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: blockID}, waiters[i], nil)
 	}
 	for i, blockID := range blockIDs {
-		if _, ok := c.waitReply(waiters[i]).(*MsgServerReadBlock); ok {
+		switch c.waitReply(waiters[i]).(type) {
+		case *MsgServerReadBlock:
 			missing = append(missing, blockID)
+		case *MsgServerAcknowledgeBlock:
+		default:
+			panic(errors.New("unknown response from server"))
 		}
 	}
 	return missing
