@@ -598,21 +598,29 @@ func (c *Client) RemoveDatasetState(datasetName string, stateID Byte128) {
 }
 
 // MissingBlocks returns the blocks in blockIDs that the server does not have.
-// All checks are sent before the first reply is read, so they cost about one round trip together.
+// The checks are streamed: at most maxInFlight wait for a reply, each slot is reused once its reply is read.
 func (c *Client) MissingBlocks(blockIDs []Byte128) (missing []Byte128) {
-	waiters := make([]chan *ProtocolMessage, len(blockIDs))
-	for i, blockID := range blockIDs {
+	waiters := make([]chan *ProtocolMessage, min(len(blockIDs), maxInFlight))
+	for i := range waiters {
 		waiters[i] = make(chan *ProtocolMessage, 1)
-		c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: blockID}, waiters[i], nil)
 	}
-	for i, blockID := range blockIDs {
-		switch c.waitReply(waiters[i]).(type) {
+	check := func(i int) {
+		switch c.waitReply(waiters[i%len(waiters)]).(type) {
 		case *MsgServerReadBlock:
-			missing = append(missing, blockID)
+			missing = append(missing, blockIDs[i])
 		case *MsgServerAcknowledgeBlock:
 		default:
 			panic(errors.New("unknown response from server"))
 		}
+	}
+	for i, blockID := range blockIDs {
+		if i >= len(waiters) {
+			check(i - len(waiters))
+		}
+		c.dispatchMessage(MsgTypeAllocateBlock, &MsgClientAllocateBlock{BlockID: blockID}, waiters[i%len(waiters)], nil)
+	}
+	for i := len(blockIDs) - len(waiters); i < len(blockIDs); i++ {
+		check(i)
 	}
 	return missing
 }
