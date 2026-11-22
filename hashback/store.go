@@ -636,7 +636,7 @@ func (r *referenceEngine) start(rootBlockID *core.Byte128) {
 	// Create new channels and start a new worker goroutine
 	r.stopChannel = make(chan struct{})
 	r.errorChannel = make(chan error, 1)
-	r.entryChannel = make(chan *FileEntry, 100)
+	r.entryChannel = make(chan *FileEntry, resumeWindow) // a whole resume window, so the next one is checked while this one is walked
 
 	go r.loader(rootBlockID)
 }
